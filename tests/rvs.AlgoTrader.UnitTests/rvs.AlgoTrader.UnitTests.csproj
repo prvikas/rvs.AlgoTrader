@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>rvs.AlgoTrader.UnitTests</AssemblyName>
+    <RootNamespace>rvs.AlgoTrader.UnitTests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj" />
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.Application\rvs.AlgoTrader.Application.csproj" />
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.Infrastructure\rvs.AlgoTrader.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.Strategies\rvs.AlgoTrader.Strategies.csproj" />
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.Backtesting\rvs.AlgoTrader.Backtesting.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="NetArchTest.Rules" />
+  </ItemGroup>
+</Project>

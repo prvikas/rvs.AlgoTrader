@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>rvs.AlgoTrader.Brokers.Abstractions</AssemblyName>
+    <RootNamespace>rvs.AlgoTrader.Brokers.Abstractions</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NodaTime" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="MassTransit" />
+  </ItemGroup>
+</Project>

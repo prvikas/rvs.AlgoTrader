@@ -1,0 +1,46 @@
+using Hangfire;
+using Microsoft.Extensions.Logging;
+
+namespace rvs.AlgoTrader.Infrastructure.Hangfire;
+
+/// <summary>
+/// Registers all recurring Hangfire jobs at startup.
+/// All times in IST (Hangfire cron is UTC — convert: IST = UTC+5:30)
+/// </summary>
+public static class HangfireJobRegistry
+{
+    public static void RegisterJobs(ILogger logger)
+    {
+        // Instrument refresh: daily at 8:00 AM IST = 2:30 UTC
+        RecurringJob.AddOrUpdate<InstrumentRefreshJob>(
+            "instrument-refresh", j => j.ExecuteAsync(CancellationToken.None),
+            "30 2 * * 1-5"); // weekdays at 2:30 UTC
+
+        // Historical download: daily at 6:00 AM IST = 0:30 UTC
+        RecurringJob.AddOrUpdate<HistoricalDownloadJob>(
+            "historical-download", j => j.ExecuteAsync(CancellationToken.None),
+            "30 0 * * 1-5");
+
+        // Strategy scheduler: every minute during market hours (9:00-15:35 IST = 3:30-10:05 UTC)
+        RecurringJob.AddOrUpdate<StrategySchedulerJob>(
+            "strategy-scheduler", j => j.ExecuteAsync(CancellationToken.None),
+            "* 3-10 * * 1-5");
+
+        // Reconciliation: every 15 minutes during market hours
+        RecurringJob.AddOrUpdate<ReconciliationJob>(
+            "reconciliation-zerodha", j => j.ExecuteAsync("Zerodha", CancellationToken.None),
+            "*/15 3-10 * * 1-5");
+
+        // Monitoring alerts: every 5 minutes
+        RecurringJob.AddOrUpdate<MonitoringAlertJob>(
+            "monitoring-alerts", j => j.ExecuteAsync(CancellationToken.None),
+            "*/5 * * * *");
+
+        // EOD report: 3:45 PM IST = 10:15 UTC
+        RecurringJob.AddOrUpdate<EodReportJob>(
+            "eod-report", j => j.ExecuteAsync(CancellationToken.None),
+            "15 10 * * 1-5");
+
+        logger.LogInformation("[HangfireJobRegistry] All recurring jobs registered");
+    }
+}

@@ -1,0 +1,82 @@
+using NodaTime;
+
+namespace rvs.AlgoTrader.Domain.Entities;
+
+public class Position
+{
+    public Guid Id { get; private set; }
+    public string BrokerName { get; private set; } = string.Empty;
+    public string InternalSymbol { get; private set; } = string.Empty;
+    public int Quantity { get; private set; }
+    public decimal AvgPrice { get; private set; }
+    public decimal EntryPrice { get; private set; }
+    public decimal CurrentPrice { get; private set; }
+    public decimal? StopLoss { get; private set; }
+    public decimal? TakeProfit { get; private set; }
+    public bool IsOpen { get; private set; }
+    public Guid? StrategyRunId { get; private set; }
+    public string CorrelationId { get; private set; } = string.Empty;
+    public string ProductType { get; set; } = "MIS";
+    public string? CloseReason { get; set; }
+    public decimal RealizedPnl { get; private set; }
+    public decimal UnrealizedPnl { get; private set; }
+    public Instant? OpenedAt { get; private set; }
+    public Instant? ClosedAt { get; private set; }
+    public Instant CreatedAt { get; private set; }
+    public Instant UpdatedAt { get; private set; }
+
+    // Compatibility aliases
+    public decimal AveragePrice => AvgPrice;
+    public decimal LastPrice => CurrentPrice;
+
+    private Position() { }
+
+    public static Position Open(
+        string brokerName, string internalSymbol,
+        int quantity, decimal avgPrice,
+        decimal? stopLoss, decimal? takeProfit,
+        Guid? strategyRunId, string correlationId, Instant now)
+    {
+        return new Position
+        {
+            Id = Guid.NewGuid(),
+            BrokerName = brokerName,
+            InternalSymbol = internalSymbol,
+            Quantity = quantity,
+            AvgPrice = avgPrice,
+            EntryPrice = avgPrice,
+            CurrentPrice = avgPrice,
+            StopLoss = stopLoss,
+            TakeProfit = takeProfit,
+            IsOpen = true,
+            StrategyRunId = strategyRunId,
+            CorrelationId = correlationId,
+            OpenedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+    }
+
+    public void UpdatePrice(decimal currentPrice, Instant now)
+    {
+        CurrentPrice = currentPrice;
+        UnrealizedPnl = (currentPrice - AvgPrice) * Quantity;
+        UpdatedAt = now;
+    }
+
+    public void UpdateStopLoss(decimal newSl, Instant now)
+    {
+        StopLoss = newSl;
+        UpdatedAt = now;
+    }
+
+    public void Close(decimal exitPrice, decimal realizedPnl, Instant now)
+    {
+        RealizedPnl = realizedPnl;
+        CurrentPrice = exitPrice;
+        UnrealizedPnl = 0;
+        IsOpen = false;
+        ClosedAt = now;
+        UpdatedAt = now;
+    }
+}

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>rvs.AlgoTrader.Backtesting</AssemblyName>
+    <RootNamespace>rvs.AlgoTrader.Backtesting</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj" />
+    <ProjectReference Include="..\rvs.AlgoTrader.Application\rvs.AlgoTrader.Application.csproj" />
+    <ProjectReference Include="..\rvs.AlgoTrader.Strategies\rvs.AlgoTrader.Strategies.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="QuestPDF" />
+    <PackageReference Include="NodaTime" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+</Project>

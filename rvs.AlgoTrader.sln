@@ -1,0 +1,96 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.0.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Domain", "src\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj", "{A1B2C3D4-0001-0001-0001-000000000001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Application", "src\rvs.AlgoTrader.Application\rvs.AlgoTrader.Application.csproj", "{A1B2C3D4-0001-0001-0001-000000000002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Infrastructure", "src\rvs.AlgoTrader.Infrastructure\rvs.AlgoTrader.Infrastructure.csproj", "{A1B2C3D4-0001-0001-0001-000000000003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Brokers.Abstractions", "src\rvs.AlgoTrader.Brokers.Abstractions\rvs.AlgoTrader.Brokers.Abstractions.csproj", "{A1B2C3D4-0001-0001-0001-000000000004}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Brokers.Zerodha", "src\rvs.AlgoTrader.Brokers.Zerodha\rvs.AlgoTrader.Brokers.Zerodha.csproj", "{A1B2C3D4-0001-0001-0001-000000000005}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Brokers.Upstox", "src\rvs.AlgoTrader.Brokers.Upstox\rvs.AlgoTrader.Brokers.Upstox.csproj", "{A1B2C3D4-0001-0001-0001-000000000006}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Brokers.MStock", "src\rvs.AlgoTrader.Brokers.MStock\rvs.AlgoTrader.Brokers.MStock.csproj", "{A1B2C3D4-0001-0001-0001-000000000007}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Strategies", "src\rvs.AlgoTrader.Strategies\rvs.AlgoTrader.Strategies.csproj", "{A1B2C3D4-0001-0001-0001-000000000008}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Backtesting", "src\rvs.AlgoTrader.Backtesting\rvs.AlgoTrader.Backtesting.csproj", "{A1B2C3D4-0001-0001-0001-000000000009}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.API", "src\rvs.AlgoTrader.API\rvs.AlgoTrader.API.csproj", "{A1B2C3D4-0001-0001-0001-000000000010}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Tests.Unit", "tests\rvs.AlgoTrader.Tests.Unit\rvs.AlgoTrader.Tests.Unit.csproj", "{A1B2C3D4-0001-0001-0001-000000000011}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.IntegrationTests", "tests\rvs.AlgoTrader.IntegrationTests\rvs.AlgoTrader.IntegrationTests.csproj", "{A1B2C3D4-0001-0001-0001-000000000012}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Tests.Architecture", "tests\rvs.AlgoTrader.Tests.Architecture\rvs.AlgoTrader.Tests.Architecture.csproj", "{A1B2C3D4-0001-0001-0001-000000000013}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "rvs.AlgoTrader.Tests.UI", "tests\\rvs.AlgoTrader.Tests.UI\\rvs.AlgoTrader.Tests.UI.csproj", "{A1B2C3D4-0001-0001-0001-000000000014}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A1B2C3D4-0001-0001-0001-000000000001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000004}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000005}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000005}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000005}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000005}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000006}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000006}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000006}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000006}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000007}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000007}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000007}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000007}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000008}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000008}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000008}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000008}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000009}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000009}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000009}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000009}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000010}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000010}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000010}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000010}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000011}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000011}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000011}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000011}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000012}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000012}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000012}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000012}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000013}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000013}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000013}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000013}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000014}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000014}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000014}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1B2C3D4-0001-0001-0001-000000000014}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

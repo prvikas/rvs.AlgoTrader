@@ -1,0 +1,255 @@
+# rvs.AlgoTrader — Canonical Docker Compose
+#
+# Services: PostgreSQL+TimescaleDB, Redis (AOF), RabbitMQ,
+#           Prometheus, Grafana, Vault (dev mode), app
+#
+# Rules:
+#   - Every service has a healthcheck (start_period, interval, timeout, retries)
+#   - Named volumes for all stateful services (never bind mounts for data)
+#   - Redis AOF-enabled: appendonly yes, appendfsync everysec + RDB snapshots
+#   - Vault runs in dev mode (no prod secrets) — replace with real Vault in prod
+#   - App waits for all deps healthy via service_healthy condition
+#   - Prometheus scrape config mounted from ./config/prometheus.yml
+#   - Grafana datasource auto-provisioned from ./config/grafana/
+
+version: "3.9"
+
+services:
+
+  # ─────────────────────────────────────────────────────────
+  # PostgreSQL 16 + TimescaleDB
+  # Hypertables: candles, forward_test_equity_curve
+  # ─────────────────────────────────────────────────────────
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: algotrader-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: algotrader
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: algotrader
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U algotrader -d algotrader"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - algotrader-net
+
+  # ─────────────────────────────────────────────────────────
+  # Redis 7 — AOF persistence enabled
+  # Responsibilities: candle cache, rate-limit counters,
+  #   kill-switch flag, session tokens, idempotency keys,
+  #   capital reservation, alert dedup
+  # ─────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: algotrader-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 900 1
+      --save 300 10
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 10s
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - algotrader-net
+
+  # ─────────────────────────────────────────────────────────
+  # RabbitMQ — MassTransit domain events
+  # Management UI: http://localhost:15672 (guest/guest)
+  # Prometheus metrics: port 15692
+  # ─────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: algotrader-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./config/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "15692:15692"   # Prometheus metrics
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      start_period: 30s
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - algotrader-net
+
+  # ─────────────────────────────────────────────────────────
+  # HashiCorp Vault — dev mode (no seal, in-memory)
+  # Replace with real Vault cluster in production.
+  # Root token: root — change via VAULT_DEV_ROOT_TOKEN_ID
+  # ─────────────────────────────────────────────────────────
+  vault:
+    image: hashicorp/vault:latest
+    container_name: algotrader-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_ROOT_TOKEN:-root}
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - algotrader-net
+
+  # ─────────────────────────────────────────────────────────
+  # Prometheus — metrics collection
+  # Scrapes: app (/metrics), postgres-exporter, redis-exporter, rabbitmq
+  # ─────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: algotrader-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - algotrader-net
+    depends_on:
+      - app
+
+  # ─────────────────────────────────────────────────────────
+  # Grafana — dashboards
+  # Datasource: Prometheus (auto-provisioned)
+  # Default login: admin / admin (change on first login)
+  # ─────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: algotrader-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-piechart-panel"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      start_period: 20s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - algotrader-net
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────
+  # AlgoTrader API — ASP.NET Core 9
+  # Waits for all infrastructure services to be healthy.
+  # Health endpoints: /health/live, /health/ready
+  # IStartupOrchestrator runs before /health/ready returns 200.
+  # ─────────────────────────────────────────────────────────
+  app:
+    image: ghcr.io/${GITHUB_REPOSITORY:-yourusername/algotrader}/algotrader:${IMAGE_TAG:-latest}
+    container_name: algotrader-app
+    build:
+      context: .
+      dockerfile: rvs.AlgoTrader.API/Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Secrets__Provider: Vault
+      Vault__Address: http://vault:8200
+      Vault__Token: ${VAULT_ROOT_TOKEN:-root}
+      ConnectionStrings__DefaultConnection: >
+        Host=postgres;Port=5432;Database=algotrader;Username=algotrader;Password=${POSTGRES_PASSWORD:-changeme}
+      ConnectionStrings__Redis: redis:6379
+      RabbitMQ__Host: rabbitmq
+      RabbitMQ__Username: guest
+      RabbitMQ__Password: guest
+      ActiveBroker: ${ACTIVE_BROKER:-Zerodha}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/live || exit 1"]
+      start_period: 60s       # IStartupOrchestrator 11 steps take time
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - algotrader-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+
+# ─────────────────────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────────────────────
+networks:
+  algotrader-net:
+    driver: bridge
+
+# ─────────────────────────────────────────────────────────
+# Named Volumes — all stateful data
+# Never use bind mounts for database data in production.
+# ─────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>rvs.AlgoTrader.IntegrationTests</AssemblyName>
+    <RootNamespace>rvs.AlgoTrader.IntegrationTests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.Infrastructure\rvs.AlgoTrader.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\rvs.AlgoTrader.API\rvs.AlgoTrader.API.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Redis" />
+    <PackageReference Include="Testcontainers.RabbitMq" />
+    <PackageReference Include="Respawn" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="WireMock.Net" />
+  </ItemGroup>
+</Project>

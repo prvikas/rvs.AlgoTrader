@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>rvs.AlgoTrader.Brokers.MStock</AssemblyName>
+    <RootNamespace>rvs.AlgoTrader.Brokers.MStock</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\rvs.AlgoTrader.Brokers.Abstractions\rvs.AlgoTrader.Brokers.Abstractions.csproj" />
+    <ProjectReference Include="..\rvs.AlgoTrader.Application\rvs.AlgoTrader.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Polly" />
+    <PackageReference Include="NodaTime" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
+</Project>

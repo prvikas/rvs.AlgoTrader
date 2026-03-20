@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>rvs.AlgoTrader.Application</AssemblyName>
+    <RootNamespace>rvs.AlgoTrader.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\rvs.AlgoTrader.Brokers.Abstractions\rvs.AlgoTrader.Brokers.Abstractions.csproj" />
+    <ProjectReference Include="..\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MediatR" />
+    <PackageReference Include="FluentValidation.AspNetCore" />
+    <PackageReference Include="Riok.Mapperly" />
+    <PackageReference Include="NodaTime" />
+    <PackageReference Include="NodaTime.Serialization.SystemTextJson" />
+  </ItemGroup>
+</Project>

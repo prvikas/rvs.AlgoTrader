@@ -1,0 +1,33 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.DotSettings.user
+TestResults/
+coverage/
+
+# Frontend
+node_modules/
+dist/
+.vite/
+frontend/.env
+frontend/.env.local
+
+# Environment / secrets
+.env
+*.pfx
+*.pem
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Migrations (keep V1 initial, ignore generated EF migrations)
+# migrations/*.cs — uncomment to ignore generated migrations
