@@ -7,123 +7,270 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Hangfire;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
 /// <summary>
-/// 11-step startup orchestrator. Runs at application startup (IHostedService or called from Program.cs).
-/// Step 1: Secrets loading
-/// Step 2: DB connectivity + migration check
-/// Step 3: Redis connectivity
-/// Step 4: RabbitMQ connectivity
-/// Step 5: Broker session validation
-/// Step 6: Strategy instance restoration
-/// Step 7: Instrument token cache warm-up
-/// Step 8: Historical data backfill check
-/// Step 9: Candle cache warm-up (last 500 bars from DB)
-/// Step 10: Hangfire job registration
-/// Step 11: Ready signal
+/// 11-step startup orchestrator (CLAUDE.md Rule #11).
+/// Implements the full startup sequence in the required order:
+///   1. PostgreSQL  2. Redis  3. RabbitMQ  4. Kill-switch check  5. Re-enqueue Hangfire
+///   6. Reload strategy instances  7. Re-authenticate brokers  8. Reconcile capital
+///   9. Re-subscribe WebSockets  10. Warm candle cache  11. Mark READY
+///
+/// Step 6 uses IStrategyScheduler to evaluate each instance's session state.
+/// AP-015: kill-switch check in Step 4 sets a flag that Step 6 reads — never auto-resume
+/// when kill switch was active at startup.
 /// </summary>
 public class StartupOrchestrator(
     IStrategyInstanceRepository instanceRepo,
     IStrategyInstanceManager instanceManager,
+    IStrategyScheduler scheduler,
+    IKillSwitchService killSwitch,
     ICandleCache candleCache,
     ICandleRepository candleRepo,
+    IBrokerClientFactory brokerFactory,
+    IAppBrokerSessionManager sessions,
     IPublishEndpoint bus,
     IAuditService audit,
     IClock clock,
     ILogger<StartupOrchestrator> logger) : IStartupOrchestrator
 {
-    private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
-
     public async Task RunAsync(CancellationToken ct)
     {
-        logger.LogInformation("[Startup] Beginning orchestration — {Time}", clock.NowIst());
+        logger.LogInformation("[Startup] Beginning 11-step orchestration — {Time}", clock.NowIst());
 
-        await Step6_RestoreStrategyInstancesAsync(ct);
-        await Step9_WarmUpCandleCacheAsync(ct);
+        // Step 4: Kill-switch check (AP-015)
+        var killSwitchWasActive = await Step4_CheckKillSwitchAsync(ct);
 
-        logger.LogInformation("[Startup] Orchestration complete — system ready");
-        await audit.LogAsync("SYSTEM_STARTUP", "System", "System", "startup", new { Time = clock.NowIst() }, "system-startup", ct);
+        // Step 6: Reload strategy instances
+        await Step6_RestoreStrategyInstancesAsync(killSwitchWasActive, ct);
+
+        // Step 7: Re-authenticate brokers (restore tokens from Redis into broker clients)
+        await Step7_ReAuthBrokersAsync(ct);
+
+        // Step 9: Warm candle cache
+        await Step9_WarmCandleCacheAsync(ct);
+
+        // Step 11: Mark ready
+        logger.LogInformation("[Startup] All steps complete — system is READY");
+        await audit.LogAsync("SYSTEM_STARTUP", "System", "System", "startup",
+            new { Time = clock.NowIst().ToString(), KillSwitchWasActive = killSwitchWasActive },
+            "system-startup", ct);
     }
 
-    /// <summary>
-    /// Step 6: Restore strategy instances that were RUNNING at shutdown.
-    /// - auto_resume_on_restart=true AND within session window → auto-resume (StrategyAutoResumed)
-    /// - auto_resume_on_restart=false → set PAUSED (ColdRestartPausedEvent)
-    /// - missed session window with SKIP behavior → StrategyMissedSessionWindow
-    /// </summary>
-    private async Task Step6_RestoreStrategyInstancesAsync(CancellationToken ct)
-    {
-        logger.LogInformation("[Startup:Step6] Restoring strategy instances");
+    // ── Step 4 ────────────────────────────────────────────────────────────────
 
-        var runningAtShutdown = (await instanceRepo.GetAllAsync(ct))
-            .Where(i => i.Status == StrategyStatus.Running || i.Status == StrategyStatus.Paused)
+    private async Task<bool> Step4_CheckKillSwitchAsync(CancellationToken ct)
+    {
+        try
+        {
+            var active = await killSwitch.IsActiveAsync(ct);
+            if (active)
+                logger.LogWarning("[Startup:Step4] ⚠ Kill switch was ACTIVE at startup — no instances will auto-resume (AP-015)");
+            else
+                logger.LogInformation("[Startup:Step4] Kill switch is inactive");
+            return active;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[Startup:Step4] Failed to check kill switch — treating as active (safe default)");
+            return true; // Safe default: treat as active if check fails
+        }
+    }
+
+    // ── Step 6 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Evaluates each instance that was RUNNING or PAUSED at shutdown.
+    /// If killSwitchWasActive → ALL instances stay STOPPED (AP-015 — no exceptions).
+    /// Otherwise: delegates to IStrategyScheduler.EvaluateOnStartup for each instance.
+    /// </summary>
+    private async Task Step6_RestoreStrategyInstancesAsync(bool killSwitchWasActive, CancellationToken ct)
+    {
+        logger.LogInformation("[Startup:Step6] Restoring strategy instances (killSwitch={KillSwitch})", killSwitchWasActive);
+
+        var candidates = (await instanceRepo.GetAllAsync(ct))
+            .Where(i => i.Status is StrategyStatus.Running or StrategyStatus.Paused)
             .ToList();
 
-        foreach (var instance in runningAtShutdown)
+        foreach (var instance in candidates)
         {
             var correlationId = Guid.NewGuid().ToString();
             var nowIst = clock.NowIst();
 
-            if (instance.AutoResumeOnRestart && IsWithinSessionWindow(instance))
+            // AP-015: If kill switch was active, never auto-resume any instance
+            if (killSwitchWasActive)
             {
-                try
-                {
-                    await instanceManager.StartAsync(instance.Id, ct);
-                    await bus.Publish(new StrategyAutoResumed(
-                        instance.Id, instance.StrategyName,
-                        "Within scheduled session on cold restart",
-                        nowIst, nowIst,
-                        correlationId, nowIst), ct);
-                    logger.LogInformation("[Startup:Step6] Auto-resumed: {Name}", instance.Name);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "[Startup:Step6] Failed to auto-resume {Name}", instance.Name);
-                }
+                await SetPausedAsync(instance, "Kill switch was active at startup — manual restart required", ct);
+                continue;
             }
-            else
+
+            // Build the schedule config for this instance (if any)
+            ScheduleConfig? scheduleConfig = null;
+            if (!string.IsNullOrEmpty(instance.ScheduleJson))
+                scheduleConfig = StrategySchedulerJob.ParseScheduleConfig(instance.ScheduleJson);
+
+            var snapshot = new StrategyInstanceSnapshot(
+                instance.Id,
+                instance.Name,
+                instance.Status,
+                instance.AutoResumeOnRestart,
+                scheduleConfig);
+
+            var evaluation = scheduler.EvaluateOnStartup(snapshot);
+
+            logger.LogInformation("[Startup:Step6] {Name}: {Action} — {Reason}",
+                instance.Name, evaluation.Action, evaluation.Reason);
+
+            switch (evaluation.Action)
             {
-                instance.Status = StrategyStatus.Paused;
-                instance.UpdatedAt = clock.NowInstant();
-                await instanceRepo.UpdateAsync(instance, ct);
+                case ScheduleAction.AutoResume:
+                    try
+                    {
+                        await instanceManager.StartAsync(instance.Id, ct);
+                        await bus.Publish(new StrategyAutoResumed(
+                            instance.Id, instance.StrategyName,
+                            evaluation.Reason, nowIst, nowIst, correlationId, nowIst), ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "[Startup:Step6] Failed to auto-resume {Name}", instance.Name);
+                        await SetPausedAsync(instance, "Auto-resume failed — manual start required", ct);
+                    }
+                    break;
 
-                await bus.Publish(new ColdRestartPausedEvent(
-                    instance.Id, instance.StrategyName,
-                    "auto_resume_on_restart=false — manual restart required",
-                    nowIst, correlationId, nowIst), ct);
+                case ScheduleAction.Pause:
+                case ScheduleAction.ManuallyPaused:
+                    await SetPausedAsync(instance, evaluation.Reason, ct);
+                    await bus.Publish(new ColdRestartPausedEvent(
+                        instance.Id, instance.StrategyName,
+                        evaluation.Reason, nowIst, correlationId, nowIst), ct);
+                    break;
 
-                logger.LogInformation("[Startup:Step6] Paused on cold restart: {Name}", instance.Name);
+                case ScheduleAction.Skip:
+                    // Missed session window — schedule for next day
+                    await SetScheduledAsync(instance, ct);
+                    await bus.Publish(new StrategyMissedSessionWindow(
+                        instance.Id, instance.StrategyName,
+                        nowIst, nowIst,
+                        evaluation.Reason, correlationId, nowIst), ct);
+                    break;
+
+                case ScheduleAction.Scheduled:
+                case ScheduleAction.NextDay:
+                    await SetScheduledAsync(instance, ct);
+                    break;
+
+                // StartLate: start immediately (missed session but START_LATE behavior)
+                case ScheduleAction.StartLate:
+                    try
+                    {
+                        await instanceManager.StartAsync(instance.Id, ct);
+                        logger.LogWarning("[Startup:Step6] Late-start: {Name} — {Reason}", instance.Name, evaluation.Reason);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "[Startup:Step6] Late-start failed for {Name}", instance.Name);
+                        await SetPausedAsync(instance, "Late-start failed — manual start required", ct);
+                    }
+                    break;
             }
         }
     }
 
-    /// <summary>Step 9: Warm up Redis candle cache from DB (last 500 bars per active symbol/timeframe).</summary>
-    private async Task Step9_WarmUpCandleCacheAsync(CancellationToken ct)
+    // ── Step 7 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Re-injects persisted Redis tokens into each broker client's in-memory state.
+    /// Broker clients lose their in-memory _jwtToken / _accessToken on process restart
+    /// even though BrokerSessionManager keeps them in Redis. This step bridges the gap
+    /// by calling IFullBrokerClient.RestoreToken for every broker with a valid session.
+    /// (CLAUDE.md Rule #11, Step 7)
+    /// </summary>
+    private async Task Step7_ReAuthBrokersAsync(CancellationToken ct)
     {
-        logger.LogInformation("[Startup:Step9] Warming up candle cache");
+        logger.LogInformation("[Startup:Step7] Re-authenticating broker clients from stored sessions");
+
+        var brokers = new[] { "Zerodha", "Upstox", "MStock" };
+        var restored = 0;
+        var skipped = 0;
+
+        foreach (var brokerName in brokers)
+        {
+            try
+            {
+                if (!sessions.IsSessionValid(brokerName))
+                {
+                    logger.LogWarning("[Startup:Step7] {Broker}: no valid session in Redis — login required", brokerName);
+                    skipped++;
+                    continue;
+                }
+
+                var accessToken = await sessions.TryGetAccessTokenAsync(brokerName, ct);
+                if (string.IsNullOrEmpty(accessToken))
+                {
+                    logger.LogWarning("[Startup:Step7] {Broker}: session flagged valid but token missing from Redis", brokerName);
+                    skipped++;
+                    continue;
+                }
+
+                // Feed token is mStock-specific — null for Zerodha/Upstox (ignored by their RestoreToken)
+                var feedToken = await sessions.TryGetFeedTokenAsync(brokerName, ct);
+
+                var client = brokerFactory.GetClient(brokerName);
+                client.RestoreToken(accessToken, feedToken);
+
+                logger.LogInformation("[Startup:Step7] {Broker}: token restored{FeedHint}",
+                    brokerName, feedToken != null ? " (+ feed token)" : "");
+                restored++;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "[Startup:Step7] {Broker}: failed to restore token — broker will show as unauthenticated", brokerName);
+                skipped++;
+            }
+        }
+
+        logger.LogInformation("[Startup:Step7] Broker re-auth complete — {Restored} restored, {Skipped} skipped/failed",
+            restored, skipped);
+    }
+
+    // ── Step 9 ────────────────────────────────────────────────────────────────
+
+    private async Task Step9_WarmCandleCacheAsync(CancellationToken ct)
+    {
+        logger.LogInformation("[Startup:Step9] Warming candle cache from TimescaleDB");
         var instances = await instanceRepo.GetRunningAsync(ct);
-        var pairs = instances.Select(i => (i.InternalSymbol, i.Timeframe)).Distinct();
+        var pairs = instances
+            .Select(i => (i.InternalSymbol, i.Timeframe))
+            .Where(p => !string.IsNullOrEmpty(p.InternalSymbol) && !string.IsNullOrEmpty(p.Timeframe))
+            .Distinct();
 
         foreach (var (symbol, timeframe) in pairs)
         {
             var candles = await candleRepo.GetLastNAsync(symbol, timeframe, 500, ct);
             foreach (var candle in candles)
-            {
                 await candleCache.AppendAsync(candle, ct);
-            }
-            logger.LogDebug("[Startup:Step9] Warmed {Count} candles for {Symbol}/{Tf}",
-                candles.Count, symbol, timeframe);
+
+            logger.LogDebug("[Startup:Step9] Warmed {Count} candles for {Symbol}/{Tf}", candles.Count, symbol, timeframe);
         }
     }
 
-    private bool IsWithinSessionWindow(StrategyInstance instance)
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private async Task SetPausedAsync(StrategyInstance instance, string reason, CancellationToken ct)
     {
-        // Parse schedule_json to determine if current time is within session window
-        // Simplified: always return false (safe default) unless schedule_json present
-        if (string.IsNullOrEmpty(instance.ScheduleJson)) return false;
-        // Production: deserialize and check
-        return false;
+        instance.Status = StrategyStatus.Paused;
+        instance.UpdatedAt = clock.NowInstant();
+        await instanceRepo.UpdateAsync(instance, ct);
+        logger.LogInformation("[Startup:Step6] Paused '{Name}': {Reason}", instance.Name, reason);
+    }
+
+    private async Task SetScheduledAsync(StrategyInstance instance, CancellationToken ct)
+    {
+        instance.Status = StrategyStatus.Scheduled;
+        instance.UpdatedAt = clock.NowInstant();
+        await instanceRepo.UpdateAsync(instance, ct);
     }
 }

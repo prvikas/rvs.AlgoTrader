@@ -11,6 +11,15 @@ public interface IBrokerOrderClient
 public interface IBrokerMarketDataClient
 {
     Task<BrokerQuote> GetQuoteAsync(string brokerToken, CancellationToken ct);
+
+    /// <summary>
+    /// Batch quote fetch for multiple broker tokens (up to 500 per call — broker-specific limit).
+    /// Returns a dictionary keyed by broker token. Tokens not found in the response are absent.
+    /// Used by OptionChainService to fetch all option legs in one call.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, OptionQuote>> GetOptionQuotesAsync(
+        IEnumerable<string> brokerTokens, CancellationToken ct);
+
     Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct);
     Task<MarketDepth> GetDepthAsync(string brokerToken, CancellationToken ct);
 }
@@ -49,6 +58,14 @@ public interface IFullBrokerClient
     string BrokerName { get; }
     Task<LoginResult> AuthenticateAsync(BrokerCredentials creds, CancellationToken ct);
     Task<LatencyReport> MeasureLatencyAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Restores a previously-obtained access token into this client's in-memory state
+    /// without going through a full auth round-trip. Called by IStartupOrchestrator Step 7
+    /// to re-inject Redis-persisted tokens after a process restart.
+    /// feedToken is optional (used by brokers that have a separate WebSocket feed token).
+    /// </summary>
+    void RestoreToken(string accessToken, string? feedToken = null);
 }
 
 public interface IBrokerClientFactory

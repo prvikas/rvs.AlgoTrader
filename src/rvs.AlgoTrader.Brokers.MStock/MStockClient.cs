@@ -56,6 +56,13 @@ public class MStockClient(
         return result;
     }
 
+    /// <inheritdoc/>
+    public void RestoreToken(string accessToken, string? feedToken = null)
+    {
+        _jwtToken   = accessToken;
+        _feedToken  = feedToken;   // may be null if not stored; WebSocket falls back to _jwtToken
+    }
+
     public async Task<OrderResult> PlaceOrderAsync(OrderRequest request, CancellationToken ct)
     {
         var req = CreateRequest(HttpMethod.Post, "/v1/orders");
@@ -143,6 +150,35 @@ public class MStockClient(
             d.GetProperty("open").GetDecimal(), d.GetProperty("high").GetDecimal(),
             d.GetProperty("low").GetDecimal(), d.GetProperty("close").GetDecimal(),
             d.GetProperty("volume").GetInt64(), 0, 0, now);
+    }
+
+    public async Task<IReadOnlyDictionary<string, OptionQuote>> GetOptionQuotesAsync(
+        IEnumerable<string> brokerTokens, CancellationToken ct)
+    {
+        // mStock option chain endpoint accepts a comma-separated symbol list.
+        // OI is available; IV and Greeks are not returned by the basic quote endpoint.
+        var tokens = brokerTokens.ToList();
+        var symbols = string.Join(",", tokens);
+        var req = CreateRequest(HttpMethod.Get, $"/v1/optionchain?symbols={Uri.EscapeDataString(symbols)}");
+        var response = await http.SendAsync(req, ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        var doc = JsonDocument.Parse(json);
+        var result = new Dictionary<string, OptionQuote>();
+        foreach (var token in tokens)
+        {
+            if (!doc.RootElement.GetProperty("data").TryGetProperty(token, out var d)) continue;
+            result[token] = new OptionQuote(
+                InternalSymbol:    token,
+                LastTradedPrice:   d.GetProperty("ltp").GetDecimal(),
+                OpenInterest:      d.TryGetProperty("oi", out var oi) ? oi.GetInt64() : 0L,
+                OiChange:          d.TryGetProperty("oiChange", out var oiChg) ? oiChg.GetInt64() : 0L,
+                Volume:            d.TryGetProperty("volume", out var vol) ? vol.GetInt64() : 0L,
+                ImpliedVolatility: 0m,
+                BidPrice:          d.TryGetProperty("bestBid", out var bid) ? bid.GetDecimal() : 0m,
+                AskPrice:          d.TryGetProperty("bestAsk", out var ask) ? ask.GetDecimal() : 0m,
+                Delta:             0m);
+        }
+        return result;
     }
 
     public async Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct)
@@ -287,16 +323,50 @@ public class MStockClient(
     // ── Instrument Master (Scrip Master) ─────────────────────────────────────
 
     /// <summary>
-    /// Downloads the complete MStock scrip master for all exchanges.
-    /// MStock Type B provides per-exchange CSVs at /v1/master?exch_seg={exchange}.
-    /// CSV columns: token, symbol, name, expiry, strike, lotsize, instrumenttype, exch_seg, tick_size
-    /// Called once after login and once per day via Hangfire.
+    /// Downloads the complete MStock scrip master using the OpenAPIScripMaster endpoint.
+    ///
+    /// Endpoint: GET /instruments/OpenAPIScripMaster
+    /// Returns all exchanges (NSE, BSE, NFO, BFO, MCX, CDS) in a single CSV download.
+    /// Each row contains the exch_seg column identifying the exchange, so no per-exchange
+    /// looping is required.
+    ///
+    /// Reference: https://api.mstock.trade/openapi/typeb/instruments/OpenAPIScripMaster
+    /// (OpenAlgo mstock broker implementation uses this same endpoint)
+    ///
+    /// The per-exchange /v1/master?exch_seg={X} endpoint was NOT used here because it
+    /// silently returns empty data for NSE and some other segments under certain auth states.
     /// </summary>
     public async Task<IReadOnlyList<InstrumentTokenMapping>> GetInstrumentMasterAsync(CancellationToken ct)
     {
-        var mappings = new List<InstrumentTokenMapping>();
+        try
+        {
+            // Primary: bulk OpenAPIScripMaster — all exchanges in one JSON download.
+            // Endpoint returns a JSON array; each element has the same field names as
+            // the per-exchange CSV master (token, symbol, name, expiry, strike,
+            // lotsize, instrumenttype, exch_seg, tick_size).
+            var req = CreateRequest(HttpMethod.Get, "/instruments/OpenAPIScripMaster");
+            var response = await http.SendAsync(req, ct);
 
-        // Download scrip master for each exchange segment
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync(ct);
+                // Detect format: JSON array starts with '['; CSV starts with a column header
+                var mappings = body.TrimStart().StartsWith('[')
+                    ? ParseScripMasterJson(body)
+                    : ParseScripMasterCsv(body, string.Empty);
+
+                if (mappings.Count > 0)
+                    return mappings;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log and fall through to per-exchange fallback
+            _ = ex; // caller can inspect via Serilog enrichment if needed
+        }
+
+        // Fallback: per-exchange segments (used if bulk endpoint is unavailable)
+        var fallback = new List<InstrumentTokenMapping>();
         foreach (var exchSeg in new[] { "NSE", "BSE", "NFO", "BFO", "MCX", "CDS" })
         {
             try
@@ -304,18 +374,111 @@ public class MStockClient(
                 var req = CreateRequest(HttpMethod.Get, $"/v1/master?exch_seg={exchSeg}");
                 var response = await http.SendAsync(req, ct);
                 if (!response.IsSuccessStatusCode) continue;
-
                 var csv = await response.Content.ReadAsStringAsync(ct);
-                var parsed = ParseScripMasterCsv(csv, exchSeg);
-                mappings.AddRange(parsed);
+                fallback.AddRange(ParseScripMasterCsv(csv, exchSeg));
             }
             catch (Exception)
             {
-                // Skip exchanges that fail — proceed with others
+                // Skip segment; continue with others
             }
         }
+        return fallback;
+    }
 
-        return mappings;
+    /// <summary>
+    /// Parses the OpenAPIScripMaster JSON array returned by /instruments/OpenAPIScripMaster.
+    /// JSON element shape (same field names as the per-exchange CSV):
+    /// { "token":"3045", "symbol":"SBIN-EQ", "name":"STATE BANK OF INDIA",
+    ///   "expiry":"", "strike":"-1", "lotsize":"1", "instrumenttype":"",
+    ///   "exch_seg":"NSE", "tick_size":"5" }
+    /// </summary>
+    private static List<InstrumentTokenMapping> ParseScripMasterJson(string json)
+    {
+        var results = new List<InstrumentTokenMapping>();
+        if (string.IsNullOrWhiteSpace(json)) return results;
+
+        JsonElement root;
+        try { root = JsonDocument.Parse(json).RootElement; }
+        catch { return results; }
+
+        if (root.ValueKind != JsonValueKind.Array) return results;
+
+        string Str(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString() ?? string.Empty
+                : string.Empty;
+
+        foreach (var item in root.EnumerateArray())
+        {
+            var token     = Str(item, "token");
+            var symbol    = Str(item, "symbol");
+            if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(symbol)) continue;
+
+            var name      = Str(item, "name");
+            var instrType = Str(item, "instrumenttype").ToUpper();
+            var expiry    = Str(item, "expiry");
+            var strike    = Str(item, "strike");
+            var optType   = Str(item, "optiontype");   // CE / PE (may be absent in some responses)
+            var exchSeg   = Str(item, "exch_seg").ToUpper();
+
+            // strike "-1" means no strike (equities/futures)
+            var strikeClean = strike is "-1" or "" ? string.Empty : strike;
+            decimal.TryParse(Str(item, "lotsize"), out var lotSize);
+            decimal.TryParse(Str(item, "tick_size"), out var tickDecimal);
+            decimal.TryParse(strikeClean, out var strikeDecimal);
+
+            // Infer CE/PE from symbol suffix when optiontype field is absent
+            if (string.IsNullOrEmpty(optType))
+            {
+                if (symbol.EndsWith("CE", StringComparison.OrdinalIgnoreCase)) optType = "CE";
+                else if (symbol.EndsWith("PE", StringComparison.OrdinalIgnoreCase)) optType = "PE";
+            }
+
+            // Normalise instrType when the field is empty but we can infer it from context.
+            // BFO (and some NFO rows) omit instrumenttype entirely, so we fill it in here
+            // so that InstrumentRefreshService.ParseInstrumentType gets a meaningful value
+            // instead of falling through to the Equity default.
+            if (string.IsNullOrEmpty(instrType))
+            {
+                if (!string.IsNullOrEmpty(optType))
+                    instrType = "OPT";   // option leg — CE or PE
+                else if (!string.IsNullOrEmpty(expiry) && string.IsNullOrEmpty(strikeClean))
+                    instrType = "FUT";   // futures leg — has expiry, no strike
+            }
+
+            string internalSymbol;
+            if (!string.IsNullOrEmpty(expiry) && !string.IsNullOrEmpty(strikeClean) && !string.IsNullOrEmpty(optType))
+            {
+                var expiryCompact = expiry.Replace("-", "");
+                internalSymbol = $"{exchSeg}:{symbol}{expiryCompact}{optType}{strikeClean}";
+            }
+            else if (!string.IsNullOrEmpty(expiry) && instrType is "FUT" or "FUTIDX" or "FUTSTK")
+            {
+                var expiryCompact = expiry.Replace("-", "");
+                internalSymbol = $"{exchSeg}:{symbol}{expiryCompact[..Math.Min(5, expiryCompact.Length)]}FUT";
+            }
+            else
+            {
+                internalSymbol = $"{exchSeg}:{symbol}";
+            }
+
+            results.Add(new InstrumentTokenMapping(
+                InternalSymbol:  internalSymbol,
+                BrokerToken:     token,
+                Exchange:        exchSeg,
+                BrokerName:      "MStock",
+                TradingSymbol:   symbol,
+                Name:            string.IsNullOrEmpty(name) ? symbol : name,
+                InstrumentType:  string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
+                Expiry:          string.IsNullOrEmpty(expiry) || expiry == "1" ? null : expiry,
+                StrikePrice:     string.IsNullOrEmpty(strikeClean) ? null : strikeDecimal,
+                OptionType:      string.IsNullOrEmpty(optType) ? null : optType,
+                LotSize:         (int)(lotSize > 0 ? lotSize : 1),
+                TickSize:        tickDecimal > 0 ? tickDecimal : 0.05m
+            ));
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -365,6 +528,15 @@ public class MStockClient(
             int.TryParse(Get(cols, "lotsize"), out var lotSize);
             decimal.TryParse(Get(cols, "tick_size"), out var tickSize);
             decimal.TryParse(strike, out var strikeDecimal);
+
+            // Normalise instrType when the field is empty but we can infer it from context.
+            if (string.IsNullOrEmpty(instrType))
+            {
+                if (!string.IsNullOrEmpty(optType))
+                    instrType = "OPT";
+                else if (!string.IsNullOrEmpty(expiry) && string.IsNullOrEmpty(strike))
+                    instrType = "FUT";
+            }
 
             // Build InternalSymbol — mirror MStock's own naming convention
             string internalSymbol;

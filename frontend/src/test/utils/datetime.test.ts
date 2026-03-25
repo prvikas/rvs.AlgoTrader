@@ -1,23 +1,23 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { formatIst, isMarketHours, formatInr, formatPct } from '../../utils/datetime';
 
 describe('formatIst', () => {
-  it('formats UTC ISO string to IST display', () => {
+  it('formats UTC ISO string to IST display with IST label', () => {
     // 2024-01-15T03:45:00Z = 2024-01-15 09:15:00 IST
     const result = formatIst('2024-01-15T03:45:00Z', 'yyyy-MM-dd HH:mm:ss');
-    expect(result).toBe('2024-01-15 09:15:00');
+    expect(result).toBe('2024-01-15 09:15:00 IST');
   });
 
   it('handles null/undefined gracefully', () => {
-    expect(formatIst(null as any, 'HH:mm')).toBe('—');
-    expect(formatIst(undefined as any, 'HH:mm')).toBe('—');
-    expect(formatIst('', 'HH:mm')).toBe('—');
+    expect(formatIst(null as any, 'HH:mm')).toBe('--');
+    expect(formatIst(undefined as any, 'HH:mm')).toBe('--');
+    expect(formatIst('', 'HH:mm')).toBe('--');
   });
 
-  it('formats time-only correctly', () => {
+  it('formats time-only correctly with IST label', () => {
     // 2024-01-15T09:00:00Z = 14:30 IST
     const result = formatIst('2024-01-15T09:00:00Z', 'HH:mm');
-    expect(result).toBe('14:30');
+    expect(result).toBe('14:30 IST');
   });
 });
 
@@ -85,7 +85,7 @@ describe('formatPct', () => {
 
   it('formats negative percentage', () => {
     const result = formatPct(-0.05);
-    expect(result).toContain('-') ;
+    expect(result).toContain('-');
     expect(result).toContain('5');
   });
 });

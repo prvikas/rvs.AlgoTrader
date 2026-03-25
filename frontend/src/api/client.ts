@@ -87,14 +87,49 @@ export const brokerApi = {
 }
 
 // Instruments
+export interface InstrumentsListParams {
+  search?: string
+  exchange?: string
+  instrumentType?: string
+  active?: boolean
+  sortBy?: string    // "symbol" | "name" | "exchange" | "type" | "trading"
+  sortDir?: string   // "asc" | "desc"
+  page?: number
+  pageSize?: number
+}
+
 export const instrumentsApi = {
-  list: (params?: { exchange?: string; active?: boolean }) =>
-    apiClient.get<ApiResponse<Instrument[]>>('/instruments', { params }),
+  list: (params?: InstrumentsListParams) =>
+    apiClient.get<ApiResponse<PagedResult<Instrument>>>('/instruments', { params }),
   search: (query: string) =>
-    apiClient.get<ApiResponse<Instrument[]>>('/instruments', { params: { search: query } }),
+    apiClient.get<ApiResponse<PagedResult<Instrument>>>('/instruments', {
+      params: { search: query, pageSize: 20 },
+    }),
   /** Trigger a master-data refresh from the broker (brokerName = "MStock" | "Zerodha" | "Upstox" | "all") */
   refresh: (brokerName = 'all') =>
     apiClient.post<ApiResponse<boolean>>(`/instruments/refresh?brokerName=${brokerName}`),
+}
+
+// Historical Data
+export const historicalApi = {
+  /** Triggers a Hangfire job to download candle history for one instrument.
+   *  fromDate format: "YYYY-MM-DD". Returns a job ID or status message. */
+  downloadHistory: (internalSymbol: string, timeframe: string, fromDate: string) =>
+    apiClient.post<ApiResponse<string>>('/historical/download', { internalSymbol, timeframe, fromDate }),
+  /** List recent download jobs and their status. */
+  listJobs: () =>
+    apiClient.get<ApiResponse<HistoricalDownloadJob[]>>('/historical/jobs'),
+}
+
+export interface HistoricalDownloadJob {
+  id: string
+  internalSymbol: string
+  timeframe: string
+  fromDate: string
+  status: string   // "Pending" | "InProgress" | "Succeeded" | "Failed"
+  createdAt: string
+  completedAt?: string
+  error?: string
 }
 
 // Backtest
@@ -136,6 +171,12 @@ export interface StrategyInstance {
   allocatedCapital?: number
   parametersJson?: string
   createdAt: string
+  /** Today's realised P&L for this instance (net of brokerage + taxes). */
+  todayRealizedPnl?: number
+  /** Current mark-to-market unrealised P&L on open positions. */
+  todayUnrealizedPnl?: number
+  /** Number of currently open positions held by this instance. */
+  openPositionCount?: number
 }
 
 export interface SignalJournalEntry {
@@ -161,8 +202,12 @@ export interface BrokerAuthResult {
 export interface BrokerStatus {
   brokerName: string
   isConnected: boolean
-  isAuthenticated: boolean  // was isSessionValid — matches BrokerConnectionStatusDto
-  lastCheckedAt?: string
+  isAuthenticated: boolean
+  lastHeartbeatAt?: string       // matches BrokerConnectionStatusDto.LastHeartbeatAt
+  reconnectAttempts?: number
+  lastDisconnectReason?: string
+  sessionExpiresAt?: string
+  lastCheckedAt?: string         // alias for display fallback
 }
 
 export interface BrokerLatency {
@@ -192,6 +237,9 @@ export interface BrokerPosition {
   productType: string
 }
 
+/** 0=NextBarOpen (default), 1=NextBarOpenPlusSlippage, 2=SignalBarClose */
+export type FillModel = 0 | 1 | 2
+
 export interface BacktestRequest {
   strategyName: string
   parametersJson: string
@@ -201,6 +249,12 @@ export interface BacktestRequest {
   toDate: string
   initialCapital: number
   riskPerTradePercent?: number
+  /** Fill model. Default = 0 (NextBarOpen). */
+  fillModel?: FillModel
+  /** Slippage in basis points applied when fillModel = 1. Default = 5 bps. */
+  slippageBasisPoints?: number
+  /** Flat brokerage per order leg in INR. Default = 20 (Zerodha/Upstox model). */
+  brokerageFlatPerSide?: number
 }
 
 export interface BacktestResult {
@@ -209,22 +263,201 @@ export interface BacktestResult {
   strategyName: string
   symbol: string
   timeframe: string
+  fromDate?: string
+  toDate?: string
+  initialCapital?: number
+  finalEquity?: number
+  totalPnl: number
+  totalReturn: number
+  maxDrawdown: number
+  sharpeRatio: number
+  calmarRatio?: number
+  profitFactor?: number
+  winRate: number
+  totalTrades: number
+  winCount?: number
+  lossCount?: number
+  avgWin?: number
+  avgLoss?: number
+  maxConsecutiveLosses?: number
+  expectancyPerTrade?: number
+  dataHash?: string
+  startedAt?: string   // UTC ISO — display in IST
+  trades?: BacktestTradeResult[]
+  error?: string
+}
+
+export interface BacktestTradeResult {
+  direction: string
+  entryPrice: number
+  exitPrice: number
+  quantity: number
+  exitReason: string
+  grossPnl: number
+  netPnl: number
+  entryTime: string  // UTC ISO
+  exitTime: string   // UTC ISO
+}
+
+// Forward Test
+export const forwardTestApi = {
+  list: () => apiClient.get<ApiResponse<ForwardTestSession[]>>('/forward-test'),
+  get: (id: string) => apiClient.get<ApiResponse<ForwardTestSession>>(`/forward-test/${id}`),
+  /** @deprecated use promoteToLive instead */
+  promote: (id: string) => apiClient.post<ApiResponse<boolean>>(`/forward-test/${id}/promote`),
+  promoteFromBacktest: (req: PromoteFromBacktestRequest) =>
+    apiClient.post<ApiResponse<string>>('/forward-test/from-backtest', req),
+  promoteToLive: (instanceId: string, req: PromoteToLiveRequest) =>
+    apiClient.post<ApiResponse<PromoteToLiveResult>>(`/forward-test/${instanceId}/promote-to-live`, req),
+}
+
+export interface BacktestSnapshot {
+  backtestId: string
+  totalPnl: number
+  totalReturn: number
+  winRate: number
+  maxDrawdown: number
+  sharpeRatio: number
+  expectancyPerTrade: number
+  totalTrades: number
+}
+
+export interface ForwardTestSession {
+  instanceId: string
+  instanceName: string
+  strategyType: string
+  internalSymbol: string
+  timeframe: string
+  brokerName?: string
+  status: string
+  startedAt: string
+  endedAt?: string
+  initialCapital: number
+  currentEquity: number
   totalPnl: number
   totalReturn: number
   maxDrawdown: number
   sharpeRatio: number
   winRate: number
   totalTrades: number
+  openPositionCount: number
+  sourceBacktestId?: string
+  sourceBacktest?: BacktestSnapshot    // present if promoted from a backtest
+  equityCurvePoints?: EquityCurvePoint[]
+}
+
+export interface EquityCurvePoint {
+  time: string   // UTC ISO
+  equity: number
+  pnl: number
+}
+
+export interface PromoteFromBacktestRequest {
+  backtestId: string
+  instanceName: string
+  brokerName: string
+  initialCapital: number
+  scheduleJson?: string
+}
+
+export interface PromoteToLiveRequest {
+  brokerName: string
+  allocatedCapital: number
+  scheduleJson?: string
+}
+
+export interface PreFlightCheck {
+  name: string
+  passed: boolean
+  reason?: string
+}
+
+export interface PromoteToLiveResult {
+  success: boolean
+  newStrategyInstanceId?: string
+  checks: PreFlightCheck[]
   error?: string
 }
 
-export interface Instrument {
+// Portfolio
+export const portfolioApi = {
+  summary: () => apiClient.get<ApiResponse<PortfolioSummary>>('/portfolio/summary'),
+}
+
+export interface StrategyPnlRow {
+  instanceId: string
+  name: string
+  strategyType: string
   internalSymbol: string
-  exchange: string
+  mode: string
+  status: string
+  allocatedCapital: number
+  todayRealizedPnl: number
+  todayUnrealizedPnl: number
+  todayTotalPnl: number
+  pnlPercent: number
+}
+
+export interface PortfolioSummary {
+  todayTotalRealizedPnl: number
+  todayTotalUnrealizedPnl: number
+  todayTotalPnl: number
+  totalAllocatedCapital: number
+  runningCount: number
+  pausedCount: number
+  stoppedCount: number
+  forwardTestCount: number
+  byStrategy: StrategyPnlRow[]
+}
+
+// Notification Settings
+export const settingsApi = {
+  getNotifications: () =>
+    apiClient.get<ApiResponse<NotificationSettings>>('/settings/notifications'),
+  updateNotifications: (req: UpdateNotificationSettings) =>
+    apiClient.put<ApiResponse<boolean>>('/settings/notifications', req),
+}
+
+export interface NotificationSettings {
+  telegramBotTokenMasked?: string
+  telegramChatId?: string
+  maxDailyDrawdownPct: number
+  alertsEnabled?: boolean
+}
+
+export interface UpdateNotificationSettings {
+  telegramBotToken?: string
+  telegramChatId?: string
+  maxDailyDrawdownPct?: number
+  alertsEnabled?: boolean
+}
+
+export interface Instrument {
+  id: string
+  internalSymbol: string
   tradingSymbol: string
-  name?: string
-  instrumentType?: string
+  name: string
+  exchange: string
+  instrumentType: string
+  underlying?: string
+  strikePrice?: number
+  optionType?: string
+  expiry?: string
+  lotSize: number
+  tickSize: number
   isActive: boolean
+  /** Broker-native tokens keyed by broker name. Only brokers that have been refreshed appear here.
+   *  e.g. { "Zerodha": "738561", "Upstox": "NSE_EQ|INE002A01018", "MStock": "3045" }
+   *  Use `instrument.brokerTokens["Zerodha"]` to get the token for a specific broker.
+   */
+  brokerTokens: Record<string, string>
+}
+
+export interface PagedResult<T> {
+  items: T[]
+  totalCount: number
+  page: number
+  pageSize: number
 }
 
 export interface PlaceOrderCommand {
@@ -247,5 +480,7 @@ export interface CreateStrategyCommand {
   brokerName: string
   mode: string
   parametersJson: string
+  scheduleJson?: string     // JSON-serialised ScheduleConfig — session times, days, auto-resume, etc.
+  failureBehaviorJson?: string  // JSON-serialised FailureBehaviorConfig
   allocatedCapital?: number
 }

@@ -4,7 +4,13 @@ public record StrategyInstanceDto(
     Guid Id, string Name, string StrategyType, string InternalSymbol, string Timeframe,
     string Status, string Mode, string? BrokerName, decimal AllocatedCapital,
     bool AutoResumeOnRestart, string? ScheduleJson, string? ParametersJson,
-    string? FailureBehaviorJson, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+    string? FailureBehaviorJson, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    // Today's realised P&L for this instance (net of brokerage + taxes).
+    decimal TodayRealizedPnl = 0m,
+    // Current mark-to-market unrealised P&L on open positions.
+    decimal TodayUnrealizedPnl = 0m,
+    // Number of currently open positions held by this instance.
+    int OpenPositionCount = 0);
 
 public record CreateStrategyInstanceDto(
     string Name, string StrategyType, Guid WatchlistId, string Mode,

@@ -34,9 +34,8 @@ var app = builder.Build();
 // Database initialization — create database and apply migrations on startup
 try
 {
-    using (var scope = app.Services.CreateScope())
-    {
-        var dbContext = scope.ServiceProvider.GetRequiredService<AlgoTraderDbContext>();
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<AlgoTraderDbContext>();
 
         // Ensure database exists
         await dbContext.Database.EnsureCreatedAsync();
@@ -48,7 +47,7 @@ try
 
         try
         {
-            using (var command = connection.CreateCommand())
+            using var command = connection.CreateCommand();
             {
                 // Check if tables exist
                 command.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'strategy_instances';";
@@ -98,7 +97,7 @@ try
                             currentStatement.AppendLine(line);
 
                             // If line ends with semicolon, we have a complete statement
-                            if (trimmedLine.EndsWith(";"))
+                            if (trimmedLine.EndsWith(';'))
                             {
                                 var stmt = currentStatement.ToString().Trim();
                                 if (!string.IsNullOrWhiteSpace(stmt))
@@ -159,7 +158,6 @@ try
         {
             await connection.CloseAsync();
         }
-    }
 }
 catch (Exception ex)
 {

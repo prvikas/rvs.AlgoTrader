@@ -1,10 +1,18 @@
 import { useState } from 'react'
-import { useStrategyStream } from '../../hooks/useSignalR'
 import { strategiesApi } from '../../api/client'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-export function ColdRestartBanner() {
-  const { coldRestartPaused } = useStrategyStream()
+interface ColdRestartItem {
+  instanceId: string
+  strategyName: string
+  reason: string
+}
+
+interface Props {
+  coldRestartPaused: ColdRestartItem[]
+}
+
+export function ColdRestartBanner({ coldRestartPaused }: Props) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const qc = useQueryClient()
 
@@ -16,50 +24,105 @@ export function ColdRestartBanner() {
   const visible = coldRestartPaused.filter(p => !dismissed.has(p.instanceId))
   if (visible.length === 0) return null
 
+  const dismiss = (instanceId: string) =>
+    setDismissed(prev => new Set([...prev, instanceId]))
+
   return (
-    <div style={{
-      background: '#f59e0b',
-      color: '#1c1917',
-      padding: '12px 24px',
-      borderBottom: '1px solid #d97706'
-    }}>
-      <div style={{ fontWeight: 700, marginBottom: 8 }}>
-        ⚠️ Cold Restart — {visible.length} strategy instance(s) paused and require manual restart:
+    <div
+      role="alert"
+      aria-live="polite"
+      style={{
+        background: '#1e3a5f',
+        borderBottom: '1px solid #1d4ed8',
+        padding: '10px 24px',
+      }}
+    >
+      {/* Header row */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 8,
+      }}>
+        <span style={{ fontSize: 14 }} aria-hidden="true">ℹ️</span>
+        <span style={{ fontWeight: 700, fontSize: 13, color: '#bfdbfe' }}>
+          System restarted — {visible.length} instance{visible.length !== 1 ? 's' : ''} paused
+        </span>
+        <span style={{ fontSize: 12, color: '#60a5fa', fontWeight: 400 }}>
+          (auto-resume was disabled; manual start required)
+        </span>
       </div>
+
+      {/* Instance chips */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {visible.map(p => (
-          <div key={p.instanceId} style={{
-            background: 'white',
-            borderRadius: 6,
-            padding: '6px 12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 13
-          }}>
-            <span>{p.strategyName}</span>
-            <button
-              onClick={() => resumeMutation.mutate(p.instanceId)}
+        {visible.map(p => {
+          const isResuming = resumeMutation.isPending && resumeMutation.variables === p.instanceId
+          return (
+            <div
+              key={p.instanceId}
               style={{
-                background: '#16a34a',
-                color: 'white',
-                border: 'none',
-                borderRadius: 4,
-                padding: '3px 10px',
-                cursor: 'pointer',
-                fontSize: 12
+                background: '#0f2a50',
+                border: '1px solid #1d4ed8',
+                borderRadius: 6,
+                padding: '5px 10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
               }}
             >
-              Resume
-            </button>
-            <button
-              onClick={() => setDismissed(prev => new Set([...prev, p.instanceId]))}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12 }}
-            >
-              ✕
-            </button>
-          </div>
-        ))}
+              <span style={{
+                color: '#bfdbfe',
+                fontWeight: 600,
+                maxWidth: 180,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+                title={p.strategyName}
+              >
+                {p.strategyName}
+              </span>
+              <button
+                onClick={() => resumeMutation.mutate(p.instanceId)}
+                disabled={isResuming}
+                aria-label={`Start ${p.strategyName}`}
+                style={{
+                  background: isResuming ? '#166534' : '#16a34a',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '3px 10px',
+                  cursor: isResuming ? 'not-allowed' : 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  flexShrink: 0,
+                  transition: 'background 0.15s',
+                }}
+              >
+                {isResuming ? 'Starting…' : '▶ Start'}
+              </button>
+              <button
+                onClick={() => dismiss(p.instanceId)}
+                aria-label={`Dismiss ${p.strategyName}`}
+                title="Dismiss"
+                style={{
+                  background: 'none',
+                  border: '1px solid #1d4ed8',
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                  color: '#60a5fa',
+                  padding: '2px 5px',
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.Backtesting.Engine;
 

@@ -19,9 +19,18 @@ public record StrategyContext(
     Guid StrategyInstanceId,
     string InternalSymbol,
     string Timeframe,
-    IReadOnlyList<ClosedCandle> Candles,   // historical closed candles only — never open bar
+    IReadOnlyList<ClosedCandle> Candles,           // historical closed candles only — never open bar
     object ConfigJson,
-    string CorrelationId
+    string CorrelationId,
+
+    // Pre-fetched option chain snapshot for the underlying instrument.
+    // Null when the strategy does not require option chain analysis, or when the instrument
+    // is not a derivative (equity cash segment strategies won't have this).
+    //
+    // Use this for: PCR-based sentiment filter, max-pain level, OI support/resistance.
+    // IOptionChainService is called by StrategyEvaluationQueue BEFORE building this context,
+    // so strategies can read OptionChain directly without any I/O inside EvaluateAsync (Rule #18).
+    OptionChainSnapshot? OptionChain = null
 );
 
 public record SignalResult(

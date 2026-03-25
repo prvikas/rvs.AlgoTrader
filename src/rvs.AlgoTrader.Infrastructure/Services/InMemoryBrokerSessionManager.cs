@@ -14,7 +14,7 @@ public class InMemoryBrokerSessionManager(ILogger<InMemoryBrokerSessionManager> 
 {
     private readonly ConcurrentDictionary<string, SessionEntry> _sessions = new(StringComparer.OrdinalIgnoreCase);
 
-    private record SessionEntry(string AccessToken, DateTimeOffset? ExpiresAt, string? RefreshToken);
+    private record SessionEntry(string AccessToken, DateTimeOffset? ExpiresAt, string? RefreshToken, string? FeedToken = null);
 
     public Task<string> GetAccessTokenAsync(string brokerName, CancellationToken ct)
     {
@@ -34,11 +34,23 @@ public class InMemoryBrokerSessionManager(ILogger<InMemoryBrokerSessionManager> 
     public Task StoreSessionAsync(string brokerName, LoginResult result, CancellationToken ct)
     {
         if (!result.Success || result.AccessToken == null) return Task.CompletedTask;
-        var entry = new SessionEntry(result.AccessToken, result.ExpiresAt, result.RefreshToken);
+        var entry = new SessionEntry(result.AccessToken, result.ExpiresAt, result.RefreshToken, result.FeedToken);
         _sessions[brokerName] = entry;
         logger.LogInformation("[{Broker}] In-memory session stored. Expires: {Expiry}",
             brokerName, result.ExpiresAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "no expiry set");
         return Task.CompletedTask;
+    }
+
+    public Task<string?> TryGetAccessTokenAsync(string brokerName, CancellationToken ct)
+    {
+        _sessions.TryGetValue(brokerName, out var entry);
+        return Task.FromResult(entry?.AccessToken);
+    }
+
+    public Task<string?> TryGetFeedTokenAsync(string brokerName, CancellationToken ct)
+    {
+        _sessions.TryGetValue(brokerName, out var entry);
+        return Task.FromResult(entry?.FeedToken);
     }
 
     public Task RefreshSessionAsync(string brokerName, CancellationToken ct)

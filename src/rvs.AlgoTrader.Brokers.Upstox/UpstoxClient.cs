@@ -55,6 +55,13 @@ public class UpstoxClient(
         return result;
     }
 
+    /// <inheritdoc/>
+    public void RestoreToken(string accessToken, string? feedToken = null)
+    {
+        _accessToken = accessToken;
+        SetAuthHeader();
+    }
+
     public async Task<OrderResult> PlaceOrderAsync(OrderRequest request, CancellationToken ct)
     {
         SetAuthHeader();
@@ -150,6 +157,36 @@ public class UpstoxClient(
             d.GetProperty("ohlc").GetProperty("low").GetDecimal(),
             d.GetProperty("ohlc").GetProperty("close").GetDecimal(),
             d.GetProperty("volume").GetInt64(), 0, 0, now);
+    }
+
+    public async Task<IReadOnlyDictionary<string, OptionQuote>> GetOptionQuotesAsync(
+        IEnumerable<string> brokerTokens, CancellationToken ct)
+    {
+        // Upstox v2 market-quote endpoint accepts comma-separated instrument_key values.
+        // OI and IV are available; Greeks (delta) are not in the basic market quote response.
+        SetAuthHeader();
+        var tokens = brokerTokens.ToList();
+        var keys = string.Join(",", tokens.Select(t => $"NSE_FO|{t}"));
+        var response = await http.GetAsync($"{BaseUrl}/market-quote/quotes?instrument_key={Uri.EscapeDataString(keys)}", ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        var doc = JsonDocument.Parse(json);
+        var result = new Dictionary<string, OptionQuote>();
+        foreach (var token in tokens)
+        {
+            var key = $"NSE_FO|{token}";
+            if (!doc.RootElement.GetProperty("data").TryGetProperty(key, out var d)) continue;
+            result[token] = new OptionQuote(
+                InternalSymbol:    token,
+                LastTradedPrice:   d.GetProperty("last_price").GetDecimal(),
+                OpenInterest:      d.TryGetProperty("oi", out var oi) ? oi.GetInt64() : 0L,
+                OiChange:          d.TryGetProperty("net_change", out var nc) ? (long)nc.GetDecimal() : 0L,
+                Volume:            d.GetProperty("volume").GetInt64(),
+                ImpliedVolatility: 0m,  // not in basic market-quote; use /option/chain for IV
+                BidPrice:          d.TryGetProperty("bid_price", out var bid) ? bid.GetDecimal() : 0m,
+                AskPrice:          d.TryGetProperty("ask_price", out var ask) ? ask.GetDecimal() : 0m,
+                Delta:             0m);
+        }
+        return result;
     }
 
     public async Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct)
@@ -320,12 +357,36 @@ public class UpstoxClient(
 
                 foreach (var item in doc.RootElement.EnumerateArray())
                 {
-                    var instrKey    = item.TryGetProperty("instrument_key",  out var k)  ? k.GetString()  ?? "" : "";
-                    var tradingSym  = item.TryGetProperty("trading_symbol",  out var ts) ? ts.GetString() ?? "" : "";
-                    var exch        = item.TryGetProperty("exchange",        out var ex) ? ex.GetString() ?? "" : exchange;
-
+                    var instrKey   = item.TryGetProperty("instrument_key",  out var k)   ? k.GetString()   ?? "" : "";
+                    var tradingSym = item.TryGetProperty("trading_symbol",  out var ts)  ? ts.GetString()  ?? "" : "";
+                    var exch       = item.TryGetProperty("exchange",        out var ex)  ? ex.GetString()  ?? "" : exchange;
                     if (string.IsNullOrEmpty(instrKey) || string.IsNullOrEmpty(tradingSym)) continue;
-                    results.Add(new InstrumentTokenMapping($"{exch}:{tradingSym}", instrKey, exch.ToUpper(), "Upstox"));
+
+                    var name      = item.TryGetProperty("name",            out var nm)  ? nm.GetString()  ?? "" : "";
+                    var instrType = item.TryGetProperty("instrument_type", out var it)  ? it.GetString()  ?? "" : "";
+                    var expiry    = item.TryGetProperty("expiry",          out var exp) ? exp.GetString()  : null;
+                    var optType   = item.TryGetProperty("option_type",     out var ot)  ? ot.GetString()  : null;
+                    var strikeRaw = item.TryGetProperty("strike_price",    out var sp)
+                        ? (sp.ValueKind == JsonValueKind.Number ? sp.GetDecimal() : (decimal?)null) : null;
+                    var lotRaw    = item.TryGetProperty("lot_size",        out var ls)
+                        ? (ls.ValueKind == JsonValueKind.Number ? ls.GetInt32() : 0) : 0;
+                    var tickRaw   = item.TryGetProperty("tick_size",       out var tsk)
+                        ? (tsk.ValueKind == JsonValueKind.Number ? tsk.GetDecimal() : 0m) : 0m;
+
+                    results.Add(new InstrumentTokenMapping(
+                        InternalSymbol: $"{exch.ToUpper()}:{tradingSym}",
+                        BrokerToken:    instrKey,
+                        Exchange:       exch.ToUpper(),
+                        BrokerName:     "Upstox",
+                        TradingSymbol:  tradingSym,
+                        Name:           string.IsNullOrEmpty(name) ? tradingSym : name,
+                        InstrumentType: string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
+                        Expiry:         string.IsNullOrEmpty(expiry) ? null : expiry,
+                        StrikePrice:    strikeRaw > 0 ? strikeRaw : null,
+                        OptionType:     string.IsNullOrEmpty(optType) ? null : optType,
+                        LotSize:        lotRaw > 0 ? lotRaw : 1,
+                        TickSize:       tickRaw > 0 ? tickRaw : 0.05m
+                    ));
                 }
             }
             catch { /* fail silently per exchange */ }

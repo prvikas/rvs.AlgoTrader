@@ -47,6 +47,14 @@ public sealed class MarketCalendarService : IMarketCalendarService
         new LocalDate(2025, 12, 25), // Christmas
     ];
 
+    /// <summary>Synchronous trading-day check used by IStrategyScheduler (cached holiday set).</summary>
+    public bool IsTradingDay(LocalDate date)
+    {
+        if (date.DayOfWeek is IsoDayOfWeek.Saturday or IsoDayOfWeek.Sunday)
+            return false;
+        return !NseHolidays.Contains(date);
+    }
+
     public Task<bool> IsTradingDayAsync(DateOnly date, CancellationToken ct)
     {
         var localDate = new LocalDate(date.Year, date.Month, date.Day);

@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Backtesting.Engine;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Strategies;
 
@@ -60,6 +62,11 @@ public static class ServiceCollectionExtensions
 
         // Strategy factory — registered here because only the API project references rvs.AlgoTrader.Strategies
         services.AddSingleton<IStrategyFactory, StrategyFactory>();
+
+        // BacktestEngine — registered here because only the API project references rvs.AlgoTrader.Backtesting.
+        // Infrastructure defines IBacktestEngine (Application layer interface) but cannot reference
+        // the Backtesting assembly directly (CLAUDE.md Rule #2 — no cross-context direct calls).
+        services.AddScoped<IBacktestEngine, BacktestEngine>();
 
         services.AddAuthorization();
         services.AddCors(opts =>

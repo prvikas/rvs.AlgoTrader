@@ -14,12 +14,28 @@ namespace rvs.AlgoTrader.API.Controllers;
 public class InstrumentsController(IMediator mediator) : ControllerBase
 {
 
+    /// <summary>
+    /// Server-side paged + sorted + filtered instrument list.
+    /// sortBy: symbol | name | exchange | type | trading (default: symbol)
+    /// sortDir: asc | desc (default: asc)
+    /// </summary>
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<InstrumentDto>>>> GetAll(
-        [FromQuery] string? exchange, [FromQuery] bool? active, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<PagedResult<InstrumentDto>>>> GetAll(
+        [FromQuery] string? search,
+        [FromQuery] string? exchange,
+        [FromQuery] string? instrumentType,
+        [FromQuery] bool?   active,
+        [FromQuery] string  sortBy   = "symbol",
+        [FromQuery] string  sortDir  = "asc",
+        [FromQuery] int     page     = 1,
+        [FromQuery] int     pageSize = 50,
+        CancellationToken ct = default)
     {
-        var result = await mediator.Send(new GetInstrumentsQuery(exchange, active), ct);
-        return Ok(ApiResponse<IReadOnlyList<InstrumentDto>>.Ok(result));
+        var result = await mediator.Send(new GetInstrumentsQuery(
+            search, exchange, instrumentType, active,
+            sortBy, sortDir.Equals("desc", StringComparison.OrdinalIgnoreCase),
+            page, pageSize), ct);
+        return Ok(ApiResponse<PagedResult<InstrumentDto>>.Ok(result));
     }
 
     [HttpGet("{symbol}")]

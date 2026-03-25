@@ -149,6 +149,25 @@ public record LoginResult(
     string? FeedToken       // mStock only — used for WebSocket market data stream
 );
 
+/// <summary>
+/// Option-chain specific quote fields returned by broker market data APIs.
+/// Separate from BrokerQuote to avoid polluting the main quote model with nullable option fields.
+/// Zerodha: from /quote endpoint with OI, IV fields.
+/// Upstox:  from /v2/option/chain endpoint — all fields present.
+/// mStock:  from /optionchain endpoint.
+/// </summary>
+public record OptionQuote(
+    string  InternalSymbol,
+    decimal LastTradedPrice,
+    long    OpenInterest,
+    long    OiChange,           // change from previous close
+    long    Volume,
+    decimal ImpliedVolatility,  // annualised, in percent (e.g. 18.5 = 18.5%)
+    decimal BidPrice,
+    decimal AskPrice,
+    decimal Delta               // 0 if broker doesn't provide Greeks
+);
+
 public record LatencyReport(
     string BrokerName,
     double P50Ms,

@@ -29,6 +29,10 @@ public class StrategyInstance
     public decimal AllocatedCapital { get; set; }
     public string? ParametersJson { get; set; }
 
+    // Intraday P&L — updated by the execution engine on each trade/tick
+    public decimal TodayRealizedPnl { get; set; }
+    public decimal TodayUnrealizedPnl { get; set; }
+
     // Order routing fields (used by LiveExecutionEngine)
     public string? BrokerToken { get; set; }
     public string Exchange { get; set; } = "NSE";

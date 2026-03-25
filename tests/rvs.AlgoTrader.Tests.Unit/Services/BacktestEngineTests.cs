@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using NodaTime;
+using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Backtesting.Engine;
 using rvs.AlgoTrader.Domain.ValueObjects;
 using Xunit;

@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "command": ".claude/hooks/pre-tool-guard.sh"
+      },
+      {
+        "matcher": "Bash",
+        "command": ".claude/hooks/pre-bash-risk.sh"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "command": ".claude/hooks/post-tool-doc-sync.sh"
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "command": ".claude/hooks/session-summary.sh"
+      }
+    ]
+  }
+}

@@ -118,7 +118,7 @@ export function useStrategyStream() {
 
   useEffect(() => {
     const cleanupSignal = on('SignalGenerated', (...args: unknown[]) => {
-      const [instanceId, strategyName, symbol, , signal, price, , , , , occurredAt] = args
+      const [instanceId, , symbol, , signal, price, , , , , occurredAt] = args
       setSignals(prev => [{
         instanceId: instanceId as string,
         symbol: symbol as string,

@@ -33,6 +33,39 @@ public interface IInstrumentRepository
     Task<IReadOnlyList<Instrument>> GetAllActiveAsync(CancellationToken ct);
     Task UpsertAsync(Instrument instrument, CancellationToken ct);
     Task UpsertAsync(IEnumerable<Instrument> instruments, CancellationToken ct);
+
+    /// <summary>
+    /// Server-side paged + sorted + filtered query.
+    /// Returns the current page of instruments AND the total matching count (for pagination UI).
+    /// sortBy: "symbol" | "name" | "exchange" | "type" — default "symbol".
+    /// </summary>
+    Task<(IReadOnlyList<Instrument> Items, int TotalCount)> FilterPagedAsync(
+        string? search, string? exchange, string? instrumentType, bool? active,
+        string sortBy, bool sortDesc, int pageSize, int offset, CancellationToken ct);
+
+    /// <summary>
+    /// Loads all instruments whose InternalSymbol is in the given set — one DB round trip.
+    /// Returns a case-insensitive dictionary keyed by InternalSymbol.
+    /// Used by InstrumentRefreshService for O(1) lookup during batch upsert.
+    /// </summary>
+    Task<Dictionary<string, Instrument>> GetBatchByInternalSymbolAsync(
+        IReadOnlyList<string> symbols, CancellationToken ct);
+
+    /// <summary>
+    /// Inserts new instruments in one AddRange + SaveChanges.
+    /// Updates to existing (already-tracked) instruments are flushed by the same SaveChanges.
+    /// Replaces the N+1 UpsertAsync loop used during master-data refresh.
+    /// </summary>
+    Task BulkUpsertAsync(
+        IReadOnlyList<Instrument> toAdd, IReadOnlyList<Instrument> toUpdate, CancellationToken ct);
+
+    /// <summary>
+    /// Returns all option instruments (CE + PE legs) for a given underlying symbol and expiry date.
+    /// Used by IOptionChainService to resolve broker tokens before batch quote fetch.
+    /// Example: underlying="NIFTY 50", expiry=2024-12-26 → all NIFTY option strikes for that expiry.
+    /// </summary>
+    Task<IReadOnlyList<Instrument>> GetOptionsByUnderlyingAndExpiryAsync(
+        string underlyingSymbol, NodaTime.LocalDate expiry, CancellationToken ct);
 }
 
 public interface IStrategyInstanceRepository

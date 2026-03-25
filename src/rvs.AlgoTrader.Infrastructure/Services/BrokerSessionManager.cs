@@ -37,9 +37,10 @@ public class BrokerSessionManager(
     private readonly IDatabase _redis = redis.GetDatabase();
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
-    private static string TokenKey(string broker) => $"broker:session:{broker.ToLower()}:access_token";
-    private static string ExpiryKey(string broker) => $"broker:session:{broker.ToLower()}:expires_at";
-    private static string RefreshKey(string broker) => $"broker:session:{broker.ToLower()}:refresh_token";
+    private static string TokenKey(string broker)   => $"broker:session:{broker.ToLower()}:access_token";
+    private static string ExpiryKey(string broker)   => $"broker:session:{broker.ToLower()}:expires_at";
+    private static string RefreshKey(string broker)  => $"broker:session:{broker.ToLower()}:refresh_token";
+    private static string FeedTokenKey(string broker)=> $"broker:session:{broker.ToLower()}:feed_token";
 
     public async Task<string> GetAccessTokenAsync(string brokerName, CancellationToken ct)
     {
@@ -68,6 +69,11 @@ public class BrokerSessionManager(
 
         if (!string.IsNullOrEmpty(result.RefreshToken))
             await _redis.StringSetAsync(RefreshKey(brokerName), result.RefreshToken);
+
+        // mStock feed token — needed by RestoreToken on process restart
+        if (!string.IsNullOrEmpty(result.FeedToken))
+            await _redis.StringSetAsync(FeedTokenKey(brokerName), result.FeedToken,
+                result.ExpiresAt.HasValue ? result.ExpiresAt.Value - DateTimeOffset.UtcNow : TimeSpan.FromHours(8));
 
         logger.LogInformation("[{Broker}] Session stored. Expires: {Expiry}", brokerName,
             result.ExpiresAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "unknown");
@@ -156,6 +162,20 @@ public class BrokerSessionManager(
         await _redis.KeyDeleteAsync(TokenKey(brokerName));
         await _redis.KeyDeleteAsync(ExpiryKey(brokerName));
         logger.LogInformation("[{Broker}] Session invalidated", brokerName);
+    }
+
+    // ── IAppBrokerSessionManager — token retrieval for Step 7 ─────────────────
+
+    public async Task<string?> TryGetAccessTokenAsync(string brokerName, CancellationToken ct)
+    {
+        var token = await _redis.StringGetAsync(TokenKey(brokerName));
+        return token.HasValue ? token.ToString() : null;
+    }
+
+    public async Task<string?> TryGetFeedTokenAsync(string brokerName, CancellationToken ct)
+    {
+        var token = await _redis.StringGetAsync(FeedTokenKey(brokerName));
+        return token.HasValue ? token.ToString() : null;
     }
 
     // ── IBrokerSessionManager explicit implementations ────────────────────────

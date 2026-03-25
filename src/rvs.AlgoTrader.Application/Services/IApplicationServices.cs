@@ -49,7 +49,15 @@ public interface IStrategyInstanceManager
 
 public interface IMarketCalendarService
 {
+    /// <summary>Async check against the market_calendar DB table.</summary>
     Task<bool> IsTradingDayAsync(DateOnly date, CancellationToken ct);
+
+    /// <summary>
+    /// Synchronous check used by IStrategyScheduler.IsWithinScheduledSession (which is sync).
+    /// Implementations should cache the holiday set at startup.
+    /// </summary>
+    bool IsTradingDay(LocalDate date);
+
     bool IsWithinMarketHours(ZonedDateTime time);
 }
 
@@ -100,6 +108,12 @@ public interface IAppBrokerSessionManager
     Task<bool> IsAuthenticatedAsync(string brokerName, CancellationToken ct);
     /// <summary>Store a broker session after successful authentication.</summary>
     Task StoreSessionAsync(string brokerName, LoginResult result, CancellationToken ct);
+    /// <summary>Retrieve a stored access token from persistent storage (Redis).</summary>
+    Task<string?> TryGetAccessTokenAsync(string brokerName, CancellationToken ct);
+    /// <summary>Retrieve a stored feed token from persistent storage (Redis). mStock only.</summary>
+    Task<string?> TryGetFeedTokenAsync(string brokerName, CancellationToken ct);
+    /// <summary>Returns true if a non-expired session token exists in Redis.</summary>
+    bool IsSessionValid(string brokerName);
 }
 
 // IInstrumentTokenResolver is defined in rvs.AlgoTrader.Brokers.Abstractions.
@@ -138,7 +152,23 @@ public record TransactionCosts(decimal Brokerage, decimal Stt, decimal Gst, deci
     public decimal Total => Brokerage + Stt + Gst + SebiCharges + StampDuty + Slippage;
 }
 
-public record CostProfile(decimal BrokeragePct, decimal SttPct, decimal GstPct, decimal SebiChargesPct, decimal StampDutyPct, decimal SlippagePct);
+/// <summary>
+/// Transaction cost profile for Indian equity markets.
+/// BrokerageFlatPerSide: flat ₹ amount per order leg (typical discount-broker model, e.g. ₹20/order).
+///   When set > 0, this is used INSTEAD of BrokeragePct.
+///   Default = 0 (falls back to percentage-based brokerage).
+/// SlippageBasisPoints: additional slippage on top of SpreadPct, in basis points (1 bp = 0.01%).
+///   Used by FillModel.NextBarOpenPlusSlippage.
+/// </summary>
+public record CostProfile(
+    decimal BrokeragePct,
+    decimal SttPct,
+    decimal GstPct,
+    decimal SebiChargesPct,
+    decimal StampDutyPct,
+    decimal SlippagePct,
+    decimal BrokerageFlatPerSide = 0m,
+    decimal SlippageBasisPoints = 0m);
 
 public interface IKillSwitchService
 {
@@ -204,6 +234,44 @@ public interface ISymbolDataPreferencesService
 }
 
 public record SymbolDataPreferences(Guid Id, string InternalSymbol, string[] Timeframes, DateOnly FromDate, int Priority, bool IsActive);
+
+/// <summary>
+/// Fetches and parses NSE option chain data via the active broker's market data API.
+///
+/// Called by StrategyEvaluationQueue BEFORE building StrategyContext, so that
+/// IStrategy.EvaluateAsync implementations can read OptionChain without any I/O (Rule #18).
+///
+/// The fetch result is cached in Redis for the duration of one candle bar (e.g. 60s for 1m bars)
+/// so that multiple strategy instances trading the same underlying share a single network call.
+///
+/// Key design decisions:
+///   - Returns null (not throws) when the option chain is unavailable — strategy falls back to
+///     price action only.
+///   - Only fetches when the strategy instance has UseOptionChain=true in its parameters_json.
+///   - Expiry selection: nearest weekly by default; configurable to monthly.
+/// </summary>
+public interface IOptionChainService
+{
+    /// <summary>
+    /// Fetches the current option chain snapshot for the given underlying symbol and expiry date.
+    /// Returns null on fetch failure — callers must handle gracefully.
+    /// </summary>
+    Task<Domain.ValueObjects.OptionChainSnapshot?> GetSnapshotAsync(
+        string underlyingSymbol,
+        Domain.ValueObjects.OptionChainExpiry expiry,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Returns the nearest weekly expiry date for an index (NIFTY, BANKNIFTY, etc.)
+    /// relative to today's IST date.
+    /// </summary>
+    Domain.ValueObjects.OptionChainExpiry GetNearestWeeklyExpiry(string underlyingSymbol);
+
+    /// <summary>
+    /// Returns the nearest monthly expiry date.
+    /// </summary>
+    Domain.ValueObjects.OptionChainExpiry GetNearestMonthlyExpiry(string underlyingSymbol);
+}
 
 public interface IBacktestReproductionService
 {

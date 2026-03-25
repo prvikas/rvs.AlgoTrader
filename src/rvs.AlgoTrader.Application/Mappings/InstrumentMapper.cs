@@ -1,23 +1,28 @@
 using Riok.Mapperly.Abstractions;
-using rvs.AlgoTrader.Domain.Entities;
-using rvs.AlgoTrader.Application.DTOs.Instruments;
 using NodaTime;
 
 namespace rvs.AlgoTrader.Application.Mappings;
 
+/// <summary>
+/// Mapperly partial mapper — provides shared NodaTime conversion helpers used by
+/// other mappers in this project.
+///
+/// NOTE: InstrumentDto mapping is intentionally NOT in this class.
+/// Use Queries.Instruments.InstrumentMapper.ToDto() directly — that mapper handles
+/// the computed boolean fields (HasZerodha, HasUpstox, HasMStock) which Mapperly
+/// cannot derive automatically from nullable source tokens.
+/// </summary>
 [Mapper]
 public partial class InstrumentMapper
 {
-    public partial InstrumentDto ToDto(Instrument instrument);
-    public partial IReadOnlyList<InstrumentDto> ToDtoList(IReadOnlyList<Instrument> instruments);
-
-    private static DateTimeOffset MapInstantToOffset(Instant instant) =>
+    // NodaTime.Instant → DateTimeOffset
+    public static DateTimeOffset MapInstant(Instant instant) =>
         instant.ToDateTimeOffset();
 
     // NodaTime.LocalDate → System.DateOnly (used by Mapperly for Expiry, FromDate fields)
-    private static DateOnly MapLocalDateToDateOnly(LocalDate date) =>
+    public static DateOnly MapLocalDate(LocalDate date) =>
         new DateOnly(date.Year, date.Month, date.Day);
 
-    private static DateOnly? MapLocalDateToDateOnly(LocalDate? date) =>
+    public static DateOnly? MapLocalDateNullable(LocalDate? date) =>
         date.HasValue ? new DateOnly(date.Value.Year, date.Value.Month, date.Value.Day) : null;
 }

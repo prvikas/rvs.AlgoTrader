@@ -71,11 +71,19 @@ public class MStockAuth(HttpClient http, ILogger<MStockAuth> logger)
         try
         {
             var doc1 = JsonDocument.Parse(step1Json);
-            if (!doc1.RootElement.TryGetProperty("data", out var data1) ||
+            var root1 = doc1.RootElement;
+
+            // MStock returns {"data": null, "message": "..."} on auth failure —
+            // TryGetProperty on a Null JsonElement throws InvalidOperationException,
+            // so guard with ValueKind == Object before drilling in.
+            if (!root1.TryGetProperty("data", out var data1) ||
+                data1.ValueKind != JsonValueKind.Object ||
                 !data1.TryGetProperty("refreshToken", out var rt))
             {
-                var msg = doc1.RootElement.TryGetProperty("message", out var m) ? m.GetString() : step1Json;
-                return Fail($"Step 1: refreshToken missing in response — {msg}");
+                var msg = root1.TryGetProperty("message", out var m) ? m.GetString() : step1Json;
+                if (string.IsNullOrEmpty(msg))
+                    msg = root1.TryGetProperty("errorcode", out var ec) ? ec.GetString() : step1Json;
+                return Fail($"Step 1: refreshToken missing — {msg}");
             }
             refreshToken = rt.GetString()!;
         }
@@ -89,8 +97,8 @@ public class MStockAuth(HttpClient http, ILogger<MStockAuth> logger)
         // ── Step 2: POST /session/verifytotp ──────────────────────────────────
         var step2Body = JsonSerializer.Serialize(new
         {
-            refreshToken = refreshToken,
-            totp         = creds.Totp   // same TOTP — must still be in same 30-second window
+            refreshToken,                // IDE0037: member name can be simplified
+            totp = creds.Totp           // same TOTP — must still be in same 30-second window
         });
 
         var step2Request = new HttpRequestMessage(HttpMethod.Post, $"{BaseUrl}/session/verifytotp")
@@ -117,12 +125,17 @@ public class MStockAuth(HttpClient http, ILogger<MStockAuth> logger)
 
         try
         {
-            var doc2 = JsonDocument.Parse(step2Json);
-            if (!doc2.RootElement.TryGetProperty("data", out var data2) ||
+            var doc2  = JsonDocument.Parse(step2Json);
+            var root2 = doc2.RootElement;
+
+            if (!root2.TryGetProperty("data", out var data2) ||
+                data2.ValueKind != JsonValueKind.Object ||
                 !data2.TryGetProperty("jwtToken", out var jwtEl))
             {
-                var msg = doc2.RootElement.TryGetProperty("message", out var m) ? m.GetString() : step2Json;
-                return Fail($"Step 2: jwtToken missing in response — {msg}");
+                var msg = root2.TryGetProperty("message", out var m) ? m.GetString() : step2Json;
+                if (string.IsNullOrEmpty(msg))
+                    msg = root2.TryGetProperty("errorcode", out var ec) ? ec.GetString() : step2Json;
+                return Fail($"Step 2: jwtToken missing — {msg}");
             }
 
             var jwtToken   = jwtEl.GetString()!;

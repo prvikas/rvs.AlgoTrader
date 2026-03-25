@@ -5,6 +5,51 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 
+// ── Global Error Boundary ─────────────────────────────────────────────────────
+// Prevents blank screen on render errors — shows a recoverable error panel instead.
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: '100vh', background: '#0f0f1a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif',
+          padding: 32,
+        }}>
+          <div style={{ maxWidth: 600, width: '100%', background: '#1e1e2e', border: '1px solid #7f1d1d', borderRadius: 10, padding: 28 }}>
+            <h2 style={{ color: '#fca5a5', marginTop: 0, fontSize: 18 }}>Something went wrong</h2>
+            <pre style={{
+              background: '#0f0f1a', color: '#fca5a5', borderRadius: 6,
+              padding: 14, fontSize: 12, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            }}>
+              {this.state.error.message}
+              {'\n\n'}
+              {this.state.error.stack}
+            </pre>
+            <button
+              onClick={() => { this.setState({ error: null }); window.location.reload() }}
+              style={{ marginTop: 16, padding: '8px 20px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -22,6 +67,7 @@ function ProtectedRoute({ element }: { element: React.ReactElement }) {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
@@ -32,5 +78,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 )

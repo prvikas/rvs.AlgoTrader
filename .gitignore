@@ -1,33 +1,56 @@
-# .NET
+# Secrets — never commit
+.env
+.env.*
+*.env
+appsettings.Development.json
+appsettings.Local.json
+appsettings.Production.json
+secrets.json
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Vault tokens
+.vault-token
+vault-token
+
+# Broker credentials
+broker-credentials.json
+mstock-credentials.json
+
+# Build output
 bin/
 obj/
-*.user
-*.suo
-.vs/
-*.DotSettings.user
-TestResults/
-coverage/
+publish/
 
 # Frontend
 node_modules/
 dist/
 .vite/
-frontend/.env
-frontend/.env.local
 
-# Environment / secrets
-.env
-*.pfx
-*.pem
-secrets.json
+# Test results
+TestResults/
+coverage/
+*.trx
+
+# Logs
+logs/
+*.log
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Rider / VS Code
+# IDE
+.vs/
+.vscode/settings.json
 .idea/
-.vscode/
+*.user
 
-# Migrations (keep V1 initial, ignore generated EF migrations)
-# migrations/*.cs — uncomment to ignore generated migrations
+# Docker volumes
+pgdata/
+redis_data/
+
+# Claude-specific — never commit session outputs
+.claude/session-*.md

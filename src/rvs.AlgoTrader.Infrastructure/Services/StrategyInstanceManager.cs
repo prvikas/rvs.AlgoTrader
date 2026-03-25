@@ -121,13 +121,7 @@ public class StrategyInstanceManager(
             if (instrument != null)
             {
                 brokerName = inst.BrokerName ?? brokerName;
-                var token = inst.BrokerName switch
-                {
-                    "Zerodha" => instrument.ZerodhaToken,
-                    "Upstox" => instrument.UpstoxToken,
-                    "MStock" => instrument.MStockToken,
-                    _ => instrument.ZerodhaToken
-                };
+                var token = instrument.GetBrokerToken(brokerName);
                 if (token != null) symbols.Add(token);
             }
         }

@@ -1,1088 +1,1319 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { strategiesApi, brokerApi, ordersApi, instrumentsApi, backtestApi, CreateStrategyCommand, StrategyInstance, BrokerStatus, Order, Instrument } from '../api/client'
+import {
+  strategiesApi, brokerApi, ordersApi, backtestApi, killSwitchApi, settingsApi,
+  CreateStrategyCommand, BrokerStatus, Order,
+  BacktestResult, BacktestTradeResult
+} from '../api/client'
+import { EquityCurveChart } from '../components/Backtest/EquityCurveChart'
 import { KillSwitchBanner } from '../components/Dashboard/KillSwitchBanner'
 import { ColdRestartBanner } from '../components/Dashboard/ColdRestartBanner'
 import { StrategyCard } from '../components/Strategy/StrategyCard'
 import { BrokerStatusBar } from '../components/Broker/BrokerStatusBar'
+import { SymbolSearchInput } from '../components/Strategy/SymbolSearchInput'
+import { ScheduleEditor, ScheduleConfig, defaultScheduleJson } from '../components/Strategy/ScheduleEditor'
+import { StrategyParamsEditor, paramsToJson, defaultParams } from '../components/Strategy/StrategyParamsEditor'
+import { FailureBehaviorEditor, FailureBehaviorConfig, defaultFailureBehavior, failureBehaviorToJson } from '../components/Strategy/FailureBehaviorEditor'
+import { InstrumentsPage } from './InstrumentsPage'
+import { ForwardTestPage } from './ForwardTestPage'
+import { StrategyLabPage } from './StrategyLabPage'
+import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
+import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
 import { useStrategyStream } from '../hooks/useSignalR'
 
-type Page = 'overview' | 'strategies' | 'orders' | 'backtest' | 'settings'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'settings'
+
+const ALL_STRATEGIES = [
+  { name: 'PriceActionBreakout', desc: 'Consolidation range breakout with volume confirmation', comingSoon: false },
+  { name: 'EmaVwapMomentum', desc: 'EMA golden/death cross + VWAP + Bollinger Bands + volume + optional option chain PCR filter', comingSoon: false },
+  { name: 'AlertCandleShort', desc: 'BankNifty/Nifty short: Alert Candle (low > 5-EMA) breakout · 1:3 RRR · one trade/day', comingSoon: false },
+  { name: 'VWAPStrategy', desc: 'VWAP-based intraday strategy', comingSoon: true },
+  { name: 'ORBStrategy', desc: 'Opening Range Breakout', comingSoon: true },
+]
 
 export function Dashboard() {
-  const qc = useQueryClient()
-  const [activePage, setActivePage] = useState<Page>('overview')
-  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [activePage, setActivePage] = useState<Page>('portfolio')
+  const activeBrokerName = localStorage.getItem('active_broker') || 'MStock'
 
   // ── Data Queries ──────────────────────────────────────────────────────────
-  const { data: strategies } = useQuery({
-    queryKey: ['strategies'],
-    queryFn: () => strategiesApi.list().then(r => r.data.data ?? []),
-    refetchInterval: 10_000,
-  })
-
   const { data: brokerStatus } = useQuery({
     queryKey: ['broker-status'],
-    queryFn: () => brokerApi.status().then(r => r.data.data ?? []),
+    queryFn: () => brokerApi.status().then(r => Array.isArray(r.data.data) ? r.data.data : []),
     refetchInterval: 15_000,
   })
 
   const { data: orders } = useQuery({
     queryKey: ['orders'],
-    queryFn: () => ordersApi.list().then(r => r.data.data ?? []),
+    queryFn: () => ordersApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
     refetchInterval: 10_000,
-    enabled: activePage === 'orders' || activePage === 'overview',
+    enabled: activePage === 'orders' || activePage === 'portfolio',
   })
 
-  const { signals, isConnected: signalRConnected } = useStrategyStream()
-  const marketOpen = isMarketHours()
+  const { data: killSwitchStatus } = useQuery({
+    queryKey: ['kill-switch'],
+    queryFn: () => killSwitchApi.status().then(r => r.data.data),
+    refetchInterval: 30_000, // KillSwitchBanner also polls at 30s — no need for fast polling here
+  })
 
-  const running = strategies?.filter(s => s.status === 'Running') ?? []
-  const paused = strategies?.filter(s => s.status === 'Paused') ?? []
-  const stopped = strategies?.filter(s => s.status === 'Stopped') ?? []
+  const { data: backtestResults } = useQuery({
+    queryKey: ['backtest-results'],
+    queryFn: () => backtestApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
+    enabled: activePage === 'backtest' || activePage === 'lab',
+    refetchInterval: 30_000,
+  })
 
-  // Fall back to localStorage if the API hasn't returned yet (just logged in)
-  const sessionBrokerName = localStorage.getItem('active_broker')
-  const activeBroker = brokerStatus?.find(b => b.isConnected && b.isAuthenticated)
-    ?? (sessionBrokerName ? { brokerName: sessionBrokerName, isConnected: true, isAuthenticated: true, lastCheckedAt: new Date().toISOString() } as BrokerStatus : undefined)
-  const allConnected = brokerStatus?.filter(b => b.isConnected && b.isAuthenticated)
-    ?? (sessionBrokerName ? [activeBroker!] : [])
-
-  const handleLogout = () => {
-    localStorage.removeItem('jwt_token')
-    localStorage.removeItem('active_broker')
-    window.location.href = '/login'
-  }
-
-  // ── Navigation ────────────────────────────────────────────────────────────
-  const navItems: Array<{ id: Page; label: string }> = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'strategies', label: 'Strategies' },
-    { id: 'orders', label: 'Orders' },
-    { id: 'backtest', label: 'Backtest' },
-    { id: 'settings', label: 'Settings' },
-  ]
+  const { isConnected: signalRConnected, coldRestartPaused } = useStrategyStream()
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0f0f1a', color: '#e2e8f0', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <KillSwitchBanner />
-      <ColdRestartBanner />
+    <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0f0f1a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif' }}>
+      {/* Sidebar Navigation */}
+      <div style={{ width: '200px', backgroundColor: '#1e1e2e', borderRight: '1px solid #2d2d3f', padding: '20px 0', overflowY: 'auto' }}>
+        <div style={{ padding: '0 16px', marginBottom: '20px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0 0 8px 0' }}>AlgoTrader</h2>
+          <p style={{ fontSize: '12px', color: '#8b8b9f', margin: 0 }}>Trading Platform</p>
+        </div>
 
-      {/* ── Top Header ─────────────────────────────────────────────────────── */}
-      <div style={{ padding: '12px 24px', borderBottom: '1px solid #1e1e2e', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>AlgoTrader</h1>
-          <span style={{
-            background: marketOpen ? '#16a34a22' : '#6b728022',
-            color: marketOpen ? '#16a34a' : '#6b7280',
-            borderRadius: 12, padding: '2px 10px', fontSize: 11, fontWeight: 700
-          }}>
-            {marketOpen ? '● MARKET OPEN' : '○ MARKET CLOSED'}
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', fontSize: 13, color: '#94a3b8' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: signalRConnected ? '#16a34a' : '#dc2626', display: 'inline-block' }} />
-            SignalR {signalRConnected ? 'Connected' : 'Disconnected'}
-          </span>
-          <BrokerStatusBar />
-        </div>
+        <nav aria-label="Main navigation" style={{ display: 'flex', flexDirection: 'column', gap: 0, padding: '0 8px' }}>
+          {/* ── Live Trading ── */}
+          <NavSectionLabel label="LIVE TRADING" />
+          <NavItem page="portfolio" label="Portfolio" icon="📊" active={activePage} onClick={setActivePage} />
+          <NavItem page="strategies" label="Strategies" icon="⚡" active={activePage} onClick={setActivePage} />
+          <NavItem page="orders" label="Orders" icon="📋" active={activePage} onClick={setActivePage} />
+
+          {/* ── Research ── */}
+          <NavSectionLabel label="RESEARCH" />
+          <NavItem page="lab" label="Strategy Lab" icon="🔬" active={activePage} onClick={setActivePage} accent="#10b981" />
+          <NavItem page="backtest" label="Backtest" icon="📈" active={activePage} onClick={setActivePage} />
+          <NavItem page="forwardtest" label="Forward Test" icon="🧪" active={activePage} onClick={setActivePage} />
+
+          {/* ── Setup ── */}
+          <NavSectionLabel label="SETUP" />
+          <NavItem page="instruments" label="Instruments" icon="🔍" active={activePage} onClick={setActivePage} />
+          <NavItem page="settings" label="Settings" icon="⚙" active={activePage} onClick={setActivePage} />
+        </nav>
       </div>
 
-      {/* ── Connection & Mode Status Bar ────────────────────────────────────── */}
-      <div style={{ padding: '10px 24px', borderBottom: '1px solid #1e1e2e', background: '#13131f', display: 'flex', gap: 24, alignItems: 'center', fontSize: 12 }}>
-        {/* Active Broker */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#64748b' }}>Active Broker:</span>
-          {activeBroker ? (
-            <span style={{ color: '#86efac', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
-              {activeBroker.brokerName}
-            </span>
-          ) : (
-            <span style={{ color: '#f87171', fontWeight: 600 }}>None Connected</span>
-          )}
-        </div>
-
-        {/* All Connected Brokers */}
-        {allConnected.length > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: '#64748b' }}>Also Connected:</span>
-            {allConnected.filter(b => b.brokerName !== activeBroker?.brokerName).map(b => (
-              <span key={b.brokerName} style={{ color: '#94a3b8', fontWeight: 600 }}>{b.brokerName}</span>
-            ))}
+      {/* Main Content */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* Header */}
+        <div style={{ backgroundColor: '#1e1e2e', borderBottom: '1px solid #2d2d3f', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>
+              {{ portfolio: 'Portfolio', strategies: 'Strategies', orders: 'Orders', lab: 'Strategy Lab', backtest: 'Backtest', forwardtest: 'Forward Test', instruments: 'Instruments', settings: 'Settings' }[activePage]}
+            </h1>
+            <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: signalRConnected ? '#10b981' : '#6b7280' }}>
+              {signalRConnected ? '● Live' : '○ Disconnected'}
+            </p>
           </div>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {/* Broker connection status inline */}
+            <BrokerStatusBar />
 
-        <div style={{ width: 1, height: 16, background: '#2d2d3f' }} />
+            {/* Divider */}
+            <div style={{ width: 1, height: 20, background: '#2d2d3f' }} aria-hidden="true" />
 
-        {/* Trading Mode Summary */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#64748b' }}>Trading:</span>
-          {running.length > 0 ? (
-            <>
-              {running.some(s => s.mode === 'Live') && (
-                <span style={{ background: '#dc262622', color: '#f87171', padding: '1px 8px', borderRadius: 4, fontWeight: 700, fontSize: 11 }}>
-                  LIVE
-                </span>
-              )}
-              {running.some(s => s.mode === 'Forward') && (
-                <span style={{ background: '#f59e0b22', color: '#fbbf24', padding: '1px 8px', borderRadius: 4, fontWeight: 700, fontSize: 11 }}>
-                  PAPER
-                </span>
-              )}
-              {running.some(s => s.mode === 'Backtest') && (
-                <span style={{ background: '#3b82f622', color: '#60a5fa', padding: '1px 8px', borderRadius: 4, fontWeight: 700, fontSize: 11 }}>
-                  BACKTEST
-                </span>
-              )}
-            </>
-          ) : (
-            <span style={{ color: '#64748b' }}>No active strategies</span>
-          )}
+            {/* Market hours indicator — always visible, color-coded */}
+            {isMarketHours() ? (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                background: '#14532d', color: '#86efac',
+                borderRadius: 20, padding: '3px 10px',
+                fontSize: 11, fontWeight: 700,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a' }} aria-hidden="true" />
+                Market Open
+              </span>
+            ) : (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                background: '#1c1c2e', color: '#6b7280',
+                borderRadius: 20, padding: '3px 10px',
+                fontSize: 11, fontWeight: 600,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4b5563' }} aria-hidden="true" />
+                Market Closed
+              </span>
+            )}
+          </div>
         </div>
 
-        <div style={{ width: 1, height: 16, background: '#2d2d3f' }} />
+        {/* Kill Switch Banner — full-width critical alert */}
+        {killSwitchStatus === true && <KillSwitchBanner />}
 
-        {/* Quick Stats */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: '#64748b' }}>Strategies:</span>
-          <span style={{ color: '#16a34a', fontWeight: 600 }}>{running.length} running</span>
-          <span style={{ color: '#f59e0b', fontWeight: 600 }}>{paused.length} paused</span>
-        </div>
+        {/* Cold Restart Banner — informational notice */}
+        <ColdRestartBanner coldRestartPaused={coldRestartPaused} />
 
-        {/* Spacer + Logout */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button onClick={handleLogout} style={{
-            fontSize: 11, padding: '3px 10px', borderRadius: 4,
-            background: 'transparent', border: '1px solid #3d3d5c',
-            color: '#94a3b8', cursor: 'pointer',
-          }}>
-            Logout
-          </button>
+        {/* Content Area */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+          {activePage === 'portfolio' && <PortfolioOverview />}
+          {activePage === 'strategies' && <StrategiesPage activeBroker={activeBrokerName} brokerStatus={brokerStatus ?? []} />}
+          {activePage === 'orders' && <OrdersPage orders={orders ?? []} />}
+          {activePage === 'lab' && <StrategyLabPage />}
+          {activePage === 'backtest' && <BacktestPage backtestResults={backtestResults ?? []} />}
+          {activePage === 'forwardtest' && <ForwardTestPage />}
+          {activePage === 'instruments' && <InstrumentsPage />}
+          {activePage === 'settings' && <SettingsPage />}
         </div>
       </div>
 
-      {/* ── Navigation Tabs ─────────────────────────────────────────────────── */}
-      <div style={{ padding: '0 24px', borderBottom: '1px solid #1e1e2e', display: 'flex', gap: 0 }}>
-        {navItems.map(item => (
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// OVERVIEW PAGE
+// ──────────────────────────────────────────────────────────────────────────────
+
+// OverviewPage replaced by PortfolioOverview component (imported from components/Portfolio)
+
+// ──────────────────────────────────────────────────────────────────────────────
+// STRATEGIES PAGE
+// ──────────────────────────────────────────────────────────────────────────────
+
+function StrategiesPage({ activeBroker, brokerStatus }: { activeBroker: string; brokerStatus: BrokerStatus[] }) {
+  const qc = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const [selectedStrategy, setSelectedStrategy] = useState('AlertCandleShort')
+  const [formData, setFormData] = useState({
+    name: '',
+    internalSymbol: '',
+    timeframe: '5m',
+    mode: 'Forward' as 'Live' | 'Forward' | 'Backtest',
+    brokerName: activeBroker,
+    allocatedCapital: 50000,
+  })
+  const [strategyParams, setStrategyParams] = useState<Record<string, unknown>>(defaultParams('AlertCandleShort'))
+  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig | undefined>(undefined)
+  const [failureBehavior, setFailureBehavior] = useState<FailureBehaviorConfig>(defaultFailureBehavior())
+  const [errorMsg, setErrorMsg] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+  const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
+  const [pendingCmd, setPendingCmd] = useState<CreateStrategyCommand | null>(null)
+
+  const { data: strategies } = useQuery({
+    queryKey: ['strategies'],
+    queryFn: () => strategiesApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
+    refetchInterval: 10_000,
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (cmd: CreateStrategyCommand) => strategiesApi.create(cmd),
+    onSuccess: () => {
+      setSuccessMsg('Strategy created successfully!')
+      setShowForm(false)
+      qc.invalidateQueries({ queryKey: ['strategies'] })
+      setTimeout(() => setSuccessMsg(''), 3000)
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error || 'Failed to create strategy')
+    }
+  })
+
+  const handleSelectStrategy = (name: string) => {
+    setSelectedStrategy(name)
+    setStrategyParams(defaultParams(name))
+  }
+
+  const handleCreateStrategy = () => {
+    if (!formData.name.trim()) {
+      setErrorMsg('Instance name is required')
+      return
+    }
+    if (!formData.internalSymbol) {
+      setErrorMsg('Symbol is required')
+      return
+    }
+    if (!selectedStrategy) {
+      setErrorMsg('Strategy type is required')
+      return
+    }
+
+    // Broker-auth guard: warn if Live mode selected but no broker is authenticated
+    if (formData.mode === 'Live') {
+      const selectedBroker = brokerStatus.find(b => b.brokerName === formData.brokerName)
+      if (!selectedBroker?.isAuthenticated) {
+        setErrorMsg(`Broker "${formData.brokerName}" is not authenticated. Please connect it in the broker settings before creating a Live instance.`)
+        return
+      }
+    }
+
+    const cmd: CreateStrategyCommand = {
+      name: formData.name,
+      strategyType: selectedStrategy,
+      internalSymbol: formData.internalSymbol,
+      timeframe: formData.timeframe,
+      mode: formData.mode,
+      brokerName: formData.brokerName,
+      parametersJson: paramsToJson(strategyParams),
+      scheduleJson: scheduleConfig ? JSON.stringify(scheduleConfig) : defaultScheduleJson(),
+      failureBehaviorJson: failureBehaviorToJson(failureBehavior),
+      allocatedCapital: formData.allocatedCapital,
+    }
+
+    // Live mode: require explicit confirmation before creating
+    if (formData.mode === 'Live') {
+      setPendingCmd(cmd)
+      setLiveConfirmOpen(true)
+      return
+    }
+
+    createMutation.mutate(cmd)
+  }
+
+  const handleLiveConfirm = () => {
+    if (pendingCmd) {
+      createMutation.mutate(pendingCmd)
+    }
+    setLiveConfirmOpen(false)
+    setPendingCmd(null)
+  }
+
+  return (
+    <div>
+      <SectionHeader
+        title="Strategy Instances"
+        action={
           <button
-            key={item.id}
-            onClick={() => setActivePage(item.id)}
+            onClick={() => setShowForm(!showForm)}
             style={{
-              padding: '12px 20px',
-              background: 'transparent',
-              color: activePage === item.id ? '#e2e8f0' : '#64748b',
+              padding: '8px 16px',
+              backgroundColor: '#3b82f6',
+              color: '#fff',
               border: 'none',
-              borderBottom: activePage === item.id ? '2px solid #3b82f6' : '2px solid transparent',
-              fontSize: 13,
-              fontWeight: activePage === item.id ? 700 : 500,
+              borderRadius: '6px',
               cursor: 'pointer',
-              transition: 'all 0.2s'
+              fontSize: '14px',
             }}
           >
-            {item.label}
+            {showForm ? 'Close' : '+ New Instance'}
           </button>
-        ))}
-      </div>
+        }
+      />
 
-      {/* ── Content Area ────────────────────────────────────────────────────── */}
-      <div style={{ padding: 24 }}>
-        {activePage === 'overview' && (
-          <OverviewPage
-            strategies={strategies ?? []}
-            orders={orders ?? []}
-            signals={signals}
-            running={running}
-            paused={paused}
-            stopped={stopped}
-            brokerStatus={brokerStatus ?? []}
-            onNavigate={setActivePage}
-          />
-        )}
-        {activePage === 'strategies' && (
-          <StrategiesPage
-            strategies={strategies ?? []}
-            showCreateForm={showCreateForm}
-            setShowCreateForm={setShowCreateForm}
-            activeBroker={activeBroker?.brokerName}
-          />
-        )}
-        {activePage === 'orders' && <OrdersPage orders={orders ?? []} />}
-        {activePage === 'backtest' && <BacktestPage />}
-        {activePage === 'settings' && (
-          <SettingsPage
-            brokerStatus={brokerStatus ?? []}
-            signalRConnected={signalRConnected}
-            onLogout={handleLogout}
-          />
+      {showForm && (
+        <div style={{ backgroundColor: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+          <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 'bold' }}>Create New Instance</h3>
+
+          {errorMsg && <div style={{ backgroundColor: '#7f1d1d', color: '#fecaca', padding: '12px', borderRadius: '6px', marginBottom: '12px', fontSize: '14px' }}>{errorMsg}</div>}
+          {successMsg && <div style={{ backgroundColor: '#065f46', color: '#a7f3d0', padding: '12px', borderRadius: '6px', marginBottom: '12px', fontSize: '14px' }}>{successMsg}</div>}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            {/* Left Column: Configuration */}
+            <div>
+              <FormField
+                label="Instance Name"
+                value={formData.name}
+                onChange={(v) => setFormData({ ...formData, name: v })}
+                placeholder="e.g., RELIANCE Breakout #1"
+              />
+
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#8b8b9f' }}>Strategy Type</label>
+                <div style={{ display: 'grid', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+                  {ALL_STRATEGIES.map(strat => (
+                    <button
+                      key={strat.name}
+                      onClick={() => !strat.comingSoon && handleSelectStrategy(strat.name)}
+                      disabled={strat.comingSoon}
+                      title={strat.comingSoon ? 'Coming soon — not yet available' : undefined}
+                      style={{
+                        padding: '12px',
+                        backgroundColor: selectedStrategy === strat.name ? '#3b82f6' : '#2d2d3f',
+                        color: strat.comingSoon ? '#4b5563' : '#e2e8f0',
+                        border: selectedStrategy === strat.name ? '2px solid #60a5fa' : '1px solid #2d2d3f',
+                        borderRadius: '6px',
+                        cursor: strat.comingSoon ? 'not-allowed' : 'pointer',
+                        textAlign: 'left',
+                        fontSize: '13px',
+                        transition: 'all 0.2s',
+                        opacity: strat.comingSoon ? 0.45 : 1,
+                      }}
+                    >
+                      <div style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {strat.name}
+                        {strat.comingSoon && (
+                          <span style={{ fontSize: '10px', background: '#374151', color: '#6b7280', borderRadius: 4, padding: '1px 5px', fontWeight: 500 }}>
+                            Soon
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#b0b0c0', marginTop: '4px' }}>{strat.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <SymbolSearchInput
+                value={formData.internalSymbol}
+                onChange={(sym) => setFormData({ ...formData, internalSymbol: sym })}
+              />
+
+              <FormField
+                label="Timeframe"
+                type="select"
+                value={formData.timeframe}
+                onChange={(v) => setFormData({ ...formData, timeframe: v })}
+                options={[
+                  { value: '1m', label: '1 min' },
+                  { value: '5m', label: '5 min' },
+                  { value: '15m', label: '15 min' },
+                  { value: '30m', label: '30 min' },
+                  { value: '60m', label: '60 min' },
+                ]}
+              />
+
+              <FormField
+                label="Mode"
+                type="select"
+                value={formData.mode}
+                onChange={(v) => setFormData({ ...formData, mode: v as 'Live' | 'Forward' | 'Backtest' })}
+                options={[
+                  { value: 'Live', label: 'Live Trading' },
+                  { value: 'Forward', label: 'Forward Test' },
+                  { value: 'Backtest', label: 'Backtest' },
+                ]}
+              />
+
+              <FormField
+                label="Broker"
+                type="select"
+                value={formData.brokerName}
+                onChange={(v) => setFormData({ ...formData, brokerName: v })}
+                options={
+                  brokerStatus.length > 0
+                    ? brokerStatus.map(b => ({ value: b.brokerName, label: b.brokerName }))
+                    : [
+                        { value: 'MStock', label: 'MStock' },
+                        { value: 'Zerodha', label: 'Zerodha' },
+                        { value: 'Upstox', label: 'Upstox' },
+                      ]
+                }
+              />
+
+              <FormField
+                label="Allocated Capital (₹)"
+                type="number"
+                value={formData.allocatedCapital.toString()}
+                onChange={(v) => setFormData({ ...formData, allocatedCapital: parseInt(v) || 50000 })}
+              />
+            </div>
+
+            {/* Right Column: Schedule & Parameters */}
+            <div>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#8b8b9f' }}>Schedule</label>
+                <ScheduleEditor
+                  value={scheduleConfig}
+                  onChange={setScheduleConfig}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#8b8b9f' }}>Strategy Parameters</label>
+                <StrategyParamsEditor
+                  strategyName={selectedStrategy}
+                  value={strategyParams}
+                  onChange={setStrategyParams}
+                />
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#8b8b9f' }}>Failure Behavior</label>
+                <FailureBehaviorEditor
+                  value={failureBehavior}
+                  onChange={setFailureBehavior}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Live mode broker-auth inline warning */}
+          {formData.mode === 'Live' && brokerStatus.length > 0 && !brokerStatus.find(b => b.brokerName === formData.brokerName)?.isAuthenticated && (
+            <div style={{ background: '#451a03', border: '1px solid #92400e', borderRadius: 6, padding: '10px 14px', marginTop: 12, fontSize: 13, color: '#fbbf24', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <span>⚠️</span>
+              <span>
+                <strong>{formData.brokerName}</strong> is not authenticated.
+                Live trading requires an active broker session. Go to <strong>Settings → Broker</strong> to connect first.
+              </span>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '12px', marginTop: '20px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setShowForm(false)}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#2d2d3f',
+                color: '#e2e8f0',
+                border: '1px solid #3b3b4f',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreateStrategy}
+              disabled={createMutation.isPending}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: formData.mode === 'Live' ? '#dc2626' : '#3b82f6',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: createMutation.isPending ? 'not-allowed' : 'pointer',
+                fontSize: '14px',
+                opacity: createMutation.isPending ? 0.7 : 1,
+              }}
+            >
+              {createMutation.isPending ? 'Creating...' : formData.mode === 'Live' ? '⚠ Create Live Instance' : 'Create Instance'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Live Start Confirmation Modal */}
+      {liveConfirmOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            backgroundColor: '#1e1e2e', border: '2px solid #dc2626', borderRadius: 10,
+            padding: 28, maxWidth: 440, width: '90%',
+          }}>
+            <h3 style={{ color: '#fca5a5', fontSize: 18, fontWeight: 700, marginTop: 0, marginBottom: 8 }}>
+              ⚠ Live Trading — Real Money
+            </h3>
+            <p style={{ color: '#e2e8f0', fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>
+              You are about to create a <strong>Live trading instance</strong> for{' '}
+              <strong>{pendingCmd?.name}</strong>.
+            </p>
+            <p style={{ color: '#fca5a5', fontSize: 13, lineHeight: 1.6, marginBottom: 20 }}>
+              This will place <strong>real orders</strong> with {pendingCmd?.brokerName} using up to{' '}
+              <strong>₹{pendingCmd?.allocatedCapital?.toLocaleString()}</strong> of allocated capital.
+              Losses are real. Please confirm you intend to trade live.
+            </p>
+            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setLiveConfirmOpen(false); setPendingCmd(null) }}
+                style={{ padding: '8px 16px', background: '#2d2d3f', color: '#e2e8f0', border: '1px solid #3b3b4f', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLiveConfirm}
+                style={{ padding: '8px 18px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, fontWeight: 700 }}
+              >
+                Yes, Trade Live
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Strategies Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '20px' }}>
+        {strategies && strategies.length > 0 ? (
+          strategies.map(strat => <StrategyCard key={strat.id} instance={strat} />)
+        ) : (
+          <p style={{ color: '#8b8b9f', fontSize: '14px' }}>No strategies yet. Create one to get started.</p>
         )}
       </div>
     </div>
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── Overview Page ─────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// ORDERS PAGE
+// ──────────────────────────────────────────────────────────────────────────────
 
-function OverviewPage({ strategies, orders, signals, running, paused, stopped, brokerStatus, onNavigate }: {
-  strategies: StrategyInstance[]
-  orders: Order[]
-  signals: Array<{ symbol: string; signal: string; price?: number; timestamp: string }>
-  running: StrategyInstance[]
-  paused: StrategyInstance[]
-  stopped: StrategyInstance[]
-  brokerStatus: BrokerStatus[]
-  onNavigate: (page: Page) => void
-}) {
+function OrdersPage({ orders }: { orders: Order[] }) {
   return (
     <div>
-      {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
-        {[
-          { label: 'Running', value: running.length, color: '#16a34a' },
-          { label: 'Paused', value: paused.length, color: '#f59e0b' },
-          { label: 'Stopped', value: stopped.length, color: '#6b7280' },
-          { label: 'Recent Signals', value: signals.length, color: '#3b82f6' },
-        ].map(stat => (
-          <div key={stat.label} style={{ background: '#1e1e2e', borderRadius: 8, padding: 16, border: '1px solid #2d2d3f' }}>
-            <div style={{ fontSize: 28, fontWeight: 700, color: stat.color }}>{stat.value}</div>
-            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>{stat.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Broker Connections */}
-      <SectionHeader title="Broker Connections" />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 32 }}>
-        {brokerStatus.map(b => (
-          <div key={b.brokerName} style={{
-            background: '#1e1e2e', borderRadius: 8, padding: 16, border: '1px solid #2d2d3f',
-            borderLeft: b.isConnected && b.isAuthenticated ? '3px solid #16a34a' : '3px solid #dc2626'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, fontSize: 14 }}>{b.brokerName}</span>
-              <span style={{
-                fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4,
-                background: b.isConnected && b.isAuthenticated ? '#16a34a22' : '#dc262622',
-                color: b.isConnected && b.isAuthenticated ? '#86efac' : '#fca5a5',
-              }}>
-                {b.isConnected && b.isAuthenticated ? 'CONNECTED' : 'DISCONNECTED'}
-              </span>
-            </div>
-            <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>
-              Session: {b.isAuthenticated ? 'Valid' : 'Invalid'} · Last check: {formatIst(b.lastCheckedAt)}
-            </div>
-          </div>
-        ))}
-        {brokerStatus.length === 0 && (
-          <div style={{ color: '#64748b', fontSize: 13, gridColumn: '1 / -1' }}>
-            No broker status available. Login to a broker first.
-          </div>
-        )}
-      </div>
-
-      {/* Active Strategies */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <SectionHeader title="Strategy Instances" />
-        <button onClick={() => onNavigate('strategies')} style={{
-          fontSize: 12, padding: '4px 12px', borderRadius: 4,
-          background: '#3b82f6', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600,
-        }}>
-          + New Strategy
-        </button>
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
-        {strategies.length === 0 && (
-          <div style={{ color: '#64748b', fontSize: 13, padding: 20, background: '#1e1e2e', borderRadius: 8, border: '1px solid #2d2d3f', width: '100%' }}>
-            No strategy instances configured. Click <strong>"+ New Strategy"</strong> to create one.
-          </div>
-        )}
-        {strategies.map(s => <StrategyCard key={s.id} instance={s} />)}
-      </div>
-
-      {/* Recent Orders */}
-      <SectionHeader title="Recent Orders" />
-      <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, overflow: 'hidden', marginBottom: 32 }}>
-        {orders.length === 0 ? (
-          <div style={{ padding: 20, color: '#64748b', fontSize: 13, textAlign: 'center' }}>No orders yet.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#2d2d3f', color: '#94a3b8' }}>
-                {['Symbol', 'Direction', 'Type', 'Qty', 'Price', 'Status', 'Time'].map(h => (
-                  <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {orders.slice(0, 10).map(o => (
-                <tr key={o.id} style={{ borderBottom: '1px solid #2d2d3f' }}>
-                  <td style={{ padding: '10px 16px', fontWeight: 600 }}>{o.internalSymbol}</td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span style={{ color: o.direction === 'Buy' ? '#16a34a' : '#dc2626', fontWeight: 700 }}>{o.direction}</span>
-                  </td>
-                  <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{o.orderType}</td>
-                  <td style={{ padding: '10px 16px' }}>{o.quantity}</td>
-                  <td style={{ padding: '10px 16px' }}>{o.price ? formatInr(o.price) : '--'}</td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
-                      background: o.status === 'Filled' ? '#16a34a22' : o.status === 'Rejected' ? '#dc262622' : '#3b82f622',
-                      color: o.status === 'Filled' ? '#86efac' : o.status === 'Rejected' ? '#fca5a5' : '#93c5fd',
-                    }}>{o.status}</span>
-                  </td>
-                  <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{formatIst(o.placedAt)}</td>
-                </tr>
+      <SectionHeader title="Orders" />
+      <div style={{ backgroundColor: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: '8px', overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#2d2d3f', borderBottom: '1px solid #3b3b4f' }}>
+              {['ID', 'Symbol', 'Side', 'Qty', 'Price', 'Status', 'Placed', 'Broker'].map(col => (
+                <th key={col} style={{ padding: '12px', textAlign: 'left', color: '#8b8b9f', fontWeight: '600' }}>{col}</th>
               ))}
-            </tbody>
-          </table>
-        )}
+            </tr>
+          </thead>
+          <tbody>
+            {orders.length > 0 ? (
+              orders.map(order => (
+                <tr key={order.id} style={{ borderBottom: '1px solid #2d2d3f' }}>
+                  <td style={{ padding: '12px', color: '#e2e8f0', fontFamily: 'monospace', fontSize: '11px' }}>{order.id.slice(0, 8)}</td>
+                  <td style={{ padding: '12px', color: '#e2e8f0', fontWeight: '600' }}>{order.internalSymbol}</td>
+                  <td style={{ padding: '12px', color: order.direction === 'BUY' ? '#10b981' : '#ef4444' }}>{order.direction}</td>
+                  <td style={{ padding: '12px', color: '#e2e8f0' }}>{order.quantity}</td>
+                  <td style={{ padding: '12px', color: '#e2e8f0' }}>{formatInr(order.price)}</td>
+                  <td style={{ padding: '12px', color: statusColor(order.status) }}>{order.status}</td>
+                  <td style={{ padding: '12px', color: '#8b8b9f', fontSize: '12px' }}>{formatIst(order.placedAt)}</td>
+                  <td style={{ padding: '12px', color: '#8b8b9f' }}>{order.brokerName}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={8} style={{ padding: '24px', textAlign: 'center', color: '#8b8b9f' }}>No orders</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function statusColor(status: string): string {
+  switch (status) {
+    case 'FILLED': return '#10b981'
+    case 'CANCELLED': return '#6b7280'
+    case 'REJECTED': return '#ef4444'
+    default: return '#f59e0b'
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// BACKTEST PAGE
+// ──────────────────────────────────────────────────────────────────────────────
+
+function BacktestPage({ backtestResults }: {
+  backtestResults: BacktestResult[];
+}) {
+  const qc = useQueryClient()
+  const [selectedStrategy, setSelectedStrategy] = useState('AlertCandleShort')
+  const [formData, setFormData] = useState({
+    internalSymbol: '',
+    timeframe: '5m',
+    fromDate: '2024-01-01',
+    toDate: '2024-03-21',
+    initialCapital: 100000,
+    riskPerTradePct: 1,
+    fillModel: 0 as 0 | 1 | 2,
+    slippageBasisPoints: 5,
+    brokerageFlatPerSide: 20,
+  })
+  const [strategyParams, setStrategyParams] = useState<Record<string, unknown>>(defaultParams('AlertCandleShort'))
+  const [errorMsg, setErrorMsg] = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
+  const [promoteBacktest, setPromoteBacktest] = useState<BacktestResult | null>(null)
+
+  const toggleRow = useCallback((id: string) => {
+    setExpandedRow(prev => prev === id ? null : id)
+  }, [])
+
+  const runMutation = useMutation({
+    mutationFn: async () => {
+      const cmd = {
+        strategyName: selectedStrategy,
+        internalSymbol: formData.internalSymbol,
+        timeframe: formData.timeframe,
+        fromDate: formData.fromDate,
+        toDate: formData.toDate,
+        initialCapital: formData.initialCapital,
+        riskPerTradePercent: formData.riskPerTradePct,
+        parametersJson: paramsToJson(strategyParams),
+        fillModel: formData.fillModel,
+        slippageBasisPoints: formData.slippageBasisPoints,
+        brokerageFlatPerSide: formData.brokerageFlatPerSide,
+      }
+      return backtestApi.run(cmd)
+    },
+    onSuccess: () => {
+      setSuccessMsg('Backtest started successfully!')
+      qc.invalidateQueries({ queryKey: ['backtest-results'] })
+      setTimeout(() => setSuccessMsg(''), 3000)
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.response?.data?.error || 'Failed to run backtest')
+    }
+  })
+
+  const handleRunBacktest = () => {
+    if (!formData.internalSymbol) {
+      setErrorMsg('Symbol is required')
+      return
+    }
+    runMutation.mutate()
+  }
+
+  return (
+    <div>
+      <SectionHeader title="Backtest Lab" />
+
+      {/* Form */}
+      <div style={{ backgroundColor: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 'bold' }}>Run Backtest</h3>
+
+        {errorMsg && <div style={{ backgroundColor: '#7f1d1d', color: '#fecaca', padding: '12px', borderRadius: '6px', marginBottom: '12px', fontSize: '14px' }}>{errorMsg}</div>}
+        {successMsg && <div style={{ backgroundColor: '#065f46', color: '#a7f3d0', padding: '12px', borderRadius: '6px', marginBottom: '12px', fontSize: '14px' }}>{successMsg}</div>}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '4px', color: '#8b8b9f' }}>Strategy</label>
+            <div style={{ display: 'grid', gap: '8px', maxHeight: '120px', overflowY: 'auto' }}>
+              {ALL_STRATEGIES.map(strat => (
+                <button
+                  key={strat.name}
+                  disabled={strat.comingSoon}
+                  onClick={() => {
+                    if (!strat.comingSoon) {
+                      setSelectedStrategy(strat.name)
+                      setStrategyParams(defaultParams(strat.name))
+                    }
+                  }}
+                  title={strat.comingSoon ? 'Coming soon — not yet available' : undefined}
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: selectedStrategy === strat.name ? '#3b82f6' : '#2d2d3f',
+                    color: strat.comingSoon ? '#4b5563' : '#e2e8f0',
+                    border: selectedStrategy === strat.name ? '2px solid #60a5fa' : '1px solid #2d2d3f',
+                    borderRadius: '4px',
+                    cursor: strat.comingSoon ? 'not-allowed' : 'pointer',
+                    textAlign: 'left',
+                    fontSize: '12px',
+                    opacity: strat.comingSoon ? 0.4 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  {strat.name}
+                  {strat.comingSoon && (
+                    <span style={{ fontSize: '10px', background: '#374151', color: '#6b7280', borderRadius: 3, padding: '1px 4px' }}>Soon</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <SymbolSearchInput
+            value={formData.internalSymbol}
+            onChange={(sym) => setFormData({ ...formData, internalSymbol: sym })}
+          />
+
+          <FormField
+            label="Timeframe"
+            type="select"
+            value={formData.timeframe}
+            onChange={(v) => setFormData({ ...formData, timeframe: v })}
+            options={[
+              { value: '1m', label: '1 min' },
+              { value: '5m', label: '5 min' },
+              { value: '15m', label: '15 min' },
+              { value: '30m', label: '30 min' },
+              { value: '60m', label: '60 min' },
+            ]}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+          <FormField
+            label="From Date"
+            type="date"
+            value={formData.fromDate}
+            onChange={(v) => setFormData({ ...formData, fromDate: v })}
+          />
+          <FormField
+            label="To Date"
+            type="date"
+            value={formData.toDate}
+            onChange={(v) => setFormData({ ...formData, toDate: v })}
+          />
+          <FormField
+            label="Initial Capital (₹)"
+            type="number"
+            value={formData.initialCapital.toString()}
+            onChange={(v) => setFormData({ ...formData, initialCapital: parseInt(v) || 100000 })}
+          />
+          <FormField
+            label="Risk per Trade (%)"
+            type="number"
+            value={formData.riskPerTradePct.toString()}
+            onChange={(v) => setFormData({ ...formData, riskPerTradePct: parseFloat(v) || 1 })}
+          />
+        </div>
+
+        {/* ── Fill Model + Cost Settings ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '16px', padding: '14px', background: '#13131f', borderRadius: 6, border: '1px solid #2d2d3f' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '6px', color: '#64748b' }}>
+              Fill Model
+            </label>
+            <select
+              value={formData.fillModel}
+              onChange={e => setFormData({ ...formData, fillModel: parseInt(e.target.value) as 0|1|2 })}
+              style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 4, color: '#e2e8f0', padding: '7px 10px', fontSize: 13, width: '100%' }}
+            >
+              <option value={0}>Next Bar Open (default)</option>
+              <option value={1}>Next Bar Open + Slippage</option>
+              <option value={2}>Signal Bar Close ⚠️</option>
+            </select>
+            <p style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>
+              NextBarOpen avoids lookahead bias. SignalBarClose may inflate results.
+            </p>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '6px', color: '#64748b' }}>
+              Slippage (basis points)
+            </label>
+            <input
+              type="number" min={0} max={100} step={1}
+              value={formData.slippageBasisPoints}
+              onChange={e => setFormData({ ...formData, slippageBasisPoints: parseInt(e.target.value) || 0 })}
+              style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 4, color: '#e2e8f0', padding: '7px 10px', fontSize: 13, width: '100%', boxSizing: 'border-box' }}
+            />
+            <p style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>
+              Applied when Fill = Next Bar Open + Slippage. 1 bp = 0.01%.
+            </p>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', marginBottom: '6px', color: '#64748b' }}>
+              Brokerage per Order Leg (₹)
+            </label>
+            <input
+              type="number" min={0} step={1}
+              value={formData.brokerageFlatPerSide}
+              onChange={e => setFormData({ ...formData, brokerageFlatPerSide: parseInt(e.target.value) || 20 })}
+              style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 4, color: '#e2e8f0', padding: '7px 10px', fontSize: 13, width: '100%', boxSizing: 'border-box' }}
+            />
+            <p style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>
+              ₹20/order = Zerodha/Upstox model. Set to 0 for % brokerage.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#8b8b9f' }}>Strategy Parameters</label>
+          <StrategyParamsEditor
+            strategyName={selectedStrategy}
+            value={strategyParams}
+            onChange={setStrategyParams}
+          />
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={handleRunBacktest}
+            disabled={runMutation.isPending}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#3b82f6',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: runMutation.isPending ? 'not-allowed' : 'pointer',
+              fontSize: '14px',
+              fontWeight: '600',
+              opacity: runMutation.isPending ? 0.7 : 1,
+            }}
+          >
+            {runMutation.isPending ? 'Running...' : '▶ Run Backtest'}
+          </button>
+        </div>
       </div>
 
-      {/* Live Signals */}
-      {signals.length > 0 && (
-        <>
-          <SectionHeader title="Live Signals" />
-          <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, overflow: 'hidden' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: '#2d2d3f', color: '#94a3b8' }}>
-                  {['Symbol', 'Signal', 'Price', 'Time'].map(h => (
-                    <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
+      {/* Past Results */}
+      <SectionHeader title="Past Runs" />
+      <div style={{ backgroundColor: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: '8px', overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+          <thead>
+            <tr style={{ backgroundColor: '#2d2d3f', borderBottom: '1px solid #3b3b4f' }}>
+              {['', 'Date (IST)', 'Strategy', 'Symbol', 'TF', 'Net P&L', 'Return', 'Win%', 'Trades', 'Sharpe', 'Calmar', 'MaxDD', 'PF', 'Expectancy', ''].map((col, i) => (
+                <th key={i} style={{ padding: '10px 8px', textAlign: 'left', color: '#8b8b9f', fontWeight: '600', whiteSpace: 'nowrap' }}>{col}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {backtestResults.length > 0 ? (
+              backtestResults.map(result => {
+                const rowId = result.id ?? result.strategyName + result.symbol
+                const isExpanded = expandedRow === rowId
+                return (
+                  <Fragment key={rowId}>
+                    <tr
+                      style={{ borderBottom: isExpanded ? 'none' : '1px solid #2d2d3f', cursor: 'pointer', background: isExpanded ? '#252538' : 'transparent' }}
+                      onClick={() => toggleRow(rowId)}
+                    >
+                      <td style={{ padding: '10px 8px', color: '#64748b', fontSize: '11px' }}>
+                        {isExpanded ? '▼' : '▶'}
+                      </td>
+                      <td style={{ padding: '10px 8px', color: '#94a3b8', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                        {result.startedAt ? formatIst(result.startedAt) : '--'}
+                      </td>
+                      <td style={{ padding: '10px 8px', color: '#e2e8f0', fontWeight: '600' }}>{result.strategyName}</td>
+                      <td style={{ padding: '10px 8px', color: '#e2e8f0' }}>{result.symbol}</td>
+                      <td style={{ padding: '10px 8px', color: '#8b8b9f' }}>{result.timeframe}</td>
+                      <td style={{ padding: '10px 8px', color: result.totalPnl >= 0 ? '#10b981' : '#ef4444', fontWeight: '600' }}>
+                        {formatInr(result.totalPnl)}
+                      </td>
+                      <td style={{ padding: '10px 8px', color: result.totalReturn >= 0 ? '#10b981' : '#ef4444' }}>
+                        {(result.totalReturn * 100).toFixed(2)}%
+                      </td>
+                      <td style={{ padding: '10px 8px', color: '#e2e8f0' }}>{(result.winRate * 100).toFixed(1)}%</td>
+                      <td style={{ padding: '10px 8px', color: '#e2e8f0' }}>{result.totalTrades}</td>
+                      <td style={{ padding: '10px 8px', color: result.sharpeRatio >= 1 ? '#10b981' : result.sharpeRatio >= 0 ? '#f59e0b' : '#ef4444' }}>
+                        {result.sharpeRatio.toFixed(2)}
+                      </td>
+                      <td style={{ padding: '10px 8px', color: '#e2e8f0' }}>
+                        {result.calmarRatio != null ? result.calmarRatio.toFixed(2) : '--'}
+                      </td>
+                      <td style={{ padding: '10px 8px', color: '#ef4444' }}>
+                        {(result.maxDrawdown * 100).toFixed(1)}%
+                      </td>
+                      <td style={{ padding: '10px 8px', color: result.profitFactor != null && result.profitFactor >= 1.5 ? '#10b981' : '#f59e0b' }}>
+                        {result.profitFactor != null ? result.profitFactor.toFixed(2) : '--'}
+                      </td>
+                      <td style={{ padding: '10px 8px', color: result.expectancyPerTrade != null && result.expectancyPerTrade >= 0 ? '#10b981' : '#ef4444' }}>
+                        {result.expectancyPerTrade != null ? formatInr(result.expectancyPerTrade) : '--'}
+                      </td>
+                      <td style={{ padding: '10px 8px' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: 5 }}>
+                          <button
+                            onClick={() => window.open(`/api/backtest/${result.id}/report`, '_blank')}
+                            style={{ padding: '3px 7px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                          >
+                            ↓ PDF
+                          </button>
+                          {result.id && (
+                            <button
+                              onClick={() => setPromoteBacktest(result)}
+                              title="Start a Forward Test from this backtest"
+                              style={{ padding: '3px 7px', backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 700 }}
+                            >
+                              🧪 FwdTest
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr key={`${rowId}-detail`} style={{ borderBottom: '1px solid #2d2d3f', background: '#13131f' }}>
+                        <td colSpan={15} style={{ padding: '16px 20px' }}>
+                          <BacktestDetailPanel result={result} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })
+            ) : (
+              <tr>
+                <td colSpan={15} style={{ padding: '24px', textAlign: 'center', color: '#8b8b9f' }}>No backtest results yet</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Promote to Forward Test modal */}
+      {promoteBacktest && (
+        <PromoteToForwardTestModal
+          backtest={promoteBacktest}
+          onClose={() => setPromoteBacktest(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// BACKTEST DETAIL PANEL (expandable row)
+// ──────────────────────────────────────────────────────────────────────────────
+
+function BacktestDetailPanel({ result }: { result: BacktestResult }) {
+  const trades = result.trades ?? []
+  return (
+    <div>
+      {/* Summary stat row */}
+      <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 16 }}>
+        {[
+          { label: 'Avg Win', value: result.avgWin != null ? formatInr(result.avgWin) : '--', color: '#10b981' },
+          { label: 'Avg Loss', value: result.avgLoss != null ? formatInr(result.avgLoss) : '--', color: '#ef4444' },
+          { label: 'Max Consec Losses', value: result.maxConsecutiveLosses?.toString() ?? '--', color: '#f59e0b' },
+          { label: 'Win Count', value: result.winCount?.toString() ?? '--', color: '#10b981' },
+          { label: 'Loss Count', value: result.lossCount?.toString() ?? '--', color: '#ef4444' },
+          { label: 'Final Equity', value: result.finalEquity != null ? formatInr(result.finalEquity) : '--', color: '#3b82f6' },
+        ].map(stat => (
+          <div key={stat.label}>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>{stat.label}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: stat.color }}>{stat.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Equity Curve */}
+      {trades.length > 0 && result.initialCapital != null && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Equity Curve</div>
+          <EquityCurveChart trades={trades} initialCapital={result.initialCapital} />
+        </div>
+      )}
+
+      {/* Trade Table */}
+      {trades.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 6 }}>Trade Log ({trades.length} trades)</div>
+          <div style={{ overflowX: 'auto', maxHeight: 260, overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+              <thead style={{ position: 'sticky', top: 0, background: '#1e1e2e' }}>
+                <tr style={{ borderBottom: '1px solid #2d2d3f' }}>
+                  {['#', 'Side', 'Entry Time (IST)', 'Exit Time (IST)', 'Entry ₹', 'Exit ₹', 'Qty', 'Gross P&L', 'Net P&L', 'Exit Reason'].map(col => (
+                    <th key={col} style={{ padding: '6px 8px', textAlign: 'left', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap' }}>{col}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {signals.slice(0, 20).map((s, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #2d2d3f' }}>
-                    <td style={{ padding: '10px 16px', fontWeight: 600 }}>{s.symbol}</td>
-                    <td style={{ padding: '10px 16px' }}>
-                      <span style={{
-                        color: s.signal === 'BUY' ? '#16a34a' : s.signal === 'SELL' ? '#dc2626' : '#6b7280',
-                        fontWeight: 700
-                      }}>{s.signal}</span>
-                    </td>
-                    <td style={{ padding: '10px 16px' }}>{s.price ? formatInr(s.price) : '--'}</td>
-                    <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{formatIst(s.timestamp)}</td>
+                {trades.map((t: BacktestTradeResult, i: number) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #1e1e2e' }}>
+                    <td style={{ padding: '5px 8px', color: '#475569' }}>{i + 1}</td>
+                    <td style={{ padding: '5px 8px', color: t.direction === 'Long' || t.direction === 'BUY' ? '#10b981' : '#ef4444', fontWeight: 600 }}>{t.direction}</td>
+                    <td style={{ padding: '5px 8px', color: '#94a3b8' }}>{formatIst(t.entryTime)}</td>
+                    <td style={{ padding: '5px 8px', color: '#94a3b8' }}>{formatIst(t.exitTime)}</td>
+                    <td style={{ padding: '5px 8px', color: '#e2e8f0' }}>{formatInr(t.entryPrice)}</td>
+                    <td style={{ padding: '5px 8px', color: '#e2e8f0' }}>{formatInr(t.exitPrice)}</td>
+                    <td style={{ padding: '5px 8px', color: '#e2e8f0' }}>{t.quantity}</td>
+                    <td style={{ padding: '5px 8px', color: t.grossPnl >= 0 ? '#10b981' : '#ef4444' }}>{formatInr(t.grossPnl)}</td>
+                    <td style={{ padding: '5px 8px', color: t.netPnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>{formatInr(t.netPnl)}</td>
+                    <td style={{ padding: '5px 8px', color: '#64748b' }}>{t.exitReason}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </>
+        </div>
+      )}
+
+      {trades.length === 0 && (
+        <p style={{ color: '#475569', fontSize: 13 }}>No trade data available for this run.</p>
       )}
     </div>
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── Strategies Page ───────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// SETTINGS PAGE
+// ──────────────────────────────────────────────────────────────────────────────
 
-const ALL_STRATEGIES = [
-  { name: 'PriceActionBreakout', desc: 'Breakout on price action patterns with support/resistance levels' },
-  { name: 'MovingAverageCrossover', desc: 'Dual MA crossover with configurable fast and slow periods' },
-  { name: 'RSIMeanReversion', desc: 'Mean reversion using RSI overbought/oversold signals' },
-  { name: 'VWAPStrategy', desc: 'Volume-weighted average price based intraday strategy' },
-  { name: 'ORBStrategy', desc: 'Opening Range Breakout — trades first 15/30 min range breakout' },
-  { name: 'SupertrendFollower', desc: 'Trend following using Supertrend indicator with ATR bands' },
-  { name: 'BollingerBandSqueeze', desc: 'Volatility squeeze breakout using Bollinger Bands' },
-]
-
-function StrategiesPage({ strategies, showCreateForm, setShowCreateForm, activeBroker }: {
-  strategies: StrategyInstance[]
-  showCreateForm: boolean
-  setShowCreateForm: (v: boolean) => void
-  activeBroker?: string
-}) {
+function SettingsPage() {
   const qc = useQueryClient()
-  const [selectedStrategies, setSelectedStrategies] = useState<string[]>(['PriceActionBreakout'])
-  const [formData, setFormData] = useState({
-    name: '',
-    internalSymbol: '',
-    timeframe: '5m',
-    brokerName: activeBroker ?? 'MStock',
-    mode: 'Forward',
-    allocatedCapital: 10000,
-  })
-  const [createError, setCreateError] = useState('')
-  const [createSuccess, setCreateSuccess] = useState('')
-  const [symbolSearch, setSymbolSearch] = useState('')
-  const [symbolResults, setSymbolResults] = useState<Instrument[]>([])
-  const [showSymbolDropdown, setShowSymbolDropdown] = useState(false)
-  const symbolSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [botToken, setBotToken] = useState('')
+  const [chatId, setChatId] = useState('')
+  const [drawdownPct, setDrawdownPct] = useState('')
+  const [alertsEnabled, setAlertsEnabled] = useState(true)
 
-  // Debounced symbol search
+  const { data: settingsResp, isLoading } = useQuery({
+    queryKey: ['notification-settings'],
+    queryFn: () => settingsApi.getNotifications(),
+  })
+
+  // Populate form fields once when settings data first loads.
+  // useEffect with [loadedSettings] dependency — runs whenever the query result arrives.
+  const loadedSettings = settingsResp?.data?.data
   useEffect(() => {
-    if (symbolSearch.length < 2) { setSymbolResults([]); return }
-    if (symbolSearchTimer.current) clearTimeout(symbolSearchTimer.current)
-    symbolSearchTimer.current = setTimeout(async () => {
-      try {
-        const res = await instrumentsApi.list({ active: true })
-        const all = res.data.data ?? []
-        const filtered = all.filter(i =>
-          i.internalSymbol.toLowerCase().includes(symbolSearch.toLowerCase()) ||
-          (i.tradingSymbol?.toLowerCase().includes(symbolSearch.toLowerCase())) ||
-          (i.name?.toLowerCase().includes(symbolSearch.toLowerCase()))
-        ).slice(0, 10)
-        setSymbolResults(filtered)
-        setShowSymbolDropdown(true)
-      } catch { setSymbolResults([]) }
-    }, 300)
-  }, [symbolSearch])
-
-  const toggleStrategy = (name: string) => {
-    setSelectedStrategies(prev =>
-      prev.includes(name) ? prev.filter(s => s !== name) : [...prev, name]
-    )
-  }
-
-  const createMutation = useMutation({
-    mutationFn: (cmd: CreateStrategyCommand) => strategiesApi.create(cmd),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['strategies'] })
-      setShowCreateForm(false)
-      setCreateSuccess('Strategy instance created successfully!')
-      setCreateError('')
-      setTimeout(() => setCreateSuccess(''), 3000)
-    },
-    onError: (err: any) => {
-      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Failed to create strategy'
-      setCreateError(msg)
-    },
-  })
-
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault()
-    setCreateError('')
-    if (!formData.name.trim()) { setCreateError('Instance name is required'); return }
-    if (!formData.internalSymbol.trim()) { setCreateError('Symbol is required'); return }
-    if (selectedStrategies.length === 0) { setCreateError('Select at least one strategy'); return }
-
-    // Combine multiple strategies into parametersJson
-    const cmd: CreateStrategyCommand = {
-      ...formData,
-      strategyType: selectedStrategies[0], // primary strategy (maps to backend StrategyType)
-      parametersJson: JSON.stringify({
-        strategies: selectedStrategies,     // all selected strategies
-        combination: selectedStrategies.length > 1 ? 'AND' : 'SINGLE', // AND = all must agree
-      }),
+    if (loadedSettings) {
+      setChatId(loadedSettings.telegramChatId ?? '')
+      setDrawdownPct(String(loadedSettings.maxDailyDrawdownPct))
+      setAlertsEnabled(loadedSettings.alertsEnabled ?? true)
     }
-    createMutation.mutate(cmd)
-  }
+  }, [loadedSettings])
 
-  const modeColor = { Live: '#f87171', Forward: '#fbbf24', Backtest: '#60a5fa' }[formData.mode] ?? '#94a3b8'
-  const modeBg = { Live: '#dc262622', Forward: '#f59e0b22', Backtest: '#3b82f622' }[formData.mode] ?? '#ffffff11'
-  const modeLabel = formData.mode === 'Forward' ? 'PAPER' : formData.mode.toUpperCase()
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Strategy Management</h2>
-        <button onClick={() => { setShowCreateForm(!showCreateForm); setCreateError('') }} style={{
-          padding: '8px 16px', background: showCreateForm ? '#dc2626' : '#3b82f6', color: '#fff',
-          border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-        }}>
-          {showCreateForm ? '✕ Cancel' : '+ Create Strategy Instance'}
-        </button>
-      </div>
-
-      {createSuccess && (
-        <div style={{ background: '#14532d', border: '1px solid #16a34a', color: '#86efac', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 13 }}>
-          ✓ {createSuccess}
-        </div>
-      )}
-
-      {/* ── Create Form ─────────────────────────────────────────────────────── */}
-      {showCreateForm && (
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24, marginBottom: 32 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20 }}>Create New Strategy Instance</h3>
-
-          {createError && (
-            <div style={{ background: '#7f1d1d', border: '1px solid #991b1b', color: '#fca5a5', borderRadius: 6, padding: 10, marginBottom: 16, fontSize: 13 }}>
-              ✕ {createError}
-            </div>
-          )}
-
-          <form onSubmit={handleCreate}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-              <FormField label="Instance Name *" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} placeholder="e.g. NIFTY Paper Trade" required />
-
-              {/* Symbol search with autocomplete */}
-              <div style={{ position: 'relative' }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Symbol *</label>
-                <input
-                  type="text"
-                  value={symbolSearch || formData.internalSymbol}
-                  onChange={e => {
-                    setSymbolSearch(e.target.value)
-                    setFormData({ ...formData, internalSymbol: e.target.value })
-                  }}
-                  onFocus={() => symbolSearch.length >= 2 && setShowSymbolDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowSymbolDropdown(false), 200)}
-                  placeholder="Type to search (e.g. NIFTY, RELIANCE)"
-                  style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box' }}
-                  required
-                />
-                {showSymbolDropdown && symbolResults.length > 0 && (
-                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 6, zIndex: 100, maxHeight: 200, overflowY: 'auto' }}>
-                    {symbolResults.map(inst => (
-                      <div
-                        key={inst.internalSymbol}
-                        onClick={() => {
-                          setFormData({ ...formData, internalSymbol: inst.internalSymbol })
-                          setSymbolSearch(inst.internalSymbol)
-                          setShowSymbolDropdown(false)
-                        }}
-                        style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid #2d2d3f' }}
-                        onMouseEnter={e => (e.currentTarget.style.background = '#2d2d3f')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        <strong>{inst.internalSymbol}</strong>
-                        {inst.name && <span style={{ color: '#64748b', marginLeft: 8, fontSize: 11 }}>{inst.name}</span>}
-                        <span style={{ float: 'right', fontSize: 10, color: '#64748b' }}>{inst.exchange}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {symbolSearch.length >= 2 && symbolResults.length === 0 && (
-                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
-                    No instruments found. Type the exact symbol (e.g. NSE:NIFTY50) manually.
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Timeframe</label>
-                <select value={formData.timeframe} onChange={e => setFormData({ ...formData, timeframe: e.target.value })}
-                  style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}>
-                  {['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1D'].map(tf => <option key={tf} value={tf}>{tf}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
-                  Trading Mode
-                  <span style={{ marginLeft: 8, fontSize: 10, padding: '1px 6px', borderRadius: 3, background: modeBg, color: modeColor, fontWeight: 700 }}>
-                    {modeLabel}
-                  </span>
-                </label>
-                <select value={formData.mode} onChange={e => setFormData({ ...formData, mode: e.target.value })}
-                  style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}>
-                  <option value="Forward">Paper Trading (Forward Test — no real money)</option>
-                  <option value="Live">Live Trading (Real Money ⚠)</option>
-                  <option value="Backtest">Backtest Only</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Broker</label>
-                <select value={formData.brokerName} onChange={e => setFormData({ ...formData, brokerName: e.target.value })}
-                  style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}>
-                  <option value="MStock">MStock</option>
-                  <option value="Zerodha">Zerodha</option>
-                  <option value="Upstox">Upstox</option>
-                </select>
-              </div>
-
-              <FormField label="Allocated Capital (₹)" value={String(formData.allocatedCapital)} onChange={v => setFormData({ ...formData, allocatedCapital: Number(v) || 0 })} placeholder="10000" />
-            </div>
-
-            {/* Multi-strategy selector */}
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 8 }}>
-                Strategy Logic *
-                <span style={{ marginLeft: 8, fontWeight: 400, color: '#64748b' }}>
-                  Select one or more — when multiple selected, ALL must agree before a trade is placed
-                </span>
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 8 }}>
-                {ALL_STRATEGIES.map(s => {
-                  const selected = selectedStrategies.includes(s.name)
-                  return (
-                    <div
-                      key={s.name}
-                      onClick={() => toggleStrategy(s.name)}
-                      style={{
-                        padding: '10px 12px', borderRadius: 6, cursor: 'pointer',
-                        background: selected ? '#1e3a5f' : '#0f0f1a',
-                        border: selected ? '1px solid #3b82f6' : '1px solid #2d2d3f',
-                        transition: 'all 0.15s',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                        <span style={{
-                          width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                          background: selected ? '#3b82f6' : 'transparent',
-                          border: selected ? 'none' : '1px solid #3d3d5c',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: 10, color: '#fff',
-                        }}>
-                          {selected ? '✓' : ''}
-                        </span>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: selected ? '#93c5fd' : '#e2e8f0' }}>{s.name}</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: '#64748b', marginLeft: 22 }}>{s.desc}</div>
-                    </div>
-                  )
-                })}
-              </div>
-              {selectedStrategies.length > 1 && (
-                <div style={{ marginTop: 10, padding: '8px 12px', background: '#1e3a5f22', border: '1px solid #3b82f644', borderRadius: 6, fontSize: 12, color: '#93c5fd' }}>
-                  ℹ {selectedStrategies.length} strategies selected — a trade will only be placed when <strong>all {selectedStrategies.length}</strong> agree simultaneously (AND logic)
-                </div>
-              )}
-            </div>
-
-            {formData.mode === 'Live' && (
-              <div style={{ background: '#dc262622', border: '1px solid #dc262644', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 12, color: '#fca5a5' }}>
-                ⚠ <strong>LIVE TRADING MODE</strong> — Real money will be used. Ensure your broker session is active and you have sufficient funds before starting.
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <button type="submit" disabled={createMutation.isPending} style={{
-                padding: '10px 24px', background: createMutation.isPending ? '#4b5563' : '#3b82f6', color: '#fff',
-                border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600,
-                cursor: createMutation.isPending ? 'not-allowed' : 'pointer',
-              }}>
-                {createMutation.isPending ? 'Creating...' : 'Create Strategy Instance'}
-              </button>
-              {createMutation.isPending && <span style={{ fontSize: 12, color: '#94a3b8' }}>Saving to database...</span>}
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* ── Active Strategy Instances ──────────────────────────────────────── */}
-      <SectionHeader title={`Strategy Instances (${strategies.length})`} />
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
-        {strategies.length === 0 && (
-          <div style={{ color: '#64748b', fontSize: 13, padding: 20, background: '#1e1e2e', borderRadius: 8, border: '1px solid #2d2d3f', width: '100%' }}>
-            No strategy instances yet. Click <strong>"+ Create Strategy Instance"</strong> above to get started.
-          </div>
-        )}
-        {strategies.map(s => <StrategyCard key={s.id} instance={s} />)}
-      </div>
-    </div>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── Orders Page ───────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function OrdersPage({ orders }: { orders: Order[] }) {
-  const [filterStatus, setFilterStatus] = useState<string>('all')
-
-  const filtered = filterStatus === 'all' ? orders : orders.filter(o => o.status === filterStatus)
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Order History</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {['all', 'Pending', 'Filled', 'Cancelled', 'Rejected'].map(status => (
-            <button key={status} onClick={() => setFilterStatus(status)} style={{
-              padding: '4px 12px', borderRadius: 4, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-              background: filterStatus === status ? '#3b82f6' : 'transparent',
-              color: filterStatus === status ? '#fff' : '#94a3b8',
-              border: filterStatus === status ? 'none' : '1px solid #2d2d3f',
-            }}>
-              {status === 'all' ? 'All' : status}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, overflow: 'hidden' }}>
-        {filtered.length === 0 ? (
-          <div style={{ padding: 20, color: '#64748b', fontSize: 13, textAlign: 'center' }}>No orders found.</div>
-        ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#2d2d3f', color: '#94a3b8' }}>
-                {['Symbol', 'Broker', 'Direction', 'Type', 'Qty', 'Price', 'Fill Price', 'Status', 'Placed At'].map(h => (
-                  <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(o => (
-                <tr key={o.id} style={{ borderBottom: '1px solid #2d2d3f' }}>
-                  <td style={{ padding: '10px 16px', fontWeight: 600 }}>{o.internalSymbol}</td>
-                  <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{o.brokerName}</td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span style={{ color: o.direction === 'Buy' ? '#16a34a' : '#dc2626', fontWeight: 700 }}>{o.direction}</span>
-                  </td>
-                  <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{o.orderType}</td>
-                  <td style={{ padding: '10px 16px' }}>{o.filledQuantity}/{o.quantity}</td>
-                  <td style={{ padding: '10px 16px' }}>{o.price ? formatInr(o.price) : '--'}</td>
-                  <td style={{ padding: '10px 16px' }}>{o.fillPrice ? formatInr(o.fillPrice) : '--'}</td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 4,
-                      background: o.status === 'Filled' ? '#16a34a22' : o.status === 'Rejected' ? '#dc262622' : '#3b82f622',
-                      color: o.status === 'Filled' ? '#86efac' : o.status === 'Rejected' ? '#fca5a5' : '#93c5fd',
-                    }}>{o.status}</span>
-                  </td>
-                  <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{formatIst(o.placedAt)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── Backtest Page ─────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function BacktestPage() {
-  const [selectedStrategies, setSelectedStrategies] = useState<string[]>(['PriceActionBreakout'])
-  const [formData, setFormData] = useState({
-    internalSymbol: '',
-    timeframe: '5m',
-    fromDate: '',
-    toDate: '',
-    initialCapital: 100000,
-    riskPerTradePercent: 1,
-  })
-  const [result, setResult] = useState<any>(null)
-  const [error, setError] = useState('')
-
-  const runMutation = useMutation({
-    mutationFn: () => backtestApi.run({
-      strategyName: selectedStrategies[0],
-      parametersJson: JSON.stringify({ strategies: selectedStrategies }),
-      internalSymbol: formData.internalSymbol,
-      timeframe: formData.timeframe,
-      fromDate: formData.fromDate,
-      toDate: formData.toDate,
-      initialCapital: formData.initialCapital,
-      riskPerTradePercent: formData.riskPerTradePercent,
+  const saveMutation = useMutation({
+    mutationFn: () => settingsApi.updateNotifications({
+      telegramBotToken: botToken || undefined,
+      telegramChatId: chatId || undefined,
+      maxDailyDrawdownPct: drawdownPct ? parseFloat(drawdownPct) : undefined,
+      alertsEnabled,
     }),
-    onSuccess: (res) => { setResult(res.data.data); setError('') },
-    onError: (err: any) => {
-      setError(err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Backtest failed')
-    },
-  })
-
-  const toggleStrategy = (name: string) =>
-    setSelectedStrategies(prev => prev.includes(name) ? prev.filter(s => s !== name) : [...prev, name])
-
-  return (
-    <div>
-      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Backtesting</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-        {/* Form */}
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Configuration</h3>
-
-          {error && (
-            <div style={{ background: '#7f1d1d', border: '1px solid #991b1b', color: '#fca5a5', borderRadius: 6, padding: 10, marginBottom: 16, fontSize: 12 }}>
-              ✕ {error}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* Strategy selection */}
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
-                Strategies (select one or more)
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {ALL_STRATEGIES.map(s => {
-                  const sel = selectedStrategies.includes(s.name)
-                  return (
-                    <label key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                      <input type="checkbox" checked={sel} onChange={() => toggleStrategy(s.name)}
-                        style={{ accentColor: '#3b82f6' }} />
-                      <span style={{ color: sel ? '#93c5fd' : '#e2e8f0', fontWeight: sel ? 600 : 400 }}>{s.name}</span>
-                    </label>
-                  )
-                })}
-              </div>
-            </div>
-
-            <FormField label="Symbol" value={formData.internalSymbol} onChange={v => setFormData({ ...formData, internalSymbol: v })} placeholder="e.g. NSE:NIFTY50" />
-
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Timeframe</label>
-              <select value={formData.timeframe} onChange={e => setFormData({ ...formData, timeframe: e.target.value })}
-                style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13 }}>
-                {['1m', '5m', '15m', '30m', '1h', '1D'].map(tf => <option key={tf} value={tf}>{tf}</option>)}
-              </select>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>From Date</label>
-                <input type="date" value={formData.fromDate} onChange={e => setFormData({ ...formData, fromDate: e.target.value })}
-                  style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box' }} />
-              </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>To Date</label>
-                <input type="date" value={formData.toDate} onChange={e => setFormData({ ...formData, toDate: e.target.value })}
-                  style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box' }} />
-              </div>
-            </div>
-
-            <FormField label="Initial Capital (₹)" value={String(formData.initialCapital)} onChange={v => setFormData({ ...formData, initialCapital: Number(v) || 0 })} placeholder="100000" />
-            <FormField label="Risk per Trade (%)" value={String(formData.riskPerTradePercent)} onChange={v => setFormData({ ...formData, riskPerTradePercent: Number(v) || 1 })} placeholder="1" />
-
-            <button
-              onClick={() => runMutation.mutate()}
-              disabled={runMutation.isPending || !formData.internalSymbol || !formData.fromDate || !formData.toDate || selectedStrategies.length === 0}
-              style={{
-                padding: '10px 24px', color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600,
-                background: runMutation.isPending ? '#4b5563' : '#3b82f6',
-                cursor: runMutation.isPending ? 'not-allowed' : 'pointer',
-                marginTop: 8,
-              }}
-            >
-              {runMutation.isPending ? '⏳ Running Backtest...' : '▶ Run Backtest'}
-            </button>
-          </div>
-        </div>
-
-        {/* Results */}
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Results</h3>
-          {!result && !runMutation.isPending && (
-            <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', marginTop: 40 }}>
-              Configure and run a backtest to see results here.
-            </div>
-          )}
-          {runMutation.isPending && (
-            <div style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginTop: 40 }}>
-              ⏳ Running backtest, please wait...
-            </div>
-          )}
-          {result && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {[
-                { label: 'Total P&L', value: formatInr(result.totalPnl), color: result.totalPnl >= 0 ? '#86efac' : '#fca5a5' },
-                { label: 'Total Return', value: `${result.totalReturn?.toFixed(2)}%`, color: result.totalReturn >= 0 ? '#86efac' : '#fca5a5' },
-                { label: 'Win Rate', value: `${result.winRate?.toFixed(1)}%`, color: result.winRate >= 50 ? '#86efac' : '#fbbf24' },
-                { label: 'Total Trades', value: result.totalTrades, color: '#e2e8f0' },
-                { label: 'Max Drawdown', value: `${result.maxDrawdown?.toFixed(2)}%`, color: '#fca5a5' },
-                { label: 'Sharpe Ratio', value: result.sharpeRatio?.toFixed(2), color: result.sharpeRatio >= 1 ? '#86efac' : '#fbbf24' },
-              ].map(item => (
-                <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #2d2d3f' }}>
-                  <span style={{ fontSize: 13, color: '#94a3b8' }}>{item.label}</span>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: item.color }}>{item.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── Settings Page ─────────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function SettingsPage({ brokerStatus, signalRConnected, onLogout }: {
-  brokerStatus: BrokerStatus[]
-  signalRConnected: boolean
-  onLogout: () => void
-}) {
-  const qc = useQueryClient()
-  const [refreshStatus, setRefreshStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [refreshMsg, setRefreshMsg] = useState('')
-
-  // Instrument count query
-  const { data: instrumentData } = useQuery({
-    queryKey: ['instruments-count'],
-    queryFn: () => instrumentsApi.list({ active: true }),
-    refetchInterval: 30000,
-  })
-  const instrumentCount = instrumentData?.data?.data?.length ?? 0
-
-  const handleRefresh = async (broker = 'all') => {
-    setRefreshStatus('loading')
-    setRefreshMsg('')
-    try {
-      await instrumentsApi.refresh(broker)
-      setRefreshStatus('success')
-      setRefreshMsg(`Master data refresh started for ${broker === 'all' ? 'all brokers' : broker}. Symbols will be updated within 30 seconds.`)
-      qc.invalidateQueries({ queryKey: ['instruments-count'] })
-    } catch (err: any) {
-      setRefreshStatus('error')
-      setRefreshMsg(err?.response?.data?.error || 'Refresh failed. Check broker session.')
+    onSuccess: () => {
+      setSaved(true)
+      setBotToken('')
+      qc.invalidateQueries({ queryKey: ['notification-settings'] })
+      setTimeout(() => setSaved(false), 3000)
     }
+  })
+
+  const settings = loadedSettings
+
+  const inputStyle: React.CSSProperties = {
+    background: '#13131f',
+    border: '1px solid #2d2d3f',
+    borderRadius: 4,
+    color: '#e2e8f0',
+    padding: '8px 12px',
+    fontSize: 13,
+    width: '100%',
+    boxSizing: 'border-box',
+  }
+
+  const labelStyle: React.CSSProperties = {
+    display: 'block',
+    color: '#94a3b8',
+    fontSize: 12,
+    marginBottom: 6,
+    fontWeight: 600,
   }
 
   return (
     <div>
-      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>Settings</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        {/* Broker Connections */}
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Broker Connections</h3>
-          {brokerStatus.map(b => (
-            <div key={b.brokerName} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #2d2d3f' }}>
-              <span style={{ fontSize: 13 }}>{b.brokerName}</span>
-              <span style={{
-                fontSize: 12, fontWeight: 700,
-                color: b.isConnected && b.isAuthenticated ? '#86efac' : '#fca5a5',
-              }}>
-                {b.isConnected && b.isAuthenticated ? 'Connected' : 'Disconnected'}
-              </span>
-            </div>
-          ))}
-        </div>
+      <SectionHeader title="Settings" />
 
-        {/* System Status */}
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>System Status</h3>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #2d2d3f' }}>
-            <span style={{ fontSize: 13 }}>API Server</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#86efac' }}>Connected</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #2d2d3f' }}>
-            <span style={{ fontSize: 13 }}>WebSocket (SignalR)</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: signalRConnected ? '#86efac' : '#fca5a5' }}>
-              {signalRConnected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #2d2d3f' }}>
-            <span style={{ fontSize: 13 }}>Default Broker</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#86efac' }}>MStock</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0' }}>
-            <span style={{ fontSize: 13 }}>Instruments Loaded</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: instrumentCount > 0 ? '#86efac' : '#fca5a5' }}>
-              {instrumentCount > 0 ? instrumentCount.toLocaleString() : 'Not loaded'}
-            </span>
-          </div>
-        </div>
+      {/* ── Telegram Notifications ── */}
+      <div style={{
+        backgroundColor: '#1e1e2e', border: '1px solid #2d2d3f',
+        borderRadius: 8, padding: 24, marginBottom: 20
+      }}>
+        <h3 style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4, marginTop: 0 }}>
+          📱 Telegram Alerts
+        </h3>
+        <p style={{ color: '#64748b', fontSize: 12, marginBottom: 20, marginTop: 0 }}>
+          Receive real-time alerts for drawdown breaches and broker re-auth failures via Telegram Bot.
+        </p>
 
-        {/* Master Data / Scrip Master */}
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24, gridColumn: '1 / -1' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        {isLoading ? (
+          <p style={{ color: '#64748b' }}>Loading…</p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <div>
-              <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Master Data (Scrip Master)</h3>
-              <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0 0' }}>
-                Downloads all tradeable symbols and tokens from the broker — same as what OpenAlgo does on every login.
-                Happens automatically after login and daily at 08:00 IST. Refresh manually if symbols are missing.
+              <label style={labelStyle}>
+                Bot Token
+                {settings?.telegramBotTokenMasked && (
+                  <span style={{ color: '#3b82f6', marginLeft: 8, fontWeight: 400 }}>
+                    (current: {settings.telegramBotTokenMasked})
+                  </span>
+                )}
+              </label>
+              <input
+                type="password"
+                placeholder="Leave blank to keep existing token"
+                value={botToken}
+                onChange={e => setBotToken(e.target.value)}
+                style={inputStyle}
+              />
+              <p style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>
+                Get your token from @BotFather on Telegram.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-              {brokerStatus.filter(b => b.isConnected && b.isAuthenticated).map(b => (
-                <button
-                  key={b.brokerName}
-                  onClick={() => handleRefresh(b.brokerName)}
-                  disabled={refreshStatus === 'loading'}
-                  style={{
-                    padding: '7px 14px', background: '#3b82f6', color: '#fff',
-                    border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                    cursor: refreshStatus === 'loading' ? 'not-allowed' : 'pointer',
-                    opacity: refreshStatus === 'loading' ? 0.6 : 1,
-                  }}
-                >
-                  {refreshStatus === 'loading' ? '⟳ Refreshing…' : `↓ Refresh ${b.brokerName}`}
-                </button>
-              ))}
-              <button
-                onClick={() => handleRefresh('all')}
-                disabled={refreshStatus === 'loading'}
-                style={{
-                  padding: '7px 14px', background: '#6366f1', color: '#fff',
-                  border: 'none', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                  cursor: refreshStatus === 'loading' ? 'not-allowed' : 'pointer',
-                  opacity: refreshStatus === 'loading' ? 0.6 : 1,
-                }}
-              >
-                {refreshStatus === 'loading' ? '⟳ Refreshing…' : '↓ Refresh All'}
-              </button>
+
+            <div>
+              <label style={labelStyle}>Chat ID</label>
+              <input
+                type="text"
+                placeholder="e.g. -1001234567890"
+                value={chatId}
+                onChange={e => setChatId(e.target.value)}
+                style={inputStyle}
+              />
+              <p style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>
+                Your Telegram chat or channel ID. Send /start to your bot and check getUpdates.
+              </p>
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Status message */}
-          {refreshMsg && (
-            <div style={{
-              padding: '8px 12px', borderRadius: 6, fontSize: 12, marginTop: 8,
-              background: refreshStatus === 'success' ? '#14532d' : '#7f1d1d',
-              border: `1px solid ${refreshStatus === 'success' ? '#16a34a' : '#dc2626'}`,
-              color: refreshStatus === 'success' ? '#86efac' : '#fca5a5',
-            }}>
-              {refreshStatus === 'success' ? '✓' : '✕'} {refreshMsg}
-            </div>
-          )}
+      {/* ── Monitoring Thresholds ── */}
+      <div style={{
+        backgroundColor: '#1e1e2e', border: '1px solid #2d2d3f',
+        borderRadius: 8, padding: 24, marginBottom: 20
+      }}>
+        <h3 style={{ color: '#e2e8f0', fontSize: 16, fontWeight: 700, marginBottom: 4, marginTop: 0 }}>
+          📉 Drawdown Alert Threshold
+        </h3>
+        <p style={{ color: '#64748b', fontSize: 12, marginBottom: 20, marginTop: 0 }}>
+          Alert fires when a running strategy's intraday unrealized P&L exceeds this % of allocated capital.
+          One alert per strategy per trading day (duplicate suppression built in).
+        </p>
 
-          {/* Info grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 16 }}>
-            <div style={{ background: '#0f172a', borderRadius: 6, padding: 12 }}>
-              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>INSTRUMENTS LOADED</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: instrumentCount > 0 ? '#60a5fa' : '#64748b' }}>
-                {instrumentCount > 0 ? instrumentCount.toLocaleString() : '—'}
-              </div>
-            </div>
-            <div style={{ background: '#0f172a', borderRadius: 6, padding: 12 }}>
-              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>AUTO REFRESH</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#86efac' }}>Daily 08:00 IST</div>
-              <div style={{ fontSize: 11, color: '#64748b' }}>+ on every login</div>
-            </div>
-            <div style={{ background: '#0f172a', borderRadius: 6, padding: 12 }}>
-              <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>EXCHANGES</div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>NSE · BSE · NFO</div>
-              <div style={{ fontSize: 11, color: '#64748b' }}>BFO · MCX · CDS</div>
-            </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 16, alignItems: 'start' }}>
+          <div>
+            <label style={labelStyle}>Max Daily Drawdown %</label>
+            <input
+              type="number"
+              min={0.1} max={50} step={0.5}
+              value={drawdownPct}
+              onChange={e => setDrawdownPct(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+          <div style={{ paddingTop: 22 }}>
+            <span style={{ color: '#475569', fontSize: 12 }}>
+              Current: <strong style={{ color: '#e2e8f0' }}>{settings?.maxDailyDrawdownPct ?? 3}%</strong>
+              &nbsp;— Default is 3%. Evaluated every 30 seconds during market hours.
+            </span>
           </div>
         </div>
 
-        {/* Account */}
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: 24 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Account</h3>
-          <button onClick={onLogout} style={{
-            padding: '8px 16px', background: '#dc2626', color: '#fff',
-            border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-          }}>
-            Logout
-          </button>
+        <div style={{ marginTop: 16 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={alertsEnabled}
+              onChange={e => setAlertsEnabled(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: 'pointer' }}
+            />
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>Enable monitoring alerts</span>
+          </label>
         </div>
+      </div>
+
+      {/* ── Save Button ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <button
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending}
+          style={{
+            background: '#3b82f6',
+            color: 'white',
+            border: 'none',
+            borderRadius: 6,
+            padding: '10px 24px',
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          {saveMutation.isPending ? 'Saving…' : 'Save Settings'}
+        </button>
+        {saved && (
+          <span style={{ color: '#16a34a', fontSize: 13, fontWeight: 600 }}>
+            ✓ Settings saved
+          </span>
+        )}
+        {saveMutation.isError && (
+          <span style={{ color: '#dc2626', fontSize: 13 }}>
+            Failed to save. Please try again.
+          </span>
+        )}
       </div>
     </div>
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ── Shared Components ─────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════════════
+// ──────────────────────────────────────────────────────────────────────────────
+// NAVIGATION HELPERS
+// ──────────────────────────────────────────────────────────────────────────────
 
-function SectionHeader({ title }: { title: string }) {
+function NavSectionLabel({ label }: { label: string }) {
   return (
-    <h2 style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-      {title}
-    </h2>
+    <div style={{ padding: '12px 14px 4px 14px', fontSize: 9, fontWeight: 800, color: '#4b5563', letterSpacing: '0.10em', textTransform: 'uppercase' }}>
+      {label}
+    </div>
   )
 }
 
-function FormField({ label, value, onChange, placeholder, required }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean
+function NavItem({ page, label, icon, active, onClick, accent = '#3b82f6' }: {
+  page: Page; label: string; icon: string
+  active: Page; onClick: (p: Page) => void; accent?: string
+}) {
+  const isActive = active === page
+  return (
+    <button
+      onClick={() => onClick(page)}
+      aria-current={isActive ? 'page' : undefined}
+      style={{
+        padding: '9px 14px',
+        backgroundColor: isActive ? '#2d2d4f' : 'transparent',
+        color: isActive ? '#e2e8f0' : '#8b8b9f',
+        border: 'none',
+        borderLeft: isActive ? `3px solid ${accent}` : '3px solid transparent',
+        borderRadius: '0 6px 6px 0',
+        cursor: 'pointer',
+        fontSize: '13px',
+        fontWeight: isActive ? 700 : 400,
+        textAlign: 'left',
+        transition: 'all 0.15s',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        outline: 'none',
+        width: '100%',
+      }}
+      onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.color = '#e2e8f0'; e.currentTarget.style.backgroundColor = '#252538' } }}
+      onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.color = '#8b8b9f'; e.currentTarget.style.backgroundColor = 'transparent' } }}
+    >
+      <span aria-hidden="true" style={{ fontSize: 13 }}>{icon}</span>
+      {label}
+    </button>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SHARED COMPONENTS
+// ──────────────────────────────────────────────────────────────────────────────
+
+function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+      <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 'bold' }}>{title}</h2>
+      {action}
+    </div>
+  )
+}
+
+function FormField({
+  label,
+  value,
+  onChange,
+  placeholder = '',
+  type = 'text',
+  options = [],
+}: {
+  label: string
+  value: string
+  onChange: (val: string) => void
+  placeholder?: string
+  type?: 'text' | 'number' | 'date' | 'select'
+  options?: Array<{ value: string; label: string }>
 }) {
   return (
-    <div>
-      <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>{label}</label>
-      <input
-        type="text"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        required={required}
-        style={{ width: '100%', padding: '8px 10px', background: '#0f0f1a', border: '1px solid #2d2d3f', borderRadius: 6, color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box' }}
-      />
+    <div style={{ marginBottom: '16px' }}>
+      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '4px', color: '#8b8b9f' }}>
+        {label}
+      </label>
+      {type === 'select' ? (
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '8px 12px',
+            backgroundColor: '#2d2d3f',
+            color: '#e2e8f0',
+            border: '1px solid #3b3b4f',
+            borderRadius: '6px',
+            fontSize: '13px',
+          }}
+        >
+          {options.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          style={{
+            width: '100%',
+            padding: '8px 12px',
+            backgroundColor: '#2d2d3f',
+            color: '#e2e8f0',
+            border: '1px solid #3b3b4f',
+            borderRadius: '6px',
+            fontSize: '13px',
+            boxSizing: 'border-box',
+          }}
+        />
+      )}
     </div>
   )
 }

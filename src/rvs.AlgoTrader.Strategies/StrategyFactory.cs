@@ -1,11 +1,21 @@
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Strategies.AlertCandleShort;
+using rvs.AlgoTrader.Strategies.EmaVwapMomentum;
 using rvs.AlgoTrader.Strategies.PriceActionBreakout;
 
 namespace rvs.AlgoTrader.Strategies;
 
 /// <summary>
 /// Creates IStrategy instances by name, passing deserialized parameters_json.
-/// Add new strategy registrations here as they are implemented.
+///
+/// Registration table — add new strategies here:
+/// ┌────────────────────────────────┬───────────────────────────────────────────────────┐
+/// │ Strategy Name                  │ Description                                       │
+/// ├────────────────────────────────┼───────────────────────────────────────────────────┤
+/// │ PriceActionBreakout            │ N-bar range breakout with ATR/volume filter        │
+/// │ EmaVwapMomentum                │ EMA crossover + VWAP + BB + Volume + OC (optional)│
+/// │ AlertCandleShort               │ 5-EMA alert candle short (BankNifty/Nifty, 5min)  │
+/// └────────────────────────────────┴───────────────────────────────────────────────────┘
 /// </summary>
 public class StrategyFactory : IStrategyFactory
 {
@@ -16,10 +26,18 @@ public class StrategyFactory : IStrategyFactory
             "PriceActionBreakout" => new PriceActionBreakoutStrategy(
                 PriceActionBreakoutConfig.FromJson(parametersJson ?? "{}")),
 
-            _ => throw new InvalidOperationException($"Unknown strategy: '{strategyName}'. Register it in StrategyFactory.")
+            "EmaVwapMomentum" => new EmaVwapMomentumStrategy(
+                EmaVwapMomentumConfig.FromJson(parametersJson ?? "{}")),
+
+            "AlertCandleShort" => new AlertCandleShortStrategy(
+                AlertCandleShortConfig.FromJson(parametersJson ?? "{}")),
+
+            _ => throw new InvalidOperationException(
+                $"Unknown strategy: '{strategyName}'. Registered strategies: {string.Join(", ", GetRegisteredNames())}. " +
+                $"Add the new strategy to StrategyFactory.cs.")
         };
     }
 
     public IEnumerable<string> GetRegisteredNames()
-        => ["PriceActionBreakout"];
+        => ["PriceActionBreakout", "EmaVwapMomentum", "AlertCandleShort"];
 }

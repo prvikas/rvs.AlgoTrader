@@ -105,6 +105,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIndicatorService, IndicatorService>();
 
+        // Option chain service — pre-fetches OC snapshot before strategy evaluation
+        // Scoped so each request gets its own in-process cache entry; a Redis-backed
+        // singleton would be preferred in multi-replica deployments.
+        services.AddScoped<IOptionChainService, OptionChainService>();
+
+        // Strategy scheduler — evaluates session windows; uses IMarketCalendarService + IClock
+        services.AddScoped<IStrategyScheduler, StrategyScheduler>();
+
         // Startup orchestrator
         services.AddScoped<IStartupOrchestrator, StartupOrchestrator>();
 

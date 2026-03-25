@@ -1,23 +1,24 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useAppStore, useStrategyStore } from '../../stores/appStore';
+import { StrategyInstance } from '../../api/client';
 
 describe('useAppStore', () => {
   beforeEach(() => {
     useAppStore.setState({
-      token: null,
+      jwtToken: null,
       killSwitchActive: false,
       activeBroker: 'Zerodha',
-      sidebarOpen: true,
+      sidebarCollapsed: false,
     });
   });
 
   it('sets and retrieves JWT token', () => {
     const { result } = renderHook(() => useAppStore());
     act(() => {
-      result.current.setToken('test-jwt-token');
+      result.current.setJwtToken('test-jwt-token');
     });
-    expect(result.current.token).toBe('test-jwt-token');
+    expect(result.current.jwtToken).toBe('test-jwt-token');
   });
 
   it('toggles kill switch state', () => {
@@ -43,58 +44,53 @@ describe('useAppStore', () => {
 
   it('toggles sidebar', () => {
     const { result } = renderHook(() => useAppStore());
-    const initial = result.current.sidebarOpen;
+    const initial = result.current.sidebarCollapsed;
     act(() => {
       result.current.toggleSidebar();
     });
-    expect(result.current.sidebarOpen).toBe(!initial);
+    expect(result.current.sidebarCollapsed).toBe(!initial);
   });
 });
 
 describe('useStrategyStore', () => {
   beforeEach(() => {
-    useStrategyStore.setState({ instances: {} });
+    useStrategyStore.setState({ instances: new Map() });
+  });
+
+  const makeInstance = (id: string): StrategyInstance => ({
+    id,
+    name: `Instance ${id}`,
+    strategyType: 'PriceActionBreakout',
+    internalSymbol: 'NSE:RELIANCE',
+    timeframe: '5m',
+    mode: 'Forward',
+    brokerName: 'Zerodha',
+    status: 'Running',
+    allocatedCapital: 100000,
+    createdAt: new Date().toISOString(),
   });
 
   it('adds strategy instance', () => {
     const { result } = renderHook(() => useStrategyStore());
-    const instance = {
-      id: 'inst-001',
-      strategyName: 'PriceActionBreakout',
-      internalSymbol: 'RELIANCE',
-      timeframe: '5m',
-      status: 'RUNNING' as const,
-      brokerName: 'Zerodha',
-      allocatedCapital: 100000,
-      autoResumeOnRestart: true,
-    };
+    const instance = makeInstance('inst-001');
 
     act(() => {
-      result.current.setInstance(instance.id, instance);
+      result.current.setInstance(instance);
     });
 
-    expect(result.current.instances['inst-001']).toBeDefined();
-    expect(result.current.instances['inst-001'].status).toBe('RUNNING');
+    expect(result.current.instances.get('inst-001')).toBeDefined();
+    expect(result.current.instances.get('inst-001')?.status).toBe('Running');
   });
 
   it('updates strategy status', () => {
     const { result } = renderHook(() => useStrategyStore());
-    const instance = {
-      id: 'inst-002',
-      strategyName: 'PriceActionBreakout',
-      internalSymbol: 'INFY',
-      timeframe: '15m',
-      status: 'RUNNING' as const,
-      brokerName: 'Zerodha',
-      allocatedCapital: 50000,
-      autoResumeOnRestart: false,
-    };
+    const instance = makeInstance('inst-002');
 
     act(() => {
-      result.current.setInstance(instance.id, instance);
-      result.current.updateStatus(instance.id, 'PAUSED');
+      result.current.setInstance(instance);
+      result.current.updateStatus('inst-002', 'Paused');
     });
 
-    expect(result.current.instances['inst-002'].status).toBe('PAUSED');
+    expect(result.current.instances.get('inst-002')?.status).toBe('Paused');
   });
 });

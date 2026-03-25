@@ -26,17 +26,20 @@ public class Instrument
 
     public Instant LastRefreshedAt { get; set; }
 
-    // Compatibility aliases
+    // Display helpers
     public string DisplayName => Name.Length > 0 ? Name : TradingSymbol;
     public int Lot => LotSize;
     public Instant UpdatedAt => LastRefreshedAt;
     public Instant RefreshedAt => LastRefreshedAt;
-    /// <summary>The token for a single-broker row (backwards compat with old schema).</summary>
-    public string BrokerToken => ZerodhaToken ?? UpstoxToken ?? MStockToken ?? string.Empty;
-    public string BrokerName =>
-        ZerodhaToken != null ? "Zerodha" :
-        UpstoxToken  != null ? "Upstox"  :
-        MStockToken  != null ? "MStock"  : string.Empty;
+
+    /// <summary>Returns the broker token for a specific broker, or null if not available.</summary>
+    public string? GetBrokerToken(string brokerName) => brokerName.ToLowerInvariant() switch
+    {
+        "zerodha" => ZerodhaToken,
+        "upstox"  => UpstoxToken,
+        "mstock"  => MStockToken,
+        _         => null
+    };
 
     // EF Core requires parameterless constructor
     public Instrument() { }

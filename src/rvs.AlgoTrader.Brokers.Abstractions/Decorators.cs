@@ -20,6 +20,9 @@ public class SessionAwareBrokerClient(
     public async Task<LoginResult> AuthenticateAsync(BrokerCredentials creds, CancellationToken ct)
         => await inner.AuthenticateAsync(creds, ct);
 
+    public void RestoreToken(string accessToken, string? feedToken = null)
+        => inner.RestoreToken(accessToken, feedToken);
+
     public async Task<LatencyReport> MeasureLatencyAsync(CancellationToken ct)
         => await inner.MeasureLatencyAsync(ct);
 
@@ -55,11 +58,18 @@ public class SessionAwareBrokerClient(
     public async Task<BrokerQuote> GetQuoteAsync(string brokerToken, CancellationToken ct)
         => await inner.GetQuoteAsync(brokerToken, ct);
 
+    public async Task<IReadOnlyDictionary<string, OptionQuote>> GetOptionQuotesAsync(
+        IEnumerable<string> brokerTokens, CancellationToken ct)
+        => await inner.GetOptionQuotesAsync(brokerTokens, ct);
+
     public async Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct)
         => await inner.GetHistoricalDataAsync(query, ct);
 
     public async Task<MarketDepth> GetDepthAsync(string brokerToken, CancellationToken ct)
         => await inner.GetDepthAsync(brokerToken, ct);
+
+    public async Task<IReadOnlyList<InstrumentTokenMapping>> GetInstrumentMasterAsync(CancellationToken ct)
+        => await inner.GetInstrumentMasterAsync(ct);
 
     public async Task<AccountFunds> GetFundsAsync(CancellationToken ct)
         => await inner.GetFundsAsync(ct);

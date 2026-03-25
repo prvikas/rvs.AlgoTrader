@@ -1,28 +1,78 @@
+using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Enums;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Stub service implementations for interfaces that require full integration
-// with the Backtesting project or external systems.
-// Replace with real implementations as those systems are wired up.
+// BacktestService: real implementation wrapping BacktestEngine.
+// Maps BacktestRequestDto → BacktestRequest, runs the engine, maps result back.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// <summary>
-/// Stub backtest service — returns a not-implemented error result.
-/// Replace with a real implementation that wraps BacktestEngine.
-/// </summary>
-public class BacktestService : IBacktestService
+public class BacktestService(IBacktestEngine engine) : IBacktestService
 {
-    public Task<BacktestResultDto> RunAsync(BacktestRequestDto request, CancellationToken ct)
-        => Task.FromResult(new BacktestResultDto(
-            Guid.NewGuid(), "ERROR", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            string.Empty, DateTimeOffset.UtcNow, null,
-            new { Error = "BacktestService not yet implemented" }));
+    public async Task<BacktestResultDto> RunAsync(BacktestRequestDto dto, CancellationToken ct)
+    {
+        var request = new BacktestRequest(
+            StrategyName: dto.StrategyName,
+            ParametersJson: dto.ParametersJson,
+            InternalSymbol: dto.InternalSymbol,
+            Timeframe: dto.Timeframe,
+            FromDate: dto.FromDate,
+            ToDate: dto.ToDate,
+            InitialCapital: dto.InitialCapital,
+            RiskPerTradePercent: dto.RiskPerTradePercent,
+            FillModel: (FillModel)dto.FillModel,
+            SlippageBasisPoints: dto.SlippageBasisPoints,
+            BrokerageFlatPerSide: dto.BrokerageFlatPerSide);
 
-    public Task<object> RunWalkForwardAsync(BacktestRequestDto request, CancellationToken ct)
-        => Task.FromResult<object>(new { Error = "WalkForward not yet implemented" });
+        var result = await engine.RunAsync(request, ct);
+        return MapToDto(result);
+    }
+
+    public Task<object> RunWalkForwardAsync(BacktestRequestDto dto, CancellationToken ct)
+        // Walk-forward: run multiple non-overlapping windows, return aggregate metrics
+        => Task.FromResult<object>(new { Error = "Walk-forward UI not yet wired" });
+
+    private static BacktestResultDto MapToDto(BacktestResult r) => new(
+        Id: null,
+        Success: r.Success,
+        StrategyName: r.StrategyName,
+        Symbol: r.Symbol,
+        Timeframe: r.Timeframe,
+        FromDate: r.FromDate,
+        ToDate: r.ToDate,
+        InitialCapital: r.InitialCapital,
+        FinalEquity: r.FinalEquity,
+        TotalPnl: r.TotalPnl,
+        TotalReturn: r.TotalReturn,
+        MaxDrawdown: r.MaxDrawdown,
+        SharpeRatio: r.SharpeRatio,
+        CalmarRatio: r.CalmarRatio,
+        ProfitFactor: r.ProfitFactor,
+        WinRate: r.WinRate,
+        TotalTrades: r.TotalTrades,
+        WinCount: r.WinCount,
+        LossCount: r.LossCount,
+        AvgWin: r.AvgWin,
+        AvgLoss: r.AvgLoss,
+        MaxConsecutiveLosses: r.MaxConsecutiveLosses,
+        ExpectancyPerTrade: r.ExpectancyPerTrade,
+        DataHash: r.DataHash,
+        Error: r.Error,
+        StartedAt: DateTimeOffset.UtcNow,
+        Trades: r.Trades.Select(t => new BacktestTradeDto(
+            Direction: t.Direction,
+            EntryPrice: t.EntryPrice,
+            ExitPrice: t.ExitPrice,
+            Quantity: t.Quantity,
+            ExitReason: t.ExitReason,
+            GrossPnl: t.GrossPnl,
+            NetPnl: t.NetPnl,
+            EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
+            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o")
+        )).ToList());
 }
 
 /// <summary>

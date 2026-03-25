@@ -3,15 +3,14 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Backtesting.Engine;
 
-public interface IBacktestEngine
-{
-    Task<BacktestResult> RunAsync(BacktestRequest request, CancellationToken ct);
-}
+// IBacktestEngine, BacktestRequest, BacktestResult, BacktestTrade are defined in
+// rvs.AlgoTrader.Application.Services.IBacktestEngine — imported via the using above.
 
 /// <summary>
 /// Walk-forward backtesting engine.
@@ -28,21 +27,31 @@ public class BacktestEngine(
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
-    // Default cost profile for Indian equity intraday
+    // Default cost profile for Indian equity intraday — flat ₹20/order per leg (Zerodha/Upstox model)
     private static readonly CostProfile DefaultCostProfile = new(
-        BrokeragePct: 0.0003m,
+        BrokeragePct: 0m,
         SttPct: 0.00025m,
         GstPct: 0.18m,
         SebiChargesPct: 0.000001m,
         StampDutyPct: 0.00003m,
-        SlippagePct: 0.0002m);
+        SlippagePct: 0.0002m,
+        BrokerageFlatPerSide: 20m,
+        SlippageBasisPoints: 0m);
 
 
     public async Task<BacktestResult> RunAsync(BacktestRequest request, CancellationToken ct)
     {
-        logger.LogInformation("[Backtest] Starting {Strategy} on {Symbol}/{Tf} from {From} to {To}",
+        logger.LogInformation("[Backtest] Starting {Strategy} on {Symbol}/{Tf} from {From} to {To} | FillModel={Fill} Slippage={Slip}bps Brokerage=₹{Brok}/side",
             request.StrategyName, request.InternalSymbol, request.Timeframe,
-            request.FromDate, request.ToDate);
+            request.FromDate, request.ToDate, request.FillModel, request.SlippageBasisPoints, request.BrokerageFlatPerSide);
+
+        // Build cost profile from request — flat brokerage overrides percentage brokerage
+        var costProfile = DefaultCostProfile with
+        {
+            BrokerageFlatPerSide = request.BrokerageFlatPerSide,
+            BrokeragePct = request.BrokerageFlatPerSide > 0 ? 0m : DefaultCostProfile.BrokeragePct,
+            SlippageBasisPoints = request.SlippageBasisPoints,
+        };
 
         // Load all candles for the period
         var fromInstant = request.FromDate.AtStartOfDayInZone(Ist).ToInstant();
@@ -79,7 +88,7 @@ public class BacktestEngine(
                 if (closed != null)
                 {
                     var costs = costCalc.Calculate(
-                        closed.ExitPrice * closed.Quantity, closed.Direction == "BUY", DefaultCostProfile);
+                        closed.ExitPrice * closed.Quantity, closed.Direction == "BUY", costProfile);
                     closed = closed with { NetPnl = closed.GrossPnl - costs.Total };
                     equity += closed.NetPnl;
                     trades.Add(closed);
@@ -118,10 +127,33 @@ public class BacktestEngine(
             var positionSize = CalculatePositionSize(equity, signal, request);
             if (positionSize <= 0) continue;
 
-            // Entry on next open (avoid lookahead — simulate fill at open of next bar)
-            if (i + 1 >= allCandles.Count) break;
-            var nextBar = allCandles[i + 1];
-            var entryPrice = nextBar.Open;
+            // Determine fill price based on FillModel
+            decimal entryPrice;
+            ZonedDateTime entryTime;
+
+            if (request.FillModel == FillModel.SignalBarClose)
+            {
+                // Fill at signal bar close — WARNING: potential lookahead bias
+                entryPrice = current.Close;
+                entryTime = current.CloseTime;
+            }
+            else
+            {
+                // NextBarOpen or NextBarOpenPlusSlippage — fill at open of the bar after the signal
+                if (i + 1 >= allCandles.Count) break;
+                var nextBar = allCandles[i + 1];
+                entryPrice = nextBar.Open;
+                entryTime = nextBar.OpenTime;
+
+                if (request.FillModel == FillModel.NextBarOpenPlusSlippage && request.SlippageBasisPoints > 0)
+                {
+                    // Apply slippage in the direction of the trade (adverse fill)
+                    var slipFraction = request.SlippageBasisPoints / 10_000m;
+                    entryPrice = signal.Signal == "BUY"
+                        ? entryPrice * (1m + slipFraction)
+                        : entryPrice * (1m - slipFraction);
+                }
+            }
 
             openTrade = new BacktestTrade(
                 Id: Guid.NewGuid(),
@@ -132,8 +164,8 @@ public class BacktestEngine(
                 ExitPrice: 0,
                 StopLoss: signal.StopLoss ?? entryPrice * 0.99m,
                 TakeProfit: signal.TakeProfit ?? entryPrice * 1.02m,
-                EntryTime: nextBar.OpenTime,
-                ExitTime: nextBar.OpenTime,
+                EntryTime: entryTime,
+                ExitTime: entryTime,
                 GrossPnl: 0,
                 NetPnl: 0,
                 ExitReason: "");
@@ -147,7 +179,7 @@ public class BacktestEngine(
             var grossPnl = openTrade.Direction == "BUY"
                 ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
-            var costs = costCalc.Calculate(exitPrice * openTrade.Quantity, false, DefaultCostProfile);
+            var costs = costCalc.Calculate(exitPrice * openTrade.Quantity, false, costProfile);
             trades.Add(openTrade with
             {
                 ExitPrice = exitPrice,
@@ -219,6 +251,19 @@ public class BacktestEngine(
         var grossLoss = Math.Abs(lossTrades.Sum(t => t.NetPnl));
         var profitFactor = grossLoss == 0 ? decimal.MaxValue : grossProfit / grossLoss;
         var winRate = (decimal)winTrades.Count / trades.Count;
+        var avgWin = winTrades.Count > 0 ? winTrades.Average(t => t.NetPnl) : 0m;
+        var avgLoss = lossTrades.Count > 0 ? Math.Abs(lossTrades.Average(t => t.NetPnl)) : 0m;
+        var lossRate = 1m - winRate;
+        var expectancy = winRate * avgWin - lossRate * avgLoss;
+
+        // Max consecutive losses — critical for margin safety assessment
+        var maxConsecLosses = 0;
+        var curConsecLosses = 0;
+        foreach (var t in trades)
+        {
+            if (t.NetPnl <= 0) { curConsecLosses++; if (curConsecLosses > maxConsecLosses) maxConsecLosses = curConsecLosses; }
+            else curConsecLosses = 0;
+        }
 
         var returns = trades.Select(t => (double)(t.NetPnl / request.InitialCapital)).ToArray();
         var avgReturn = returns.Average();
@@ -247,8 +292,10 @@ public class BacktestEngine(
             TotalTrades: trades.Count,
             WinCount: winTrades.Count,
             LossCount: lossTrades.Count,
-            AvgWin: winTrades.Count > 0 ? winTrades.Average(t => t.NetPnl) : 0,
-            AvgLoss: lossTrades.Count > 0 ? Math.Abs(lossTrades.Average(t => t.NetPnl)) : 0,
+            AvgWin: avgWin,
+            AvgLoss: avgLoss,
+            MaxConsecutiveLosses: maxConsecLosses,
+            ExpectancyPerTrade: expectancy,
             Trades: trades,
             DataHash: dataHash,
             Error: null);
@@ -267,117 +314,6 @@ public class BacktestEngine(
     }
 }
 
-public record BacktestRequest(
-    string StrategyName,
-    string ParametersJson,
-    string InternalSymbol,
-    string Timeframe,
-    LocalDate FromDate,
-    LocalDate ToDate,
-    decimal InitialCapital,
-    decimal RiskPerTradePercent = 1.0m,
-    string ProductType = "MIS",
-    bool WalkForward = false,
-    int WalkForwardInSampleBars = 200,
-    int WalkForwardOutOfSampleBars = 50);
+// BacktestRequest defined in rvs.AlgoTrader.Application.Services.IBacktestEngine
 
-public record BacktestResult(
-    bool Success,
-    string StrategyName,
-    string Symbol,
-    string Timeframe,
-    LocalDate FromDate,
-    LocalDate ToDate,
-    decimal InitialCapital,
-    decimal FinalEquity,
-    decimal TotalPnl,
-    decimal TotalReturn,
-    decimal MaxDrawdown,
-    decimal SharpeRatio,
-    decimal CalmarRatio,
-    decimal ProfitFactor,
-    decimal WinRate,
-    int TotalTrades,
-    int WinCount,
-    int LossCount,
-    decimal AvgWin,
-    decimal AvgLoss,
-    IReadOnlyList<BacktestTrade> Trades,
-    string? DataHash,
-    string? Error)
-{
-    public static BacktestResult Failed(string error) => new(
-        false, "", "", "", LocalDate.MinIsoValue, LocalDate.MinIsoValue,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [], null, error);
-
-    /// <summary>Compute BacktestResult metrics directly from a trade list (for unit tests).</summary>
-    public static BacktestResult FromTrades(IReadOnlyList<BacktestTrade> trades, decimal initialCapital)
-    {
-        if (trades.Count == 0) return Failed("No trades");
-
-        var wins = trades.Where(t => t.NetPnl > 0).ToList();
-        var losses = trades.Where(t => t.NetPnl <= 0).ToList();
-        var totalPnl = trades.Sum(t => t.NetPnl);
-        var grossProfit = wins.Sum(t => t.NetPnl);
-        var grossLoss = Math.Abs(losses.Sum(t => t.NetPnl));
-        var profitFactor = grossLoss == 0 ? decimal.MaxValue : grossProfit / grossLoss;
-        var winRate = (decimal)wins.Count / trades.Count;
-
-        var returns = trades.Select(t => (double)(t.NetPnl / initialCapital)).ToArray();
-        var avgReturn = returns.Average();
-        var stdDev = Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Average());
-        var sharpe = stdDev == 0 ? 0m : (decimal)(avgReturn / stdDev * Math.Sqrt(252));
-
-        // Compute max drawdown from equity curve
-        var equity = initialCapital;
-        var peak = equity;
-        var maxDd = 0m;
-        foreach (var t in trades)
-        {
-            equity += t.NetPnl;
-            if (equity > peak) peak = equity;
-            var dd = peak > 0 ? (peak - equity) / peak : 0m;
-            if (dd > maxDd) maxDd = dd;
-        }
-
-        return new BacktestResult(
-            Success: true,
-            StrategyName: "Test",
-            Symbol: "TEST",
-            Timeframe: "5m",
-            FromDate: LocalDate.MinIsoValue,
-            ToDate: LocalDate.MinIsoValue,
-            InitialCapital: initialCapital,
-            FinalEquity: initialCapital + totalPnl,
-            TotalPnl: totalPnl,
-            TotalReturn: totalPnl / initialCapital,
-            MaxDrawdown: maxDd,
-            SharpeRatio: sharpe,
-            CalmarRatio: maxDd == 0 ? 0m : (totalPnl / initialCapital) / maxDd,
-            ProfitFactor: profitFactor,
-            WinRate: winRate,
-            TotalTrades: trades.Count,
-            WinCount: wins.Count,
-            LossCount: losses.Count,
-            AvgWin: wins.Count > 0 ? wins.Average(t => t.NetPnl) : 0m,
-            AvgLoss: losses.Count > 0 ? Math.Abs(losses.Average(t => t.NetPnl)) : 0m,
-            Trades: trades,
-            DataHash: null,
-            Error: null);
-    }
-}
-
-public record BacktestTrade(
-    Guid Id,
-    string Symbol,
-    string Direction,
-    int Quantity,
-    decimal EntryPrice,
-    decimal ExitPrice,
-    decimal StopLoss,
-    decimal TakeProfit,
-    ZonedDateTime EntryTime,
-    ZonedDateTime ExitTime,
-    decimal GrossPnl,
-    decimal NetPnl,
-    string ExitReason);
+// BacktestResult and BacktestTrade defined in rvs.AlgoTrader.Application.Services.IBacktestEngine

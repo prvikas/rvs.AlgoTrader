@@ -46,6 +46,13 @@ public class ZerodhaClient(
         return result;
     }
 
+    /// <inheritdoc/>
+    public void RestoreToken(string accessToken, string? feedToken = null)
+    {
+        _accessToken = accessToken;
+        SetAuthHeader();
+    }
+
     public async Task<OrderResult> PlaceOrderAsync(OrderRequest request, CancellationToken ct)
     {
         SetAuthHeader();
@@ -140,6 +147,40 @@ public class ZerodhaClient(
             d.GetProperty("ohlc").GetProperty("low").GetDecimal(),
             d.GetProperty("ohlc").GetProperty("close").GetDecimal(),
             d.GetProperty("volume").GetInt64(), 0, 0, now);
+    }
+
+    public async Task<IReadOnlyDictionary<string, OptionQuote>> GetOptionQuotesAsync(
+        IEnumerable<string> brokerTokens, CancellationToken ct)
+    {
+        // Zerodha supports batch quote via comma-separated "i" params — fetch all in one call.
+        // OI and IV are returned in the quote response; Greeks are not provided by Zerodha REST.
+        SetAuthHeader();
+        var tokens = brokerTokens.ToList();
+        var query = string.Join("&", tokens.Select(t => $"i=NFO:{t}"));
+        var response = await http.GetAsync($"{BaseUrl}/quote?{query}", ct);
+        var json = await response.Content.ReadAsStringAsync(ct);
+        var doc = JsonDocument.Parse(json);
+        var result = new Dictionary<string, OptionQuote>();
+        foreach (var token in tokens)
+        {
+            var key = $"NFO:{token}";
+            if (!doc.RootElement.GetProperty("data").TryGetProperty(key, out var d)) continue;
+            result[token] = new OptionQuote(
+                InternalSymbol:    token,
+                LastTradedPrice:   d.GetProperty("last_price").GetDecimal(),
+                OpenInterest:      d.TryGetProperty("oi", out var oi) ? oi.GetInt64() : 0L,
+                OiChange:          d.TryGetProperty("oi_day_change", out var oiChg) ? oiChg.GetInt64() : 0L,
+                Volume:            d.GetProperty("volume").GetInt64(),
+                ImpliedVolatility: 0m,  // not returned by Zerodha quote endpoint
+                BidPrice:          d.TryGetProperty("depth", out var depthEl)
+                                       ? depthEl.GetProperty("buy")[0].GetProperty("price").GetDecimal()
+                                       : 0m,
+                AskPrice:          d.TryGetProperty("depth", out var depthEl2)
+                                       ? depthEl2.GetProperty("sell")[0].GetProperty("price").GetDecimal()
+                                       : 0m,
+                Delta:             0m);
+        }
+        return result;
     }
 
     public async Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct)
@@ -326,11 +367,42 @@ public class ZerodhaClient(
             {
                 var cols = lines[row].Split(',');
                 if (cols.Length < 4) continue;
-                var token  = Get(cols, "instrument_token");
-                var symbol = Get(cols, "tradingsymbol");
-                var exch   = Get(cols, "exchange").ToUpper();
+                var token     = Get(cols, "instrument_token");
+                var symbol    = Get(cols, "tradingsymbol");
+                var exch      = Get(cols, "exchange").ToUpper();
                 if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(symbol)) continue;
-                results.Add(new InstrumentTokenMapping($"{exch}:{symbol}", token, exch, "Zerodha"));
+
+                var name      = Get(cols, "name");
+                var instrType = Get(cols, "instrument_type");  // EQ, FUT, OPT, INDEX, etc.
+                var expiry    = Get(cols, "expiry");           // YYYY-MM-DD or empty
+                var strike    = Get(cols, "strike");
+                var tickStr   = Get(cols, "tick_size");
+                var lotStr    = Get(cols, "lot_size");
+                // Zerodha does not have a separate option_type column; CE/PE are
+                // encoded in the trading symbol for options rows.
+                string? optType = null;
+                if (instrType is "CE" or "PE") optType = instrType;
+                else if (symbol.EndsWith("CE", StringComparison.Ordinal)) optType = "CE";
+                else if (symbol.EndsWith("PE", StringComparison.Ordinal)) optType = "PE";
+
+                decimal.TryParse(strike,  out var strikeDecimal);
+                decimal.TryParse(tickStr, out var tickSize);
+                int.TryParse(lotStr, out var lotSize);
+
+                results.Add(new InstrumentTokenMapping(
+                    InternalSymbol: $"{exch}:{symbol}",
+                    BrokerToken:    token,
+                    Exchange:       exch,
+                    BrokerName:     "Zerodha",
+                    TradingSymbol:  symbol,
+                    Name:           string.IsNullOrEmpty(name) ? symbol : name,
+                    InstrumentType: string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
+                    Expiry:         string.IsNullOrEmpty(expiry) ? null : expiry,
+                    StrikePrice:    strikeDecimal > 0 ? strikeDecimal : null,
+                    OptionType:     optType,
+                    LotSize:        lotSize > 0 ? lotSize : 1,
+                    TickSize:       tickSize > 0 ? tickSize : 0.05m
+                ));
             }
         }
         catch { /* fail silently */ }
