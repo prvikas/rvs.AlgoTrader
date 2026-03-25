@@ -1,6 +1,7 @@
 ---
 name: dotnet-guardrails
 description: Apply project .NET and architecture constraints
+model: sonnet
 ---
 
 # .NET guardrails

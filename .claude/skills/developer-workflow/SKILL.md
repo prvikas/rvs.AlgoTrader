@@ -7,6 +7,7 @@
 ---
 name: developer-workflow
 description: Standard development workflow for implementing features in this repo
+model: haiku 
 ---
 
 # Developer workflow

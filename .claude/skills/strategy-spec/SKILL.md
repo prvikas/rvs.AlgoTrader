@@ -1,6 +1,7 @@
 ---
 name: strategy-spec
 description: Convert discretionary strategy ideas into explicit build-ready specs
+model: sonnet
 ---
 
 # Strategy spec

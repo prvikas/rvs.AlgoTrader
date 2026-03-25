@@ -13,6 +13,35 @@ primary broker: mStock Type B API
 4. state current phase + gaps + proposed next step
 5. wait for confirmation before writing any code
 
+## Model routing
+use the right model per task to reduce token cost:
+
+haiku:
+- reading files for context
+- updating IMPLEMENTATION_STATUS.md
+- updating REQUIREMENTS_DELTA.md
+- writing git commit messages
+- doc-update skill tasks
+- session-summary hook output
+- simple search/replace edits
+
+sonnet (default):
+- implementing features
+- writing tests
+- refactoring existing code
+- strategy implementation
+- reviewing anti-patterns
+
+opus (escalate only):
+- designing new bounded contexts
+- resolving complex architecture conflicts
+- debugging hard multi-system issues
+- planning a new phase from scratch
+
+switch model: /model haiku | /model sonnet | /model opus
+reduce thinking: /effort low (for simple tasks) | /effort high (for complex)
+disable thinking for doc-only tasks: /config thinking false
+
 ## Priority workflow
 research -> backtest -> forward test -> approval gate -> live deploy -> monitor
 

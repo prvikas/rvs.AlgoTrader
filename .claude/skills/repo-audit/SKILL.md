@@ -1,6 +1,7 @@
 ---
 name: repo-audit
 description: Inspect current implementation before proposing changes
+model: haiku 
 ---
 
 # Repo audit

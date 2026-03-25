@@ -1,6 +1,7 @@
 ---
 name: doc-update
 description: Keep docs aligned with code without duplication
+model: haiku
 ---
 
 # Doc update

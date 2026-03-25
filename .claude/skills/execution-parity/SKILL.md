@@ -1,6 +1,7 @@
 ---
 name: execution-parity
 description: Preserve parity across backtest, forward test, and live modes
+model: sonnet
 ---
 
 # Execution parity

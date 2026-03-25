@@ -1,8 +1,8 @@
 ---
 
 name: testing-patterns
-
 description: Apply consistent test patterns across unit, integration, parity, and E2E tests
+model: sonnet
 
 ---
 
@@ -32,7 +32,7 @@ description: Apply consistent test patterns across unit, integration, parity, an
 
 
 
-\## SimulatedClock in tests
+## SimulatedClock in tests
 
 - inject SimulatedClock for all time-dependent tests
 
@@ -42,7 +42,7 @@ description: Apply consistent test patterns across unit, integration, parity, an
 
 
 
-\## Strategy unit test pattern
+## Strategy unit test pattern
 
 
 [Fact]
