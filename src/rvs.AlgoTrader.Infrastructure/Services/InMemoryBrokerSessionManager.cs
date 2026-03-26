@@ -7,9 +7,14 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 
 /// <summary>
 /// In-memory broker session manager. Used when Redis is not available (local dev / single-instance).
-/// Stores sessions in ConcurrentDictionary — lost on restart.
+/// Stores sessions in ConcurrentDictionary — augmented with DB write-through via
+/// DbBrokerSessionPersistence so tokens survive app restarts (same-day tokens still valid).
+/// StartupOrchestrator.Step7 calls DbBrokerSessionPersistence.LoadAllValidAsync to pre-populate
+/// the in-memory dict before any requests arrive.
 /// </summary>
-public class InMemoryBrokerSessionManager(ILogger<InMemoryBrokerSessionManager> logger)
+public class InMemoryBrokerSessionManager(
+    ILogger<InMemoryBrokerSessionManager> logger,
+    DbBrokerSessionPersistence dbPersistence)
     : IBrokerSessionManager, IAppBrokerSessionManager
 {
     private readonly ConcurrentDictionary<string, SessionEntry> _sessions = new(StringComparer.OrdinalIgnoreCase);
@@ -38,7 +43,22 @@ public class InMemoryBrokerSessionManager(ILogger<InMemoryBrokerSessionManager> 
         _sessions[brokerName] = entry;
         logger.LogInformation("[{Broker}] In-memory session stored. Expires: {Expiry}",
             brokerName, result.ExpiresAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "no expiry set");
+
+        // Write-through to DB (best-effort, fire-and-forget — in-memory is already updated)
+        _ = dbPersistence.UpsertAsync(brokerName, result.AccessToken, result.FeedToken, result.RefreshToken, result.ExpiresAt, CancellationToken.None);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Restores a session from a pre-loaded DB record (called by StartupOrchestrator.Step7).
+    /// Populates the in-memory dict so IsSessionValid/GetAccessToken work immediately.
+    /// </summary>
+    public void RestoreFromDb(StoredBrokerSession stored)
+    {
+        var entry = new SessionEntry(stored.AccessToken, stored.ExpiresAt, stored.RefreshToken, stored.FeedToken);
+        _sessions[stored.BrokerName] = entry;
+        logger.LogInformation("[{Broker}] Session restored from DB. Expires: {Expiry}",
+            stored.BrokerName, stored.ExpiresAt?.ToString("yyyy-MM-dd HH:mm zzz") ?? "no expiry");
     }
 
     public Task<string?> TryGetAccessTokenAsync(string brokerName, CancellationToken ct)
@@ -63,6 +83,7 @@ public class InMemoryBrokerSessionManager(ILogger<InMemoryBrokerSessionManager> 
     {
         _sessions.TryRemove(brokerName, out _);
         logger.LogInformation("[{Broker}] In-memory session invalidated", brokerName);
+        _ = dbPersistence.DeleteAsync(brokerName, CancellationToken.None);
         return Task.CompletedTask;
     }
 

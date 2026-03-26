@@ -166,6 +166,25 @@ try
                 {
                     Console.WriteLine($"[Startup] Database schema already initialized ({tableCount} tables found).");
                 }
+
+                // ── broker_sessions table (idempotent — always run) ──────────
+                // Ensures the table exists regardless of when the DB was first
+                // created, so DbBrokerSessionPersistence can write/read on startup.
+                command.CommandText = """
+                    CREATE TABLE IF NOT EXISTS broker_sessions (
+                        broker_name   VARCHAR(50)  PRIMARY KEY,
+                        access_token  TEXT         NOT NULL,
+                        feed_token    TEXT,
+                        refresh_token TEXT,
+                        expires_at    TIMESTAMPTZ,
+                        stored_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                    );
+                    """;
+                try { await command.ExecuteNonQueryAsync(); }
+                catch (Exception bsEx)
+                {
+                    Console.WriteLine($"[Startup] WARNING: broker_sessions table check failed: {bsEx.Message}");
+                }
             }
         }
         finally

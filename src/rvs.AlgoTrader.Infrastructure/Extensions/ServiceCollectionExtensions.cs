@@ -170,6 +170,11 @@ public static class ServiceCollectionExtensions
         services.AddTransient<IFullBrokerClient>(sp => sp.GetRequiredService<ZerodhaClient>());
         services.AddTransient<IFullBrokerClient>(sp => sp.GetRequiredService<UpstoxClient>());
 
+        // DB-backed session persistence — used by InMemoryBrokerSessionManager as write-through
+        // backing store so tokens survive app restarts when Redis is unavailable.
+        // Registered regardless of Redis availability (StartupOrchestrator uses it only when needed).
+        services.AddSingleton<DbBrokerSessionPersistence>();
+
         // Broker session manager — use in-memory when Redis is not available
         if (redisAvailable)
         {
