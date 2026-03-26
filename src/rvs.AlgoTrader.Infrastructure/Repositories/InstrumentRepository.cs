@@ -98,6 +98,7 @@ public class InstrumentRepository(AlgoTraderDbContext db) : IInstrumentRepositor
     /// Inserts toAdd in one AddRange then flushes all pending changes
     /// (including updates to tracked entities in toUpdate) in one SaveChanges.
     /// Replaces the N+1 UpsertAsync loop — reduces 200k DB calls to 3.
+    /// Success only confirmed after SaveChangesAsync returns rowsAffected > 0.
     /// </summary>
     public async Task BulkUpsertAsync(
         IReadOnlyList<Instrument> toAdd, IReadOnlyList<Instrument> toUpdate, CancellationToken ct = default)
@@ -107,7 +108,13 @@ public class InstrumentRepository(AlgoTraderDbContext db) : IInstrumentRepositor
         // toUpdate entities are already tracked by the context (returned from
         // GetBatchByInternalSymbolAsync) — their mutations are auto-detected.
         _ = toUpdate; // explicit no-op; keeps the signature symmetric
-        await db.SaveChangesAsync(ct);
+
+        int rowsAffected = await db.SaveChangesAsync(ct);
+
+        // Success only after rows > 0 confirmed
+        if (rowsAffected == 0 && (toAdd.Count > 0 || toUpdate.Count > 0))
+            throw new InvalidOperationException(
+                $"SaveChangesAsync returned 0 rows affected but {toAdd.Count} adds + {toUpdate.Count} updates were queued");
     }
 
     public async Task<IReadOnlyList<Instrument>> GetAllActiveAsync(CancellationToken ct = default)
