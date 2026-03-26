@@ -6,6 +6,7 @@ using MassTransit;
 using Hangfire;
 using Hangfire.PostgreSql;
 using StackExchange.Redis;
+using RabbitMQ.Client;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
@@ -37,7 +38,7 @@ public static class ServiceCollectionExtensions
         // EF Core — PostgreSQL
         services.AddDbContext<AlgoTraderDbContext>(opts =>
             opts.UseNpgsql(
-                config.GetConnectionString("Postgres") ?? "Host=localhost;Database=algotrader;Username=postgres;Password=postgres",
+                config.GetConnectionString("DefaultConnection") ?? "Host=localhost;Database=algotrader;Username=postgres;Password=postgres",
                 npgsql => npgsql.UseNodaTime()));
 
         // Redis — optional. Try to connect; fall back to in-memory implementations if unavailable.
@@ -201,30 +202,52 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CandleAggregatorService>();
         services.AddHostedService(sp => sp.GetRequiredService<CandleAggregatorService>());
 
-        // MassTransit — RabbitMQ transport
+        // MassTransit — RabbitMQ transport with in-memory fallback when RabbitMQ is unavailable.
+        // Mirrors the Redis fallback pattern so the app starts even in dev without RabbitMQ.
         // Note: SignalRHubConsumer is registered separately in the API project
         // because it depends on SignalR Hub types defined there.
+        var rabbitHost = config["RabbitMQ__Host"] ?? config["RabbitMQ:Host"] ?? "localhost";
+        var rabbitUser = config["RabbitMQ__Username"] ?? config["RabbitMQ:Username"] ?? "guest";
+        var rabbitPass = config["RabbitMQ__Password"] ?? config["RabbitMQ:Password"] ?? "guest";
+        bool rabbitAvailable = false;
+        try
+        {
+            var factory = new RabbitMQ.Client.ConnectionFactory
+            {
+                HostName = rabbitHost,
+                UserName = rabbitUser,
+                Password = rabbitPass,
+                RequestedConnectionTimeout = TimeSpan.FromSeconds(3),
+            };
+            using var conn = factory.CreateConnection();
+            rabbitAvailable = conn.IsOpen;
+        }
+        catch { /* RabbitMQ not reachable — fall back to in-memory */ }
+
         services.AddMassTransit(cfg =>
         {
-            // Register consumers from the Infrastructure assembly
             cfg.AddConsumer<AlertTriggeredConsumer>();
             cfg.AddConsumer<AuditLogConsumer>();
             cfg.AddConsumer<OrderFilledConsumer>();
             cfg.AddConsumer<StrategyEvaluationQueue>();
-
-            // Allow the host (e.g. API project) to register additional consumers
-            // such as SignalRHubConsumer which depends on SignalR types not available here.
             configureAdditionalConsumers?.Invoke(cfg);
 
-            cfg.UsingRabbitMq((ctx, rmq) =>
+            if (rabbitAvailable)
             {
-                rmq.Host(config["RabbitMQ__Host"] ?? "localhost", "/", h =>
+                cfg.UsingRabbitMq((ctx, rmq) =>
                 {
-                    h.Username(config["RabbitMQ__Username"] ?? "guest");
-                    h.Password(config["RabbitMQ__Password"] ?? "guest");
+                    rmq.Host(rabbitHost, "/", h =>
+                    {
+                        h.Username(rabbitUser);
+                        h.Password(rabbitPass);
+                    });
+                    rmq.ConfigureEndpoints(ctx);
                 });
-                rmq.ConfigureEndpoints(ctx);
-            });
+            }
+            else
+            {
+                cfg.UsingInMemory((ctx, mem) => mem.ConfigureEndpoints(ctx));
+            }
         });
 
         // Hangfire — PostgreSQL storage
@@ -234,7 +257,7 @@ public static class ServiceCollectionExtensions
             .UseRecommendedSerializerSettings()
             .UsePostgreSqlStorage(opts =>
                 opts.UseNpgsqlConnection(
-                    config.GetConnectionString("Postgres") ?? "Host=localhost;Database=algotrader;Username=postgres;Password=postgres")));
+                    config.GetConnectionString("DefaultConnection") ?? "Host=localhost;Database=algotrader;Username=postgres;Password=postgres")));
         services.AddHangfireServer();
 
         return services;

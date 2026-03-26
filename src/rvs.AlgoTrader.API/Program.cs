@@ -8,11 +8,15 @@ using rvs.AlgoTrader.API.Messaging;
 using rvs.AlgoTrader.API.Middleware;
 using rvs.AlgoTrader.Infrastructure.Extensions;
 using rvs.AlgoTrader.Infrastructure.Persistence;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Load secrets from Vault or environment
 builder.Configuration.AddEnvironmentVariables();
+
+// Bootstrap Serilog from appsettings.json (WriteTo: Console + File)
+builder.Host.UseSerilog((ctx, lc) => lc.ReadFrom.Configuration(ctx.Configuration));
 
 // Infrastructure (EF Core, Redis, MassTransit, Hangfire, etc.)
 // Pass SignalRHubConsumer so it is registered in the same MassTransit bus instance.
