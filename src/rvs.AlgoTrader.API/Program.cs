@@ -16,7 +16,17 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables();
 
 // Bootstrap Serilog from appsettings.json (WriteTo: Console + File)
-builder.Host.UseSerilog((ctx, lc) => lc.ReadFrom.Configuration(ctx.Configuration));
+// Use AppContext.BaseDirectory for the file path so logs land in the output
+// directory (bin/Debug/net9.0/logs/) regardless of VS working directory.
+var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+Console.WriteLine($"[Startup] Log directory: {logDir}");
+builder.Host.UseSerilog((ctx, lc) =>
+    lc.ReadFrom.Configuration(ctx.Configuration)
+      .WriteTo.File(
+          Path.Combine(logDir, "algotrader-.log"),
+          rollingInterval: Serilog.RollingInterval.Day,
+          retainedFileCountLimit: 30,
+          shared: true));
 
 // Infrastructure (EF Core, Redis, MassTransit, Hangfire, etc.)
 // Pass SignalRHubConsumer so it is registered in the same MassTransit bus instance.

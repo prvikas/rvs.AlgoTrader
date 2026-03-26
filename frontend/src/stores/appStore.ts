@@ -8,6 +8,12 @@ interface AppState {
   setJwtToken: (token: string | null) => void
   isAuthenticated: () => boolean
 
+  // Zustand persist hydration flag — false until localStorage has been read back into state.
+  // ProtectedRoute must wait for this before evaluating auth, otherwise a valid persisted
+  // token still looks like null on the first render and triggers a redirect to /login.
+  _hasHydrated: boolean
+  setHasHydrated: (val: boolean) => void
+
   // Kill switch
   killSwitchActive: boolean
   setKillSwitchActive: (active: boolean) => void
@@ -32,6 +38,9 @@ export const useAppStore = create<AppState>()(
       setJwtToken: (token) => set({ jwtToken: token }),
       isAuthenticated: () => isTokenValid(get().jwtToken),
 
+      _hasHydrated: false,
+      setHasHydrated: (val) => set({ _hasHydrated: val }),
+
       killSwitchActive: false,
       setKillSwitchActive: (active) => set({ killSwitchActive: active }),
 
@@ -47,11 +56,17 @@ export const useAppStore = create<AppState>()(
     {
       name: 'algotrader-app',
       partialize: (state) => ({
-        jwtToken: state.jwtToken,          // persist so session survives page reload
+        jwtToken: state.jwtToken,
         activeBroker: state.activeBroker,
         timezone: state.timezone,
         sidebarCollapsed: state.sidebarCollapsed,
-      })
+        // _hasHydrated intentionally excluded — it's runtime state, not persisted
+      }),
+      onRehydrateStorage: () => (state) => {
+        // Called after localStorage has been read and merged into the store.
+        // state is the fully hydrated AppState including action functions.
+        state?.setHasHydrated(true)
+      },
     }
   )
 )
