@@ -63,13 +63,6 @@ const queryClient = new QueryClient({
 
 function ProtectedRoute({ element }: { element: React.ReactElement }) {
   const isAuthenticated = useAppStore(s => s.isAuthenticated)
-  const hasHydrated = useAppStore(s => s._hasHydrated)
-
-  // Wait for Zustand to rehydrate from localStorage before evaluating auth.
-  // Without this guard the store starts with jwtToken=null even if a valid
-  // persisted token exists, causing an immediate redirect to /login.
-  if (!hasHydrated) return null
-
   return isAuthenticated() ? element : <Navigate to="/login" replace />
 }
 

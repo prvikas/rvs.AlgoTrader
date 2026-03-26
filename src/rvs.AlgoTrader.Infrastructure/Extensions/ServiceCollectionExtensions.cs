@@ -6,7 +6,6 @@ using MassTransit;
 using Hangfire;
 using Hangfire.PostgreSql;
 using StackExchange.Redis;
-using RabbitMQ.Client;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
@@ -202,27 +201,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CandleAggregatorService>();
         services.AddHostedService(sp => sp.GetRequiredService<CandleAggregatorService>());
 
-        // MassTransit — RabbitMQ transport with in-memory fallback when RabbitMQ is unavailable.
-        // Mirrors the Redis fallback pattern so the app starts even in dev without RabbitMQ.
-        // Note: SignalRHubConsumer is registered separately in the API project
-        // because it depends on SignalR Hub types defined there.
-        var rabbitHost = config["RabbitMQ__Host"] ?? config["RabbitMQ:Host"] ?? "localhost";
-        var rabbitUser = config["RabbitMQ__Username"] ?? config["RabbitMQ:Username"] ?? "guest";
-        var rabbitPass = config["RabbitMQ__Password"] ?? config["RabbitMQ:Password"] ?? "guest";
-        bool rabbitAvailable = false;
-        try
-        {
-            var factory = new RabbitMQ.Client.ConnectionFactory
-            {
-                HostName = rabbitHost,
-                UserName = rabbitUser,
-                Password = rabbitPass,
-                RequestedConnectionTimeout = TimeSpan.FromSeconds(3),
-            };
-            using var conn = factory.CreateConnection();
-            rabbitAvailable = conn.IsOpen;
-        }
-        catch { /* RabbitMQ not reachable — fall back to in-memory */ }
+        // MassTransit — RabbitMQ when explicitly enabled, in-memory otherwise.
+        // Set RabbitMQ:Enabled=true (or RABBITMQ__ENABLED=true env var) to use RabbitMQ.
+        // Defaults to in-memory so the app starts cleanly in dev without RabbitMQ running.
+        // Note: SignalRHubConsumer is registered separately in the API project.
+        var rabbitEnabled = config.GetValue<bool>("RabbitMQ:Enabled");
 
         services.AddMassTransit(cfg =>
         {
@@ -232,8 +215,11 @@ public static class ServiceCollectionExtensions
             cfg.AddConsumer<StrategyEvaluationQueue>();
             configureAdditionalConsumers?.Invoke(cfg);
 
-            if (rabbitAvailable)
+            if (rabbitEnabled)
             {
+                var rabbitHost = config["RabbitMQ__Host"] ?? config["RabbitMQ:Host"] ?? "localhost";
+                var rabbitUser = config["RabbitMQ__Username"] ?? config["RabbitMQ:Username"] ?? "guest";
+                var rabbitPass = config["RabbitMQ__Password"] ?? config["RabbitMQ:Password"] ?? "guest";
                 cfg.UsingRabbitMq((ctx, rmq) =>
                 {
                     rmq.Host(rabbitHost, "/", h =>

@@ -2,17 +2,17 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { isTokenValid } from '../utils/auth'
 
+// Token key in localStorage — read/written directly so init is synchronous.
+// Zustand persist hydrates asynchronously, which causes a render-before-hydration
+// race that logs the user out on every page refresh. Using localStorage directly
+// and initialising synchronously in the store default avoids that entirely.
+const JWT_KEY = 'jwt_token'
+
 interface AppState {
   // Auth
   jwtToken: string | null
   setJwtToken: (token: string | null) => void
   isAuthenticated: () => boolean
-
-  // Zustand persist hydration flag — false until localStorage has been read back into state.
-  // ProtectedRoute must wait for this before evaluating auth, otherwise a valid persisted
-  // token still looks like null on the first render and triggers a redirect to /login.
-  _hasHydrated: boolean
-  setHasHydrated: (val: boolean) => void
 
   // Kill switch
   killSwitchActive: boolean
@@ -34,12 +34,19 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
-      jwtToken: null,
-      setJwtToken: (token) => set({ jwtToken: token }),
-      isAuthenticated: () => isTokenValid(get().jwtToken),
+      // Initialise synchronously from localStorage so the correct value is available
+      // on the very first render — no async hydration gap, no redirect to /login.
+      jwtToken: localStorage.getItem(JWT_KEY),
 
-      _hasHydrated: false,
-      setHasHydrated: (val) => set({ _hasHydrated: val }),
+      setJwtToken: (token) => {
+        // Keep localStorage['jwt_token'] as the single source of truth.
+        // Writing here ensures the next synchronous init picks it up immediately.
+        if (token) localStorage.setItem(JWT_KEY, token)
+        else localStorage.removeItem(JWT_KEY)
+        set({ jwtToken: token })
+      },
+
+      isAuthenticated: () => isTokenValid(get().jwtToken),
 
       killSwitchActive: false,
       setKillSwitchActive: (active) => set({ killSwitchActive: active }),
@@ -55,18 +62,13 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'algotrader-app',
+      // jwtToken excluded from Zustand persist — managed via localStorage[JWT_KEY] directly.
+      // Including it in persist would cause the async-hydration race we just eliminated.
       partialize: (state) => ({
-        jwtToken: state.jwtToken,
         activeBroker: state.activeBroker,
         timezone: state.timezone,
         sidebarCollapsed: state.sidebarCollapsed,
-        // _hasHydrated intentionally excluded — it's runtime state, not persisted
       }),
-      onRehydrateStorage: () => (state) => {
-        // Called after localStorage has been read and merged into the store.
-        // state is the fully hydrated AppState including action functions.
-        state?.setHasHydrated(true)
-      },
     }
   )
 )
