@@ -158,9 +158,9 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<UpstoxClient>();
 
         // Broker options from config
-        services.Configure<MStockOptions>(config.GetSection("Brokers:MStock"));
-        services.Configure<ZerodhaOptions>(config.GetSection("Brokers:Zerodha"));
-        services.Configure<UpstoxOptions>(config.GetSection("Brokers:Upstox"));
+        services.Configure<MStockOptions>(config.GetSection("Broker:MStock"));
+        services.Configure<ZerodhaOptions>(config.GetSection("Broker:Zerodha"));
+        services.Configure<UpstoxOptions>(config.GetSection("Broker:Upstox"));
 
         // Broker clients as IFullBrokerClient — delegate to typed HttpClient registrations
         // (AddHttpClient<T>() registers T as transient with a managed HttpClient;
