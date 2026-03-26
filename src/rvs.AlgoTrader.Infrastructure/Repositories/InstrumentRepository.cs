@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
@@ -7,7 +8,7 @@ using rvs.AlgoTrader.Infrastructure.Persistence;
 
 namespace rvs.AlgoTrader.Infrastructure.Repositories;
 
-public class InstrumentRepository(AlgoTraderDbContext db) : IInstrumentRepository
+public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepository> logger) : IInstrumentRepository
 {
     // ── IInstrumentRepository interface methods ──────────────────────────────
 
@@ -103,18 +104,47 @@ public class InstrumentRepository(AlgoTraderDbContext db) : IInstrumentRepositor
     public async Task BulkUpsertAsync(
         IReadOnlyList<Instrument> toAdd, IReadOnlyList<Instrument> toUpdate, CancellationToken ct = default)
     {
-        if (toAdd.Count > 0)
-            await db.Instruments.AddRangeAsync(toAdd, ct);
-        // toUpdate entities are already tracked by the context (returned from
-        // GetBatchByInternalSymbolAsync) — their mutations are auto-detected.
-        _ = toUpdate; // explicit no-op; keeps the signature symmetric
+        try
+        {
+            logger.LogDebug("[BulkUpsert] Starting: {AddCount} to add, {UpdateCount} to update", toAdd.Count, toUpdate.Count);
 
-        int rowsAffected = await db.SaveChangesAsync(ct);
+            // Log DB context state before changes
+            var changeTracker = db.ChangeTracker;
+            var trackedCount = changeTracker.Entries().Count();
+            logger.LogDebug("[BulkUpsert] DbContext tracked entries before: {Count}", trackedCount);
 
-        // Success only after rows > 0 confirmed
-        if (rowsAffected == 0 && (toAdd.Count > 0 || toUpdate.Count > 0))
-            throw new InvalidOperationException(
-                $"SaveChangesAsync returned 0 rows affected but {toAdd.Count} adds + {toUpdate.Count} updates were queued");
+            if (toAdd.Count > 0)
+                await db.Instruments.AddRangeAsync(toAdd, ct);
+
+            // Log context state after AddRange
+            var afterAddCount = db.ChangeTracker.Entries().Count();
+            logger.LogDebug("[BulkUpsert] DbContext tracked entries after AddRange: {Count}", afterAddCount);
+
+            // toUpdate entities are already tracked by the context (returned from
+            // GetBatchByInternalSymbolAsync) — their mutations are auto-detected.
+            _ = toUpdate; // explicit no-op; keeps the signature symmetric
+
+            logger.LogDebug("[BulkUpsert] Calling SaveChangesAsync...");
+            int rowsAffected = await db.SaveChangesAsync(ct);
+
+            logger.LogInformation("[BulkUpsert] SaveChangesAsync completed: {RowsAffected} rows affected", rowsAffected);
+
+            // Success only after rows > 0 confirmed
+            if (rowsAffected == 0 && (toAdd.Count > 0 || toUpdate.Count > 0))
+            {
+                logger.LogError("[BulkUpsert] CRITICAL: SaveChangesAsync returned 0 rows but {AddCount} adds + {UpdateCount} updates were queued!",
+                    toAdd.Count, toUpdate.Count);
+                throw new InvalidOperationException(
+                    $"SaveChangesAsync returned 0 rows affected but {toAdd.Count} adds + {toUpdate.Count} updates were queued");
+            }
+
+            logger.LogDebug("[BulkUpsert] Success confirmed with {RowsAffected} rows affected", rowsAffected);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[BulkUpsert] EXCEPTION during SaveChangesAsync: {Message}", ex.Message);
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<Instrument>> GetAllActiveAsync(CancellationToken ct = default)

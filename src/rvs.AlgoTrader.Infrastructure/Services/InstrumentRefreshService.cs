@@ -32,8 +32,12 @@ public class InstrumentRefreshService(
         logger.LogInformation("[InstrumentRefresh] Starting master-data download for {Broker}", brokerName);
 
         // 1. Download from broker + rebuild in-memory cache
+        logger.LogDebug("[InstrumentRefresh] Calling tokenResolver.RefreshAsync({Broker})", brokerName);
         await tokenResolver.RefreshAsync(brokerName, ct);
+        logger.LogDebug("[InstrumentRefresh] tokenResolver.RefreshAsync completed, fetching mappings...");
+
         var mappings = await tokenResolver.GetAllMappingsAsync(brokerName, ct);
+        logger.LogInformation("[InstrumentRefresh] Broker {Broker} returned {MappingCount} mappings", brokerName, mappings.Count);
 
         if (mappings.Count == 0)
         {
@@ -96,19 +100,29 @@ public class InstrumentRefreshService(
         // Flush: AddRange new items in chunks (avoids hitting DB param limits),
         // then a single SaveChanges picks up both the new rows and all tracked mutations.
         // Updates are already tracked in the DbContext — they don't need to be passed back.
+        logger.LogInformation("[InstrumentRefresh] Starting upsert flush: {AddCount} new, {UpdateCount} to update", toAdd.Count, toUpdate.Count);
+
+        int totalFlushed = 0;
         for (int i = 0; i < toAdd.Count; i += ChunkSize)
         {
             var addChunk = toAdd.Skip(i).Take(ChunkSize).ToList();
             // Pass toUpdate only on the last chunk so SaveChanges runs once for everything.
             bool isLast = i + ChunkSize >= toAdd.Count;
+            int chunkNum = (i / ChunkSize) + 1;
+            logger.LogDebug("[InstrumentRefresh] Flushing chunk {ChunkNum}: {ChunkSize} items (isLast={IsLast})", chunkNum, addChunk.Count, isLast);
             await instrumentRepo.BulkUpsertAsync(addChunk, isLast ? toUpdate : [], ct);
+            totalFlushed += addChunk.Count;
+            logger.LogDebug("[InstrumentRefresh] Chunk {ChunkNum} flushed successfully", chunkNum);
         }
         // If there were no new instruments, still flush tracked mutations (updates only).
         if (toAdd.Count == 0)
+        {
+            logger.LogDebug("[InstrumentRefresh] No new instruments, flushing updates only: {UpdateCount} items", toUpdate.Count);
             await instrumentRepo.BulkUpsertAsync([], toUpdate, ct);
+        }
 
         logger.LogInformation(
-            "[InstrumentRefresh] {Broker}: {Created} new, {Updated} updated instruments ({Total} total)",
+            "[InstrumentRefresh] {Broker}: {Created} new, {Updated} updated instruments ({Total} total) - COMPLETED",
             brokerName, toAdd.Count, toUpdate.Count, mappings.Count);
     }
 
