@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { isTokenValid } from '../utils/auth'
 
 interface AppState {
   // Auth
@@ -28,12 +29,8 @@ export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       jwtToken: null,
-      setJwtToken: (token) => {
-        set({ jwtToken: token })
-        if (token) localStorage.setItem('jwt_token', token)
-        else localStorage.removeItem('jwt_token')
-      },
-      isAuthenticated: () => get().jwtToken !== null,
+      setJwtToken: (token) => set({ jwtToken: token }),
+      isAuthenticated: () => isTokenValid(get().jwtToken),
 
       killSwitchActive: false,
       setKillSwitchActive: (active) => set({ killSwitchActive: active }),
@@ -50,6 +47,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'algotrader-app',
       partialize: (state) => ({
+        jwtToken: state.jwtToken,          // persist so session survives page reload
         activeBroker: state.activeBroker,
         timezone: state.timezone,
         sidebarCollapsed: state.sidebarCollapsed,

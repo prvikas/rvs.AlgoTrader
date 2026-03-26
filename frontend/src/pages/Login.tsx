@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAppStore } from '../stores/appStore'
 
 export function Login() {
   const navigate = useNavigate()
+  const setJwtToken = useAppStore(s => s.setJwtToken)
+  const setActiveBroker = useAppStore(s => s.setActiveBroker)
   const [apiKey, setApiKey] = useState('')
   const [clientCode, setClientCode] = useState('')
   const [password, setPassword] = useState('')
@@ -44,9 +47,9 @@ export function Login() {
         return
       }
 
-      // Store JWT token and active broker name
-      localStorage.setItem('jwt_token', data.data.token)
-      localStorage.setItem('active_broker', data.data.brokerName)
+      // Store JWT token and active broker via Zustand (persisted to localStorage automatically)
+      setJwtToken(data.data.token)
+      setActiveBroker(data.data.brokerName)
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection error')

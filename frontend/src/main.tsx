@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
+import { useAppStore } from './stores/appStore'
 
 // ── Global Error Boundary ─────────────────────────────────────────────────────
 // Prevents blank screen on render errors — shows a recoverable error panel instead.
@@ -61,8 +62,8 @@ const queryClient = new QueryClient({
 })
 
 function ProtectedRoute({ element }: { element: React.ReactElement }) {
-  const token = localStorage.getItem('jwt_token')
-  return token ? element : <Navigate to="/login" replace />
+  const isAuthenticated = useAppStore(s => s.isAuthenticated)
+  return isAuthenticated() ? element : <Navigate to="/login" replace />
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
