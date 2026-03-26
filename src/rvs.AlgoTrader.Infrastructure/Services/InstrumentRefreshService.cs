@@ -32,8 +32,12 @@ public class InstrumentRefreshService(
         logger.LogInformation("[InstrumentRefresh] Starting master-data download for {Broker}", brokerName);
 
         // 1. Download from broker + rebuild in-memory cache
+        logger.LogDebug("[InstrumentRefresh] Calling tokenResolver.RefreshAsync({Broker})", brokerName);
         await tokenResolver.RefreshAsync(brokerName, ct);
+        logger.LogDebug("[InstrumentRefresh] tokenResolver.RefreshAsync completed, fetching mappings...");
+
         var mappings = await tokenResolver.GetAllMappingsAsync(brokerName, ct);
+        logger.LogInformation("[InstrumentRefresh] Broker {Broker} returned {MappingCount} mappings", brokerName, mappings.Count);
 
         if (mappings.Count == 0)
         {
@@ -51,7 +55,9 @@ public class InstrumentRefreshService(
 
         if (mappings.Count == 0)
         {
-            logger.LogWarning("[InstrumentRefresh] No instruments remain after universe filter — is instrument_universe seeded?");
+            logger.LogWarning(
+                "[InstrumentRefresh] No instruments remain after universe filter. " +
+                "Seed instrument_universe with NSE_EQUITY / OPTIONS_UNDERLYING rows to control which symbols are stored.");
             return;
         }
 
@@ -96,19 +102,29 @@ public class InstrumentRefreshService(
         // Flush: AddRange new items in chunks (avoids hitting DB param limits),
         // then a single SaveChanges picks up both the new rows and all tracked mutations.
         // Updates are already tracked in the DbContext — they don't need to be passed back.
+        logger.LogInformation("[InstrumentRefresh] Starting upsert flush: {AddCount} new, {UpdateCount} to update", toAdd.Count, toUpdate.Count);
+
+        int totalFlushed = 0;
         for (int i = 0; i < toAdd.Count; i += ChunkSize)
         {
             var addChunk = toAdd.Skip(i).Take(ChunkSize).ToList();
             // Pass toUpdate only on the last chunk so SaveChanges runs once for everything.
             bool isLast = i + ChunkSize >= toAdd.Count;
+            int chunkNum = (i / ChunkSize) + 1;
+            logger.LogDebug("[InstrumentRefresh] Flushing chunk {ChunkNum}: {ChunkSize} items (isLast={IsLast})", chunkNum, addChunk.Count, isLast);
             await instrumentRepo.BulkUpsertAsync(addChunk, isLast ? toUpdate : [], ct);
+            totalFlushed += addChunk.Count;
+            logger.LogDebug("[InstrumentRefresh] Chunk {ChunkNum} flushed successfully", chunkNum);
         }
         // If there were no new instruments, still flush tracked mutations (updates only).
         if (toAdd.Count == 0)
+        {
+            logger.LogDebug("[InstrumentRefresh] No new instruments, flushing updates only: {UpdateCount} items", toUpdate.Count);
             await instrumentRepo.BulkUpsertAsync([], toUpdate, ct);
+        }
 
         logger.LogInformation(
-            "[InstrumentRefresh] {Broker}: {Created} new, {Updated} updated instruments ({Total} total)",
+            "[InstrumentRefresh] {Broker}: {Created} new, {Updated} updated instruments ({Total} total) - COMPLETED",
             brokerName, toAdd.Count, toUpdate.Count, mappings.Count);
     }
 
@@ -150,8 +166,11 @@ public class InstrumentRefreshService(
 
         var expiryWeeks = await config.GetAsync<int?>("InstrumentFilter:NfoExpiryWeeks", ct) ?? 4;
 
-        logger.LogDebug("[InstrumentRefresh] Universe: {Equities} equities, {Underlyings} option underlyings, {Weeks} expiry weeks",
-            nseEquities.Count, optionUnderlyings.Count, expiryWeeks);
+        if (nseEquities.Count == 0 && optionUnderlyings.Count == 0)
+            logger.LogInformation("[InstrumentRefresh] instrument_universe is empty — PASSTHROUGH mode: all NSE/NFO instruments will be stored");
+        else
+            logger.LogDebug("[InstrumentRefresh] Universe: {Equities} equities, {Underlyings} option underlyings, {Weeks} expiry weeks",
+                nseEquities.Count, optionUnderlyings.Count, expiryWeeks);
 
         return new UniverseConfig(nseEquities, optionUnderlyings, expiryWeeks);
     }
@@ -175,6 +194,12 @@ public class InstrumentRefreshService(
         // Always include all indexes regardless of exchange (NSE, BSE)
         if (type is "INDEX" or "IDX" or "IX" or "AMXIDX" or "INX" or "INDICES" or "UNDIND")
             return true;
+
+        // Passthrough mode: if instrument_universe is not seeded yet, include all
+        // NSE equities and NFO instruments so data lands in the DB on first run.
+        // Once instrument_universe has entries, the filter below takes over.
+        if (u.NseEquities.Count == 0 && u.OptionUnderlyings.Count == 0)
+            return exch is "NSE" or "NFO";
 
         switch (exch)
         {
