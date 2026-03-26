@@ -2,6 +2,7 @@ using Hangfire;
 using Hangfire.Dashboard;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using NodaTime;
 using rvs.AlgoTrader.API.Extensions;
 using rvs.AlgoTrader.API.Hubs;
 using rvs.AlgoTrader.API.Messaging;
@@ -27,6 +28,10 @@ builder.Host.UseSerilog((ctx, lc) =>
           rollingInterval: Serilog.RollingInterval.Day,
           retainedFileCountLimit: 30,
           shared: true));
+
+// NodaTime.IClock — registered here directly so SystemClock (which takes NodaTime.IClock
+// in its constructor) resolves correctly before AddInfrastructureServices runs.
+builder.Services.AddSingleton<IClock>(SystemClock.Instance);
 
 // Infrastructure (EF Core, Redis, MassTransit, Hangfire, etc.)
 // Pass SignalRHubConsumer so it is registered in the same MassTransit bus instance.
