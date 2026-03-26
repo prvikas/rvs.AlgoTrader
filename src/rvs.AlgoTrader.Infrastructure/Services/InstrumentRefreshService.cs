@@ -55,7 +55,9 @@ public class InstrumentRefreshService(
 
         if (mappings.Count == 0)
         {
-            logger.LogWarning("[InstrumentRefresh] No instruments remain after universe filter — is instrument_universe seeded?");
+            logger.LogWarning(
+                "[InstrumentRefresh] No instruments remain after universe filter. " +
+                "Seed instrument_universe with NSE_EQUITY / OPTIONS_UNDERLYING rows to control which symbols are stored.");
             return;
         }
 
@@ -164,8 +166,11 @@ public class InstrumentRefreshService(
 
         var expiryWeeks = await config.GetAsync<int?>("InstrumentFilter:NfoExpiryWeeks", ct) ?? 4;
 
-        logger.LogDebug("[InstrumentRefresh] Universe: {Equities} equities, {Underlyings} option underlyings, {Weeks} expiry weeks",
-            nseEquities.Count, optionUnderlyings.Count, expiryWeeks);
+        if (nseEquities.Count == 0 && optionUnderlyings.Count == 0)
+            logger.LogInformation("[InstrumentRefresh] instrument_universe is empty — PASSTHROUGH mode: all NSE/NFO instruments will be stored");
+        else
+            logger.LogDebug("[InstrumentRefresh] Universe: {Equities} equities, {Underlyings} option underlyings, {Weeks} expiry weeks",
+                nseEquities.Count, optionUnderlyings.Count, expiryWeeks);
 
         return new UniverseConfig(nseEquities, optionUnderlyings, expiryWeeks);
     }
@@ -189,6 +194,12 @@ public class InstrumentRefreshService(
         // Always include all indexes regardless of exchange (NSE, BSE)
         if (type is "INDEX" or "IDX" or "IX" or "AMXIDX" or "INX" or "INDICES" or "UNDIND")
             return true;
+
+        // Passthrough mode: if instrument_universe is not seeded yet, include all
+        // NSE equities and NFO instruments so data lands in the DB on first run.
+        // Once instrument_universe has entries, the filter below takes over.
+        if (u.NseEquities.Count == 0 && u.OptionUnderlyings.Count == 0)
+            return exch is "NSE" or "NFO";
 
         switch (exch)
         {
