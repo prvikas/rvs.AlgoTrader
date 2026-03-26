@@ -455,6 +455,23 @@ export const universeApi = {
     apiClient.post<ApiResponse<number>>('/universe/seed-defaults'),
 }
 
+export const instrumentTypesApi = {
+  getFuturesTypes: () =>
+    apiClient.get<ApiResponse<string>>('/instrument-types/futures'),
+
+  getOptionsTypes: () =>
+    apiClient.get<ApiResponse<string>>('/instrument-types/options'),
+
+  updateFuturesTypes: (types: string) =>
+    apiClient.put<ApiResponse<string>>('/instrument-types/futures', { types }),
+
+  updateOptionsTypes: (types: string) =>
+    apiClient.put<ApiResponse<string>>('/instrument-types/options', { types }),
+
+  resetDefaults: () =>
+    apiClient.post<ApiResponse<string>>('/instrument-types/reset-defaults'),
+}
+
 export const settingsApi = {
   getNotifications: () =>
     apiClient.get<ApiResponse<NotificationSettings>>('/settings/notifications'),

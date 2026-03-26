@@ -18,12 +18,13 @@ import { InstrumentsPage } from './InstrumentsPage'
 import { ForwardTestPage } from './ForwardTestPage'
 import { StrategyLabPage } from './StrategyLabPage'
 import { UniversePage } from './UniversePage'
+import { InstrumentTypesPage } from './InstrumentTypesPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
 import { useStrategyStream } from '../hooks/useSignalR'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'universe' | 'settings'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'universe' | 'instrument-types' | 'settings'
 
 const ALL_STRATEGIES = [
   { name: 'PriceActionBreakout', desc: 'Consolidation range breakout with volume confirmation', comingSoon: false },
@@ -92,6 +93,7 @@ export function Dashboard() {
           <NavSectionLabel label="SETUP" />
           <NavItem page="instruments" label="Instruments" icon="🔍" active={activePage} onClick={setActivePage} />
           <NavItem page="universe" label="Universe" icon="🌐" active={activePage} onClick={setActivePage} />
+          <NavItem page="instrument-types" label="Instrument Types" icon="🏷️" active={activePage} onClick={setActivePage} />
           <NavItem page="settings" label="Settings" icon="⚙" active={activePage} onClick={setActivePage} />
         </nav>
       </div>
@@ -156,6 +158,7 @@ export function Dashboard() {
           {activePage === 'forwardtest' && <ForwardTestPage />}
           {activePage === 'instruments' && <InstrumentsPage />}
           {activePage === 'universe' && <UniversePage />}
+          {activePage === 'instrument-types' && <InstrumentTypesPage />}
           {activePage === 'settings' && <SettingsPage />}
         </div>
       </div>

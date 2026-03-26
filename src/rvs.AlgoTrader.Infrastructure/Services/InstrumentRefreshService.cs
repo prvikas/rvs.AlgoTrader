@@ -154,7 +154,9 @@ public class InstrumentRefreshService(
     private sealed record UniverseConfig(
         HashSet<string> NseEquities,
         HashSet<string> OptionUnderlyings,
-        int ExpiryWeeks);
+        int ExpiryWeeks,
+        HashSet<string> FuturesTypes,
+        HashSet<string> OptionsTypes);
 
     private async Task<UniverseConfig> LoadUniverseAsync(CancellationToken ct)
     {
@@ -175,13 +177,28 @@ public class InstrumentRefreshService(
 
         var expiryWeeks = await config.GetAsync<int?>("InstrumentFilter:NfoExpiryWeeks", ct) ?? 4;
 
+        // Load futures and options type mappings from config
+        var futuresTypesRaw = await config.GetAsync<string>("InstrumentFilter:FuturesTypes", ct)
+            ?? "FUT,FUTIDX,FUTSTK,FUTURES,IF,SF,FUTCOM,FUTCUR,FUTIRD";
+        var optionsTypesRaw = await config.GetAsync<string>("InstrumentFilter:OptionsTypes", ct)
+            ?? "OPT,OPTIDX,OPTSTK,OPTIONS,CE,PE,IO,SO";
+
+        var futuresTypes = futuresTypesRaw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.ToUpperInvariant())
+            .ToHashSet();
+        var optionsTypes = optionsTypesRaw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.ToUpperInvariant())
+            .ToHashSet();
+
         if (nseEquities.Count == 0 && optionUnderlyings.Count == 0)
             logger.LogInformation("[InstrumentRefresh] instrument_universe is empty — PASSTHROUGH mode: all NSE/NFO instruments will be stored");
         else
             logger.LogDebug("[InstrumentRefresh] Universe: {Equities} equities, {Underlyings} option underlyings, {Weeks} expiry weeks",
                 nseEquities.Count, optionUnderlyings.Count, expiryWeeks);
 
-        return new UniverseConfig(nseEquities, optionUnderlyings, expiryWeeks);
+        return new UniverseConfig(nseEquities, optionUnderlyings, expiryWeeks, futuresTypes, optionsTypes);
     }
 
     /// <summary>
@@ -223,12 +240,11 @@ public class InstrumentRefreshService(
                 if (underlying == null) return false;
 
                 // Futures — include all near-term futures on tracked underlyings
-                if (type is "FUT" or "FUTIDX" or "FUTSTK" or "FUTURES" or "IF" or "SF")
+                if (u.FuturesTypes.Contains(type))
                     return true;
 
                 // Options — apply expiry window filter
-                if (type is "OPT" or "OPTIDX" or "OPTSTK" or "OPTIONS"
-                         or "CE" or "PE" or "IO" or "SO")
+                if (u.OptionsTypes.Contains(type))
                 {
                     if (string.IsNullOrEmpty(m.Expiry)) return false;
                     if (LocalDatePattern.Iso.Parse(m.Expiry) is not { Success: true } parsed) return false;

@@ -1,9 +1,9 @@
 using MediatR;
-using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Instruments;
 using rvs.AlgoTrader.Application.Queries.Instruments;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Application.Commands.Instruments;
 
@@ -125,7 +125,7 @@ public class CreateUniverseEntryHandler(IInstrumentUniverseRepository repo, IClo
             Exchange  = exchange,
             Category  = category,
             IsActive  = true,
-            CreatedAt = clock.GetCurrentInstant(),
+            CreatedAt = clock.NowInstant(),
         };
         await repo.AddAsync(entry, ct);
         return UniverseMapper.ToDto(entry);
@@ -169,7 +169,7 @@ public class SeedDefaultUniverseHandler(IInstrumentUniverseRepository repo, IClo
     public async Task<int> Handle(SeedDefaultUniverseCommand request, CancellationToken ct)
     {
         var existingKeys = await repo.GetExistingKeysAsync(ct);
-        var now          = clock.GetCurrentInstant();
+        var now          = clock.NowInstant();
 
         var toAdd = UniverseDefaults.Entries
             .Where(d => !existingKeys.Contains($"{d.Symbol}|{d.Category}"))
