@@ -413,6 +413,48 @@ export interface PortfolioSummary {
 }
 
 // Notification Settings
+// ── Instrument Universe ────────────────────────────────────────────────────
+
+export interface InstrumentUniverseEntry {
+  id: string
+  symbol: string
+  exchange: string
+  /** NSE_EQUITY | OPTIONS_UNDERLYING */
+  category: string
+  isActive: boolean
+  createdAt: string
+}
+
+export interface CreateUniverseEntryRequest {
+  symbol: string
+  exchange: string
+  category: string
+}
+
+export interface UpdateUniverseEntryRequest {
+  symbol?: string
+  exchange?: string
+  category?: string
+  isActive?: boolean
+}
+
+export const universeApi = {
+  list: (params?: { category?: string; active?: boolean; page?: number; pageSize?: number }) =>
+    apiClient.get<ApiResponse<PagedResult<InstrumentUniverseEntry>>>('/universe', { params }),
+
+  create: (req: CreateUniverseEntryRequest) =>
+    apiClient.post<ApiResponse<InstrumentUniverseEntry>>('/universe', req),
+
+  update: (id: string, req: UpdateUniverseEntryRequest) =>
+    apiClient.put<ApiResponse<InstrumentUniverseEntry>>(`/universe/${id}`, req),
+
+  delete: (id: string) =>
+    apiClient.delete<ApiResponse<boolean>>(`/universe/${id}`),
+
+  seedDefaults: () =>
+    apiClient.post<ApiResponse<number>>('/universe/seed-defaults'),
+}
+
 export const settingsApi = {
   getNotifications: () =>
     apiClient.get<ApiResponse<NotificationSettings>>('/settings/notifications'),

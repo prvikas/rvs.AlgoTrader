@@ -17,12 +17,13 @@ import { FailureBehaviorEditor, FailureBehaviorConfig, defaultFailureBehavior, f
 import { InstrumentsPage } from './InstrumentsPage'
 import { ForwardTestPage } from './ForwardTestPage'
 import { StrategyLabPage } from './StrategyLabPage'
+import { UniversePage } from './UniversePage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
 import { useStrategyStream } from '../hooks/useSignalR'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'settings'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'universe' | 'settings'
 
 const ALL_STRATEGIES = [
   { name: 'PriceActionBreakout', desc: 'Consolidation range breakout with volume confirmation', comingSoon: false },
@@ -90,6 +91,7 @@ export function Dashboard() {
           {/* ── Setup ── */}
           <NavSectionLabel label="SETUP" />
           <NavItem page="instruments" label="Instruments" icon="🔍" active={activePage} onClick={setActivePage} />
+          <NavItem page="universe" label="Universe" icon="🌐" active={activePage} onClick={setActivePage} />
           <NavItem page="settings" label="Settings" icon="⚙" active={activePage} onClick={setActivePage} />
         </nav>
       </div>
@@ -153,6 +155,7 @@ export function Dashboard() {
           {activePage === 'backtest' && <BacktestPage backtestResults={backtestResults ?? []} />}
           {activePage === 'forwardtest' && <ForwardTestPage />}
           {activePage === 'instruments' && <InstrumentsPage />}
+          {activePage === 'universe' && <UniversePage />}
           {activePage === 'settings' && <SettingsPage />}
         </div>
       </div>

@@ -3,7 +3,13 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit -m \"Fix: Validate SaveChangesAsync row count in BulkUpsertAsync:*)",
-      "Bash(find . -name *.log -o -name logs -type d)"
+      "Bash(find . -name *.log -o -name logs -type d)",
+      "Bash(xargs grep:*)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kit.claudeworktreessweet-curie -path */frontend/src* -name *.ts -o -path */frontend/src* -name *.tsx)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet run:*)",
+      "Bash(find C:/Users/prvik/Downloads/algotrader-claude-kit/.claude/worktrees/sweet-curie/src -name *Dto* -o -name *DTO*)",
+      "Bash(grep -n \"activePage === ''lab''\\\\|activePage === ''backtest''\\\\|activePage === ''instruments''\\\\|activePage === ''forwardtest''\" \"C:/Users/prvik/Downloads/algotrader-claude-kit/.claude/worktrees/sweet-curie/frontend/src/pages/Dashboard.tsx\")"
     ]
   }
 }

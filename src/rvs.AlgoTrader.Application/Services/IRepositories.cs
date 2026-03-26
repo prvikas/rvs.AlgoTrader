@@ -191,3 +191,22 @@ public interface IForwardTestTradeRepository
     Task AddAsync(Domain.Entities.ForwardTestTrade trade, CancellationToken ct);
     Task<IReadOnlyList<Domain.Entities.ForwardTestTrade>> GetBySessionAsync(Guid sessionId, CancellationToken ct);
 }
+
+public interface IInstrumentUniverseRepository
+{
+    Task<(IReadOnlyList<Domain.Entities.InstrumentUniverse> Items, int TotalCount)> GetPagedAsync(
+        string? category, bool? active, int page, int pageSize, CancellationToken ct);
+
+    Task<Domain.Entities.InstrumentUniverse?> GetByIdAsync(Guid id, CancellationToken ct);
+
+    Task<Domain.Entities.InstrumentUniverse?> GetBySymbolAndCategoryAsync(
+        string symbol, string category, CancellationToken ct);
+
+    Task AddAsync(Domain.Entities.InstrumentUniverse entry, CancellationToken ct);
+    Task UpdateAsync(Domain.Entities.InstrumentUniverse entry, CancellationToken ct);
+    Task DeleteAsync(Domain.Entities.InstrumentUniverse entry, CancellationToken ct);
+
+    /// <summary>Returns existing (symbol, category) pairs to allow idempotent bulk insert.</summary>
+    Task<HashSet<string>> GetExistingKeysAsync(CancellationToken ct);
+    Task AddRangeAsync(IReadOnlyList<Domain.Entities.InstrumentUniverse> entries, CancellationToken ct);
+}
