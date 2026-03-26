@@ -1,4 +1,5 @@
 using MassTransit;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
@@ -34,7 +35,8 @@ public class StartupOrchestrator(
     IPublishEndpoint bus,
     IAuditService audit,
     IClock clock,
-    ILogger<StartupOrchestrator> logger) : IStartupOrchestrator
+    ILogger<StartupOrchestrator> logger,
+    IServiceProvider serviceProvider) : IStartupOrchestrator
 {
     public async Task RunAsync(CancellationToken ct)
     {
@@ -191,6 +193,19 @@ public class StartupOrchestrator(
     private async Task Step7_ReAuthBrokersAsync(CancellationToken ct)
     {
         logger.LogInformation("[Startup:Step7] Re-authenticating broker clients from stored sessions");
+
+        // ── Pre-populate InMemory session dict from DB (when Redis is not available) ──
+        // This bridges the gap: tokens survive restarts as long as they haven't expired.
+        // Both services are only resolvable when InMemory path is active.
+        var inMemorySessions = serviceProvider.GetService<InMemoryBrokerSessionManager>();
+        var dbPersistence    = serviceProvider.GetService<DbBrokerSessionPersistence>();
+        if (inMemorySessions != null && dbPersistence != null)
+        {
+            logger.LogInformation("[Startup:Step7] Redis not available — loading broker sessions from DB");
+            var storedSessions = await dbPersistence.LoadAllValidAsync(ct);
+            foreach (var stored in storedSessions)
+                inMemorySessions.RestoreFromDb(stored);
+        }
 
         var brokers = new[] { "Zerodha", "Upstox", "MStock" };
         var restored = 0;

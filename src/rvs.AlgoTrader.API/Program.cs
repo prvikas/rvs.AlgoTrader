@@ -8,11 +8,25 @@ using rvs.AlgoTrader.API.Messaging;
 using rvs.AlgoTrader.API.Middleware;
 using rvs.AlgoTrader.Infrastructure.Extensions;
 using rvs.AlgoTrader.Infrastructure.Persistence;
+using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Load secrets from Vault or environment
 builder.Configuration.AddEnvironmentVariables();
+
+// Bootstrap Serilog from appsettings.json (WriteTo: Console + File)
+// Use AppContext.BaseDirectory for the file path so logs land in the output
+// directory (bin/Debug/net9.0/logs/) regardless of VS working directory.
+var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+Console.WriteLine($"[Startup] Log directory: {logDir}");
+builder.Host.UseSerilog((ctx, lc) =>
+    lc.ReadFrom.Configuration(ctx.Configuration)
+      .WriteTo.File(
+          Path.Combine(logDir, "algotrader-.log"),
+          rollingInterval: Serilog.RollingInterval.Day,
+          retainedFileCountLimit: 30,
+          shared: true));
 
 // Infrastructure (EF Core, Redis, MassTransit, Hangfire, etc.)
 // Pass SignalRHubConsumer so it is registered in the same MassTransit bus instance.
@@ -151,6 +165,25 @@ try
                 else
                 {
                     Console.WriteLine($"[Startup] Database schema already initialized ({tableCount} tables found).");
+                }
+
+                // ── broker_sessions table (idempotent — always run) ──────────
+                // Ensures the table exists regardless of when the DB was first
+                // created, so DbBrokerSessionPersistence can write/read on startup.
+                command.CommandText = """
+                    CREATE TABLE IF NOT EXISTS broker_sessions (
+                        broker_name   VARCHAR(50)  PRIMARY KEY,
+                        access_token  TEXT         NOT NULL,
+                        feed_token    TEXT,
+                        refresh_token TEXT,
+                        expires_at    TIMESTAMPTZ,
+                        stored_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                    );
+                    """;
+                try { await command.ExecuteNonQueryAsync(); }
+                catch (Exception bsEx)
+                {
+                    Console.WriteLine($"[Startup] WARNING: broker_sessions table check failed: {bsEx.Message}");
                 }
             }
         }

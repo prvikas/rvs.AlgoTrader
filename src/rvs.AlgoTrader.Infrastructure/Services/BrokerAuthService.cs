@@ -49,8 +49,8 @@ public class BrokerAuthService(
     // ── Zerodha ───────────────────────────────────────────────────────────────
     public Task<string> GetZerodhaLoginUrlAsync(CancellationToken ct)
     {
-        var apiKey = config["Brokers:Zerodha:ApiKey"]
-            ?? throw new InvalidOperationException("Brokers:Zerodha:ApiKey not configured");
+        var apiKey = config["Broker:Zerodha:ApiKey"]
+            ?? throw new InvalidOperationException("Broker:Zerodha:ApiKey not configured");
         return Task.FromResult($"https://kite.zerodha.com/connect/login?v=3&api_key={apiKey}");
     }
 
@@ -58,8 +58,8 @@ public class BrokerAuthService(
     {
         var creds = new BrokerCredentials(
             "Zerodha",
-            config["Brokers:Zerodha:ApiKey"]!,
-            config["Brokers:Zerodha:ApiSecret"]!,
+            config["Broker:Zerodha:ApiKey"]!,
+            config["Broker:Zerodha:ApiSecret"]!,
             requestToken, null, null, null, null);
         var result = await zerodhaAuth.GenerateSessionAsync(creds, ct);
 
@@ -78,10 +78,10 @@ public class BrokerAuthService(
     // ── Upstox ────────────────────────────────────────────────────────────────
     public Task<string> GetUpstoxLoginUrlAsync(CancellationToken ct)
     {
-        var apiKey   = config["Brokers:Upstox:ApiKey"]
-            ?? throw new InvalidOperationException("Brokers:Upstox:ApiKey not configured");
-        var redirect = config["Brokers:Upstox:RedirectUri"]
-            ?? throw new InvalidOperationException("Brokers:Upstox:RedirectUri not configured");
+        var apiKey   = config["Broker:Upstox:ApiKey"]
+            ?? throw new InvalidOperationException("Broker:Upstox:ApiKey not configured");
+        var redirect = config["Broker:Upstox:RedirectUri"]
+            ?? throw new InvalidOperationException("Broker:Upstox:RedirectUri not configured");
         return Task.FromResult(upstoxAuth.GetLoginUrl(apiKey, redirect));
     }
 
@@ -89,10 +89,10 @@ public class BrokerAuthService(
     {
         var creds = new BrokerCredentials(
             "Upstox",
-            config["Brokers:Upstox:ApiKey"]!,
-            config["Brokers:Upstox:ApiSecret"]!,
+            config["Broker:Upstox:ApiKey"]!,
+            config["Broker:Upstox:ApiSecret"]!,
             authCode, null, null, null, null);
-        var redirect = config["Brokers:Upstox:RedirectUri"]!;
+        var redirect = config["Broker:Upstox:RedirectUri"]!;
         var result = await upstoxAuth.ExchangeCodeAsync(creds, redirect, ct);
 
         if (result.Success)

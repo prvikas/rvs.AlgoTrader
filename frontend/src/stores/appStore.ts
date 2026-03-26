@@ -1,5 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { isTokenValid } from '../utils/auth'
+
+// Token key in localStorage — read/written directly so init is synchronous.
+// Zustand persist hydrates asynchronously, which causes a render-before-hydration
+// race that logs the user out on every page refresh. Using localStorage directly
+// and initialising synchronously in the store default avoids that entirely.
+const JWT_KEY = 'jwt_token'
 
 interface AppState {
   // Auth
@@ -27,13 +34,19 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
-      jwtToken: null,
+      // Initialise synchronously from localStorage so the correct value is available
+      // on the very first render — no async hydration gap, no redirect to /login.
+      jwtToken: localStorage.getItem(JWT_KEY),
+
       setJwtToken: (token) => {
+        // Keep localStorage['jwt_token'] as the single source of truth.
+        // Writing here ensures the next synchronous init picks it up immediately.
+        if (token) localStorage.setItem(JWT_KEY, token)
+        else localStorage.removeItem(JWT_KEY)
         set({ jwtToken: token })
-        if (token) localStorage.setItem('jwt_token', token)
-        else localStorage.removeItem('jwt_token')
       },
-      isAuthenticated: () => get().jwtToken !== null,
+
+      isAuthenticated: () => isTokenValid(get().jwtToken),
 
       killSwitchActive: false,
       setKillSwitchActive: (active) => set({ killSwitchActive: active }),
@@ -49,11 +62,13 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'algotrader-app',
+      // jwtToken excluded from Zustand persist — managed via localStorage[JWT_KEY] directly.
+      // Including it in persist would cause the async-hydration race we just eliminated.
       partialize: (state) => ({
         activeBroker: state.activeBroker,
         timezone: state.timezone,
         sidebarCollapsed: state.sidebarCollapsed,
-      })
+      }),
     }
   )
 )

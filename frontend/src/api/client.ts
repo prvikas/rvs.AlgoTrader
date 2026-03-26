@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { useAppStore } from '../stores/appStore'
 
 // All timestamps from API are UTC ISO strings — display in IST (UTC+5:30)
 export const apiClient = axios.create({
@@ -6,9 +7,9 @@ export const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Attach JWT token from Zustand auth store
+// Attach JWT token from Zustand store (persisted across sessions)
 apiClient.interceptors.request.use(config => {
-  const token = localStorage.getItem('jwt_token')
+  const token = useAppStore.getState().jwtToken
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -17,7 +18,8 @@ apiClient.interceptors.response.use(
   res => res,
   err => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('jwt_token')
+      // Clear the token in the Zustand store (also clears persisted localStorage entry)
+      useAppStore.getState().setJwtToken(null)
       window.location.href = '/login'
     }
     return Promise.reject(err)
