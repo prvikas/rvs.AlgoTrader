@@ -23,7 +23,7 @@ type SortDir = 'asc' | 'desc'
 const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '1D']
 const KNOWN_EXCHANGES = ['NSE', 'BSE', 'NFO', 'BFO', 'CDS', 'MCX', 'BCD']
 const INSTRUMENT_TYPES = ['All Types', 'Equity', 'Futures', 'Options', 'Index']
-const BROKERS = ['Zerodha', 'Upstox', 'MStock']
+// BROKERS is intentionally not hardcoded — derived from brokerApi.status() at runtime
 const PAGE_SIZE = 50
 
 const inp: React.CSSProperties = {
@@ -71,10 +71,18 @@ export function InstrumentsPage() {
   const [sortBy, setSortBy]                   = useState<string>('symbol')
   const [sortDir, setSortDir]                 = useState<SortDir>('asc')
 
+  // Broker list — fetched live so no hardcoded names here
+  const { data: brokerStatuses } = useQuery({
+    queryKey: ['broker-status'],
+    queryFn: () => brokerApi.status().then(r => Array.isArray(r.data.data) ? r.data.data : []),
+    staleTime: 15_000,
+  })
+  const allBrokers = (brokerStatuses ?? []).map(s => s.brokerName)
+
   // Refresh progress state
   const [refreshProgress, setRefreshProgress] = useState<RefreshProgress>({
     active: false,
-    steps: BROKERS.map(b => ({ broker: b, status: 'idle' })),
+    steps: [],  // populated when handleRefresh runs and broker list is known
   })
 
   // Download modal
@@ -140,19 +148,23 @@ export function InstrumentsPage() {
   // ── Refresh logic ─────────────────────────────────────────────────────────
 
   const handleRefresh = useCallback(async () => {
+    // Fetch live broker status — determines which brokers to refresh
+    let allBrokerNames: string[]
     let authenticatedBrokers: string[]
     try {
       const res = await brokerApi.status()
       const statuses = Array.isArray(res.data.data) ? res.data.data : []
-      authenticatedBrokers = statuses.filter(s => s.isAuthenticated).map(s => s.brokerName)
+      allBrokerNames        = statuses.map(s => s.brokerName)
+      authenticatedBrokers  = statuses.filter(s => s.isAuthenticated).map(s => s.brokerName)
     } catch {
+      allBrokerNames       = []
       authenticatedBrokers = []
     }
 
     if (authenticatedBrokers.length === 0) {
       setRefreshProgress({
         active: false,
-        steps: BROKERS.map(b => ({
+        steps: allBrokerNames.map(b => ({
           broker: b,
           status: 'error' as BrokerStep,
           error: 'Not authenticated — log in first',
@@ -163,15 +175,15 @@ export function InstrumentsPage() {
 
     setRefreshProgress({
       active: true,
-      steps: BROKERS.map(b => ({
+      steps: allBrokerNames.map(b => ({
         broker: b,
         status: (authenticatedBrokers.includes(b) ? 'idle' : 'error') as BrokerStep,
         error: authenticatedBrokers.includes(b) ? undefined : 'Not authenticated — skipped',
       })),
     })
 
-    for (let i = 0; i < BROKERS.length; i++) {
-      const broker = BROKERS[i]
+    for (let i = 0; i < allBrokerNames.length; i++) {
+      const broker = allBrokerNames[i]
       if (!authenticatedBrokers.includes(broker)) continue
 
       setRefreshProgress(prev => ({
@@ -296,7 +308,7 @@ export function InstrumentsPage() {
 
           {!isRefreshing && (
             <button
-              onClick={() => setRefreshProgress({ active: false, steps: BROKERS.map(b => ({ broker: b, status: 'idle' })) })}
+              onClick={() => setRefreshProgress({ active: false, steps: allBrokers.map(b => ({ broker: b, status: 'idle' })) })}
               style={{ marginTop: 10, background: 'none', border: 'none', color: '#64748b', fontSize: 12, cursor: 'pointer' }}
             >
               Dismiss

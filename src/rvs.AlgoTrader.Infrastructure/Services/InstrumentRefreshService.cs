@@ -130,7 +130,16 @@ public class InstrumentRefreshService(
 
     public async Task RefreshAllBrokersAsync(CancellationToken ct)
     {
-        foreach (var broker in new[] { "MStock", "Zerodha", "Upstox" })
+        // Broker list is stored in app_config under key "Brokers:Registered"
+        // so operators can add/remove brokers from the Settings UI without code changes.
+        // Falls back to the standard set if the key has never been set.
+        var raw     = await config.GetAsync<string>("Brokers:Registered", ct)
+                      ?? "MStock,Zerodha,Upstox";
+        var brokers = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        logger.LogInformation("[InstrumentRefresh] Refreshing {Count} broker(s): {Brokers}", brokers.Length, string.Join(", ", brokers));
+
+        foreach (var broker in brokers)
         {
             try { await RefreshAsync(broker, ct); }
             catch (Exception ex)

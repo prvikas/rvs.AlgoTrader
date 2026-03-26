@@ -130,6 +130,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<IPositionRepository, PositionRepository>();
         services.AddScoped<IInstrumentRepository, InstrumentRepository>();
+        services.AddScoped<IInstrumentUniverseRepository, InstrumentUniverseRepository>();
         services.AddScoped<IStrategyInstanceRepository, StrategyInstanceRepository>();
         services.AddScoped<IStrategyRunRepository, StrategyRunRepository>();
         services.AddScoped<ICandleRepository, CandleRepository>();

@@ -167,72 +167,17 @@ try
                     Console.WriteLine($"[Startup] Database schema already initialized ({tableCount} tables found).");
                 }
 
-                // ── instrument_universe seed (only if empty) ─────────────────
-                // Provides a default starting universe so instrument refresh stores data
-                // on first run. Admin can add/remove rows via the API or DB directly.
+                // ── app_config defaults (only inserts missing keys) ──────────
+                // Brokers:Registered — comma-separated list of active brokers.
+                // Operators can change this via Settings → Brokers in the UI.
+                // instrument_universe is managed via Settings → Universe page.
                 command.CommandText = """
-                    INSERT INTO instrument_universe (id, symbol, exchange, category, is_active, created_at)
-                    SELECT gen_random_uuid(), s.symbol, s.exchange, s.category, true, NOW()
-                    FROM (VALUES
-                        -- Broad market indices (always useful for breadth analysis)
-                        ('NIFTY 50',      'NSE', 'OPTIONS_UNDERLYING'),
-                        ('NIFTY BANK',    'NSE', 'OPTIONS_UNDERLYING'),
-                        ('NIFTY',         'NFO', 'OPTIONS_UNDERLYING'),
-                        ('BANKNIFTY',     'NFO', 'OPTIONS_UNDERLYING'),
-                        ('FINNIFTY',      'NFO', 'OPTIONS_UNDERLYING'),
-                        ('MIDCPNIFTY',    'NFO', 'OPTIONS_UNDERLYING'),
-                        -- Large-cap NSE equities (Nifty 50 core)
-                        ('RELIANCE',  'NSE', 'NSE_EQUITY'),
-                        ('TCS',       'NSE', 'NSE_EQUITY'),
-                        ('HDFCBANK',  'NSE', 'NSE_EQUITY'),
-                        ('INFY',      'NSE', 'NSE_EQUITY'),
-                        ('ICICIBANK', 'NSE', 'NSE_EQUITY'),
-                        ('HINDUNILVR','NSE', 'NSE_EQUITY'),
-                        ('SBIN',      'NSE', 'NSE_EQUITY'),
-                        ('BAJFINANCE','NSE', 'NSE_EQUITY'),
-                        ('BHARTIARTL','NSE', 'NSE_EQUITY'),
-                        ('KOTAKBANK', 'NSE', 'NSE_EQUITY'),
-                        ('LT',        'NSE', 'NSE_EQUITY'),
-                        ('ITC',       'NSE', 'NSE_EQUITY'),
-                        ('AXISBANK',  'NSE', 'NSE_EQUITY'),
-                        ('ASIANPAINT','NSE', 'NSE_EQUITY'),
-                        ('MARUTI',    'NSE', 'NSE_EQUITY'),
-                        ('TATAMOTORS','NSE', 'NSE_EQUITY'),
-                        ('WIPRO',     'NSE', 'NSE_EQUITY'),
-                        ('SUNPHARMA', 'NSE', 'NSE_EQUITY'),
-                        ('ULTRACEMCO','NSE', 'NSE_EQUITY'),
-                        ('TITAN',     'NSE', 'NSE_EQUITY'),
-                        ('NTPC',      'NSE', 'NSE_EQUITY'),
-                        ('POWERGRID', 'NSE', 'NSE_EQUITY'),
-                        ('HCLTECH',   'NSE', 'NSE_EQUITY'),
-                        ('ONGC',      'NSE', 'NSE_EQUITY'),
-                        ('NESTLEIND', 'NSE', 'NSE_EQUITY'),
-                        ('JSWSTEEL',  'NSE', 'NSE_EQUITY'),
-                        ('TATASTEEL', 'NSE', 'NSE_EQUITY'),
-                        ('ADANIENT',  'NSE', 'NSE_EQUITY'),
-                        ('ADANIPORTS','NSE', 'NSE_EQUITY'),
-                        ('M&M',       'NSE', 'NSE_EQUITY'),
-                        ('BAJAJFINSV','NSE', 'NSE_EQUITY'),
-                        ('DRREDDY',   'NSE', 'NSE_EQUITY'),
-                        ('DIVISLAB',  'NSE', 'NSE_EQUITY'),
-                        ('GRASIM',    'NSE', 'NSE_EQUITY'),
-                        ('CIPLA',     'NSE', 'NSE_EQUITY'),
-                        ('TECHM',     'NSE', 'NSE_EQUITY'),
-                        ('INDUSINDBK','NSE', 'NSE_EQUITY'),
-                        ('HINDALCO',  'NSE', 'NSE_EQUITY'),
-                        ('TATACONSUM','NSE', 'NSE_EQUITY'),
-                        ('COALINDIA', 'NSE', 'NSE_EQUITY'),
-                        ('EICHERMOT', 'NSE', 'NSE_EQUITY'),
-                        ('APOLLOHOSP','NSE', 'NSE_EQUITY'),
-                        ('BPCL',      'NSE', 'NSE_EQUITY'),
-                        ('HEROMOTOCO','NSE', 'NSE_EQUITY'),
-                        ('BRITANNIA', 'NSE', 'NSE_EQUITY'),
-                        ('SHREECEM',  'NSE', 'NSE_EQUITY')
-                    ) AS s(symbol, exchange, category)
-                    WHERE NOT EXISTS (SELECT 1 FROM instrument_universe LIMIT 1);
+                    INSERT INTO app_config (key, value, actor, correlation_id, updated_at)
+                    VALUES ('Brokers:Registered', 'MStock,Zerodha,Upstox', 'system', 'startup', NOW())
+                    ON CONFLICT (key) DO NOTHING;
                     """;
-                try { await command.ExecuteNonQueryAsync(); Console.WriteLine("[Startup] instrument_universe seeded (if was empty)."); }
-                catch (Exception iuEx) { Console.WriteLine($"[Startup] WARNING: instrument_universe seed failed: {iuEx.Message}"); }
+                try { await command.ExecuteNonQueryAsync(); Console.WriteLine("[Startup] app_config defaults seeded."); }
+                catch (Exception acEx) { Console.WriteLine($"[Startup] WARNING: app_config seed failed: {acEx.Message}"); }
 
                 // ── broker_sessions table (idempotent — always run) ──────────
                 // Ensures the table exists regardless of when the DB was first

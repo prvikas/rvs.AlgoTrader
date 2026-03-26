@@ -8,10 +8,13 @@ primary broker: mStock Type B API
 
 ## Session start (every session, no exceptions)
 1. read this file
-2. read docs/IMPLEMENTATION_STATUS.md
+2. read docs/IMPLEMENTATION_STATUS.md — must stay under 50 lines
 3. read docs/PLAN.md — identify current phase and next step
-4. state current phase + gaps + proposed next step
-5. wait for confirmation before writing any code
+4. do not read docs/PROMPT.md unless explicitly requested
+5. use docs/STRATEGY_SPECS.md as the only authoritative strategy source
+6. state current phase + gaps + proposed next step
+7. wait for confirmation before writing any code
+
 
 ## Model routing
 use the right model per task to reduce token cost:
@@ -85,7 +88,8 @@ rule: same IStrategy + IIndicatorService logic across all 3 modes; only IExecuti
 STRAT-001: VCP swing (daily equity)
 STRAT-002: Fibonacci hedged option spread
 STRAT-003: Intraday PCR/OI/VWAP/gamma options
-see: docs/STRATEGY_SPECS.md
+authoritative strategy definitions: docs/STRATEGY_SPECS.md
+docs/STRATEGY.md is legacy background/reference only; do not use it for implementation decisions
 
 ## Data sources
 primary: mStock Type B API
@@ -123,15 +127,6 @@ AP-017 silent cold restart -> surface event in UI
 AP-018 secret or API key echoed in output -> never log or print secrets
 
 ## Reference repos
-mStock SDK: https://pypi.org/project/mStock-TradingApi-B/
-mStock Postman: 
-mStock via OpenAlgo: https://docs.openalgo.in/connect-brokers/brokers/mstock
-Zerodha .NET: https://github.com/zerodha/dotnetkiteconnect
-Upstox .NET: https://github.com/upstox/upstox-dotnet
-broker design: https://github.com/marketcalls/openalgo
-backtest patterns: https://github.com/kernc/backtesting.py
-VCP screener: https://github.com/marco-hui-95/vcp_screener.github.io
-Indian broker quirks: https://github.com/TheHardeep/fenix
 see: docs/REFERENCES.md
 
 ## Docs map
@@ -140,6 +135,11 @@ docs/IMPLEMENTATION_STATUS.md | docs/REQUIREMENTS_DELTA.md
 docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
 docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md
 SELF_LEARNING.md
+
+## Docs loading rules
+- do not read docs/STRATEGY.md for implementation; it is legacy/reference only
+- keep docs/IMPLEMENTATION_STATUS.md under 50 lines
+- prefer linked detailed docs over repeating large content here
 
 ## Post-change updates
 after meaningful changes always update:
