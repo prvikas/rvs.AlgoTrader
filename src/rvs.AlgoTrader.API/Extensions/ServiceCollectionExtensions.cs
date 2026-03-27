@@ -68,6 +68,11 @@ public static class ServiceCollectionExtensions
         // the Backtesting assembly directly (CLAUDE.md Rule #2 — no cross-context direct calls).
         services.AddScoped<IBacktestEngine, BacktestEngine>();
 
+        // ForwardTestEngine — must be Singleton: holds in-memory _activeStates per instance.
+        // Scoped lifetime would lose all state on every new HTTP request scope.
+        // IForwardTestEngine is defined in Application layer; ForwardTestEngine is in Backtesting.
+        services.AddSingleton<IForwardTestEngine, ForwardTestEngine>();
+
         services.AddAuthorization();
         services.AddCors(opts =>
             opts.AddDefaultPolicy(p => p.WithOrigins(

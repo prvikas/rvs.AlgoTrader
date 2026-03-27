@@ -7,18 +7,14 @@ using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Backtesting.Engine;
 
-public interface IForwardTestEngine
-{
-    Task ProcessCandleAsync(StrategyInstance instance, ClosedCandle candle, CancellationToken ct);
-    Task<Guid> StartSessionAsync(StrategyInstance instance, decimal initialCapital, CancellationToken ct);
-    Task StopSessionAsync(Guid instanceId, CancellationToken ct);
-}
-
 /// <summary>
 /// Forward test (paper trading) engine.
-/// Receives real-time CandleClosedEvents, runs strategy evaluation,
-/// simulates fills with realistic slippage model, tracks virtual P&amp;L.
-/// No real orders are placed.
+/// Receives real-time CandleClosedEvents from CandleAggregatorService,
+/// evaluates strategy signals, simulates fills, and persists virtual trades.
+/// No real orders placed.
+/// Implements IForwardTestEngine defined in Application layer so
+/// StrategyEvaluationQueue (Infrastructure) can depend on it without
+/// a direct reference to rvs.AlgoTrader.Backtesting.
 /// </summary>
 public class ForwardTestEngine(
     IStrategyFactory strategyFactory,
@@ -27,7 +23,7 @@ public class ForwardTestEngine(
     IForwardTestSessionRepository sessionRepo,
     IForwardTestTradeRepository tradeRepo,
     IClock clock,
-    ILogger<ForwardTestEngine> logger) : IForwardTestEngine
+    ILogger<ForwardTestEngine> logger) : IForwardTestEngine  // IForwardTestEngine from Application.Services
 {
     // ConcurrentDictionary for thread safety in case of concurrent candle processing
     private readonly Dictionary<Guid, ForwardTestState> _activeStates = new();

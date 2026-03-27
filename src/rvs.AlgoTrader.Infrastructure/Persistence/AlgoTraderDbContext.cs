@@ -27,6 +27,9 @@ public class AlgoTraderDbContext : DbContext
     public DbSet<ForwardTestSession> ForwardTestSessions => Set<ForwardTestSession>();
     public DbSet<ForwardTestTrade> ForwardTestTrades => Set<ForwardTestTrade>();
 
+    // Backtest history
+    public DbSet<BacktestRun> BacktestRuns => Set<BacktestRun>();
+
     // Instrument universe — controls which symbols are downloaded and stored
     public DbSet<InstrumentUniverse> InstrumentUniverse => Set<InstrumentUniverse>();
 

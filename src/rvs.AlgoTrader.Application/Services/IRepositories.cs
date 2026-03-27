@@ -92,6 +92,15 @@ public interface ICandleRepository
     Task<IReadOnlyList<ClosedCandle>> GetAsync(string symbol, string timeframe, Instant from, Instant to, CancellationToken ct);
     Task<IReadOnlyList<ClosedCandle>> GetLastNAsync(string symbol, string timeframe, int count, CancellationToken ct);
     Task BulkInsertAsync(IEnumerable<ClosedCandle> candles, CancellationToken ct);
+
+    /// <summary>
+    /// Returns candles for the requested timeframe.
+    /// If no stored candles exist at that timeframe, falls back to 1m candles
+    /// and aggregates them up to the target timeframe at runtime.
+    /// Always prefer downloading 1m data — never request multiple timeframes separately.
+    /// </summary>
+    Task<IReadOnlyList<ClosedCandle>> GetOrAggregateAsync(
+        string symbol, string targetTimeframe, Instant from, Instant to, CancellationToken ct);
 }
 
 public interface IWatchlistRepository
@@ -170,6 +179,8 @@ public interface IBacktestRunRepository
     Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetAllAsync(string? strategyName, CancellationToken ct);
     Task<(IReadOnlyList<DTOs.Backtest.BacktestResultDto> Items, int Total)> GetPagedAsync(Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct);
     Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct);
+    /// <summary>Persist a completed backtest result. Idempotent on DataHash.</summary>
+    Task SaveAsync(DTOs.Backtest.BacktestResultDto result, CancellationToken ct);
 }
 
 public interface IBacktestCostProfileRepository

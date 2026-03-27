@@ -279,6 +279,24 @@ public interface IBacktestReproductionService
 }
 
 /// <summary>
+/// Paper-trading engine for forward test sessions.
+/// Receives closed candles from CandleAggregatorService, evaluates strategy,
+/// simulates fills, and persists virtual trades to DB.
+/// No real orders placed.
+/// Defined here (Application layer) so StrategyEvaluationQueue (Infrastructure)
+/// can depend on it without referencing the Backtesting project directly.
+/// </summary>
+public interface IForwardTestEngine
+{
+    /// <summary>Process one closed candle for a running forward-test instance.</summary>
+    Task ProcessCandleAsync(Domain.Entities.StrategyInstance instance, Domain.ValueObjects.ClosedCandle candle, CancellationToken ct);
+    /// <summary>Start a new forward-test session for the given instance.</summary>
+    Task<Guid> StartSessionAsync(Domain.Entities.StrategyInstance instance, decimal initialCapital, CancellationToken ct);
+    /// <summary>Stop a running forward-test session and persist final metrics.</summary>
+    Task StopSessionAsync(Guid instanceId, CancellationToken ct);
+}
+
+/// <summary>
 /// Abstracts backtest execution so the Application layer has no direct dependency
 /// on the rvs.AlgoTrader.Backtesting project. Implemented in Infrastructure.
 /// </summary>

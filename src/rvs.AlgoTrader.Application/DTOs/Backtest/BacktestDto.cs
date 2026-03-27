@@ -19,6 +19,8 @@ public record BacktestRequestDto(
     int FillModel = 0,
     decimal SlippageBasisPoints = 5m,
     decimal BrokerageFlatPerSide = 20m,
+    // Broker to use for auto-downloading missing history. Defaults to MStock.
+    string BrokerName = "MStock",
     WalkForwardConfigDto? WalkForward = null);
 
 public record WalkForwardConfigDto(int InSampleDays, int OutOfSampleDays, int StepDays);

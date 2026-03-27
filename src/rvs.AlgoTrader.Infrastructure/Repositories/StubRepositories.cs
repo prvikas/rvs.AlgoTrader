@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.DTOs.Common;
@@ -5,6 +6,7 @@ using rvs.AlgoTrader.Application.DTOs.Strategy;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Infrastructure.Persistence;
 
 namespace rvs.AlgoTrader.Infrastructure.Repositories;
 
@@ -108,21 +110,120 @@ public class BrokerLatencyRepository : IBrokerLatencyRepository
         => Task.FromResult<IReadOnlyList<LatencyReport>>(Array.Empty<LatencyReport>());
 }
 
-public class BacktestRunRepository : IBacktestRunRepository
+public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunRepository
 {
-    public Task<BacktestResultDto?> GetByIdAsync(Guid id, CancellationToken ct)
-        => Task.FromResult<BacktestResultDto?>(null);
+    public async Task<BacktestResultDto?> GetByIdAsync(Guid id, CancellationToken ct)
+    {
+        var run = await db.BacktestRuns.FirstOrDefaultAsync(r => r.Id == id, ct);
+        return run == null ? null : ToDto(run);
+    }
 
-    public Task<IReadOnlyList<BacktestResultDto>> GetAllAsync(string? strategyName, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<BacktestResultDto>>(Array.Empty<BacktestResultDto>());
+    public async Task<IReadOnlyList<BacktestResultDto>> GetAllAsync(string? strategyName, CancellationToken ct)
+    {
+        var q = db.BacktestRuns.AsQueryable();
+        if (!string.IsNullOrEmpty(strategyName))
+            q = q.Where(r => r.StrategyName == strategyName);
+        var runs = await q.OrderByDescending(r => r.RanAt).ToListAsync(ct);
+        return runs.Select(ToDto).ToList();
+    }
 
-    public Task<(IReadOnlyList<BacktestResultDto> Items, int Total)> GetPagedAsync(
+    public async Task<(IReadOnlyList<BacktestResultDto> Items, int Total)> GetPagedAsync(
         Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct)
-        => Task.FromResult<(IReadOnlyList<BacktestResultDto>, int)>(
-            (Array.Empty<BacktestResultDto>(), 0));
+    {
+        // BacktestRun doesn't track StrategyInstanceId — return all, paged
+        var total = await db.BacktestRuns.CountAsync(ct);
+        var items = await db.BacktestRuns
+            .OrderByDescending(r => r.RanAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .ToListAsync(ct);
+        return (items.Select(ToDto).ToList(), total);
+    }
 
     public Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct)
-        => Task.FromResult<byte[]?>(null);
+        => Task.FromResult<byte[]?>(null); // PDF reports not yet implemented
+
+    public async Task SaveAsync(BacktestResultDto result, CancellationToken ct)
+    {
+        // Idempotent on DataHash — skip if same run already stored
+        if (result.DataHash != null &&
+            await db.BacktestRuns.AnyAsync(r => r.DataHash == result.DataHash, ct))
+            return;
+
+        var tradesJson = result.Trades != null
+            ? System.Text.Json.JsonSerializer.Serialize(result.Trades)
+            : "[]";
+
+        var run = new BacktestRun
+        {
+            Id = Guid.NewGuid(),
+            StrategyName = result.StrategyName,
+            InternalSymbol = result.Symbol,
+            Timeframe = result.Timeframe,
+            FromDate = result.FromDate,
+            ToDate = result.ToDate,
+            InitialCapital = result.InitialCapital,
+            FinalEquity = result.FinalEquity,
+            TotalPnl = result.TotalPnl,
+            TotalReturn = result.TotalReturn,
+            MaxDrawdown = result.MaxDrawdown,
+            SharpeRatio = result.SharpeRatio,
+            CalmarRatio = result.CalmarRatio,
+            ProfitFactor = result.ProfitFactor,
+            WinRate = result.WinRate,
+            TotalTrades = result.TotalTrades,
+            WinCount = result.WinCount,
+            LossCount = result.LossCount,
+            AvgWin = result.AvgWin,
+            AvgLoss = result.AvgLoss,
+            MaxConsecutiveLosses = result.MaxConsecutiveLosses,
+            ExpectancyPerTrade = result.ExpectancyPerTrade,
+            DataHash = result.DataHash,
+            TradesJson = tradesJson,
+            RanAt = NodaTime.SystemClock.Instance.GetCurrentInstant()
+        };
+
+        await db.BacktestRuns.AddAsync(run, ct);
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static BacktestResultDto ToDto(BacktestRun r)
+    {
+        IReadOnlyList<BacktestTradeDto>? trades = null;
+        if (!string.IsNullOrEmpty(r.TradesJson) && r.TradesJson != "[]")
+        {
+            try { trades = System.Text.Json.JsonSerializer.Deserialize<List<BacktestTradeDto>>(r.TradesJson); }
+            catch { /* ignore deserialisation errors */ }
+        }
+
+        return new BacktestResultDto(
+            Id: r.Id.ToString(),
+            Success: true,
+            StrategyName: r.StrategyName,
+            Symbol: r.InternalSymbol,
+            Timeframe: r.Timeframe,
+            FromDate: r.FromDate,
+            ToDate: r.ToDate,
+            InitialCapital: r.InitialCapital,
+            FinalEquity: r.FinalEquity,
+            TotalPnl: r.TotalPnl,
+            TotalReturn: r.TotalReturn,
+            MaxDrawdown: r.MaxDrawdown,
+            SharpeRatio: r.SharpeRatio,
+            CalmarRatio: r.CalmarRatio,
+            ProfitFactor: r.ProfitFactor,
+            WinRate: r.WinRate,
+            TotalTrades: r.TotalTrades,
+            WinCount: r.WinCount,
+            LossCount: r.LossCount,
+            AvgWin: r.AvgWin,
+            AvgLoss: r.AvgLoss,
+            MaxConsecutiveLosses: r.MaxConsecutiveLosses,
+            ExpectancyPerTrade: r.ExpectancyPerTrade,
+            DataHash: r.DataHash,
+            Error: null,
+            StartedAt: r.RanAt.ToDateTimeOffset(),
+            Trades: trades);
+    }
 }
 
 public class BacktestCostProfileRepository : IBacktestCostProfileRepository
@@ -134,25 +235,43 @@ public class BacktestCostProfileRepository : IBacktestCostProfileRepository
         => Task.FromResult<BacktestCostProfileDto?>(null);
 }
 
-public class ForwardTestSessionRepository : IForwardTestSessionRepository
+public class ForwardTestSessionRepository(AlgoTraderDbContext db) : IForwardTestSessionRepository
 {
-    public Task<ForwardTestSession?> GetByIdAsync(Guid id, CancellationToken ct)
-        => Task.FromResult<ForwardTestSession?>(null);
+    public async Task<ForwardTestSession?> GetByIdAsync(Guid id, CancellationToken ct)
+        => await db.ForwardTestSessions.FirstOrDefaultAsync(s => s.Id == id, ct);
 
-    public Task<IReadOnlyList<ForwardTestSession>> GetByInstanceAsync(Guid instanceId, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<ForwardTestSession>>(Array.Empty<ForwardTestSession>());
+    public async Task<IReadOnlyList<ForwardTestSession>> GetByInstanceAsync(Guid instanceId, CancellationToken ct)
+        => await db.ForwardTestSessions
+            .Where(s => s.StrategyInstanceId == instanceId)
+            .OrderByDescending(s => s.StartedAt)
+            .ToListAsync(ct);
 
-    public Task AddAsync(ForwardTestSession session, CancellationToken ct) => Task.CompletedTask;
+    public async Task AddAsync(ForwardTestSession session, CancellationToken ct)
+    {
+        await db.ForwardTestSessions.AddAsync(session, ct);
+        await db.SaveChangesAsync(ct);
+    }
 
-    public Task UpdateAsync(ForwardTestSession session, CancellationToken ct) => Task.CompletedTask;
+    public async Task UpdateAsync(ForwardTestSession session, CancellationToken ct)
+    {
+        db.ForwardTestSessions.Update(session);
+        await db.SaveChangesAsync(ct);
+    }
 }
 
-public class ForwardTestTradeRepository : IForwardTestTradeRepository
+public class ForwardTestTradeRepository(AlgoTraderDbContext db) : IForwardTestTradeRepository
 {
-    public Task AddAsync(ForwardTestTrade trade, CancellationToken ct) => Task.CompletedTask;
+    public async Task AddAsync(ForwardTestTrade trade, CancellationToken ct)
+    {
+        await db.ForwardTestTrades.AddAsync(trade, ct);
+        await db.SaveChangesAsync(ct);
+    }
 
-    public Task<IReadOnlyList<ForwardTestTrade>> GetBySessionAsync(Guid sessionId, CancellationToken ct)
-        => Task.FromResult<IReadOnlyList<ForwardTestTrade>>(Array.Empty<ForwardTestTrade>());
+    public async Task<IReadOnlyList<ForwardTestTrade>> GetBySessionAsync(Guid sessionId, CancellationToken ct)
+        => await db.ForwardTestTrades
+            .Where(t => t.SessionId == sessionId)
+            .OrderBy(t => t.EntryTime)
+            .ToListAsync(ct);
 }
 
 public class WatchlistRepository : IWatchlistRepository

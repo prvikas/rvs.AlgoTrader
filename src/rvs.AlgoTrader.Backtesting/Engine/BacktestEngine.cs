@@ -53,10 +53,12 @@ public class BacktestEngine(
             SlippageBasisPoints = request.SlippageBasisPoints,
         };
 
-        // Load all candles for the period
+        // Load all candles for the period.
+        // GetOrAggregateAsync falls back to 1m data and aggregates upward when the
+        // requested timeframe has no stored candles — avoids redundant downloads.
         var fromInstant = request.FromDate.AtStartOfDayInZone(Ist).ToInstant();
         var toInstant = request.ToDate.PlusDays(1).AtStartOfDayInZone(Ist).ToInstant();
-        var allCandles = await candleRepo.GetAsync(
+        var allCandles = await candleRepo.GetOrAggregateAsync(
             request.InternalSymbol, request.Timeframe, fromInstant, toInstant, ct);
 
         if (allCandles.Count < 50)

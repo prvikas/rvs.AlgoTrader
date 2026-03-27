@@ -69,6 +69,14 @@ public class StrategiesController(IMediator mediator) : ControllerBase
         return Ok(ApiResponse<PagedResult<SignalJournalEntryDto>>.Ok(result));
     }
 
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> Update(
+        Guid id, [FromBody] UpdateStrategyInstanceCommand command, CancellationToken ct)
+    {
+        await mediator.Send(command with { Id = id }, ct);
+        return Ok(ApiResponse<bool>.Ok(true));
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid id, CancellationToken ct)
     {

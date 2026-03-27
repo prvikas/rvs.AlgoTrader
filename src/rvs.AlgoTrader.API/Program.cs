@@ -299,6 +299,45 @@ try
                     }
                 }
 
+                // ── 004_BacktestAndForwardTestTrades.sql (idempotent) ────────
+                {
+                    string? fix004Path = null;
+                    var fix004Paths = new[]
+                    {
+                        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "rvs.AlgoTrader.Infrastructure", "Persistence", "Migrations", "004_BacktestAndForwardTestTrades.sql"),
+                        Path.Combine(AppContext.BaseDirectory, "..", "..", "rvs.AlgoTrader.Infrastructure", "Persistence", "Migrations", "004_BacktestAndForwardTestTrades.sql"),
+                        Path.Combine(AppContext.BaseDirectory, "Migrations", "004_BacktestAndForwardTestTrades.sql"),
+                        @"C:\Users\prvik\Downloads\algotrader-claude-kit\src\rvs.AlgoTrader.Infrastructure\Persistence\Migrations\004_BacktestAndForwardTestTrades.sql"
+                    };
+                    foreach (var p in fix004Paths) { if (File.Exists(p)) { fix004Path = p; break; } }
+
+                    if (!string.IsNullOrEmpty(fix004Path))
+                    {
+                        var sql004 = await File.ReadAllTextAsync(fix004Path);
+                        var stmts004 = new List<string>();
+                        var sb004 = new System.Text.StringBuilder();
+                        foreach (var line in sql004.Split('\n'))
+                        {
+                            var t = line.Trim();
+                            if (string.IsNullOrWhiteSpace(t) || t.StartsWith("--")) continue;
+                            sb004.AppendLine(line);
+                            if (t.EndsWith(';'))
+                            {
+                                var s = sb004.ToString().Trim();
+                                if (!string.IsNullOrWhiteSpace(s)) stmts004.Add(s);
+                                sb004.Clear();
+                            }
+                        }
+                        foreach (var s in stmts004)
+                        {
+                            command.CommandText = s;
+                            try { await command.ExecuteNonQueryAsync(); }
+                            catch (Exception s4Ex) { Console.WriteLine($"[Startup] 004 stmt skip: {s4Ex.Message[..Math.Min(120, s4Ex.Message.Length)]}"); }
+                        }
+                        Console.WriteLine("[Startup] 004_BacktestAndForwardTestTrades.sql applied.");
+                    }
+                }
+
                 // ── broker_sessions table (idempotent — always run) ──────────
                 // Ensures the table exists regardless of when the DB was first
                 // created, so DbBrokerSessionPersistence can write/read on startup.

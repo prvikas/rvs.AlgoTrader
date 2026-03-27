@@ -149,3 +149,55 @@ public class CreateStrategyInstanceCommandHandler(
         return instance.Id;
     }
 }
+
+// ── Update command — only allowed when the strategy is NOT running ──────────
+
+/// <summary>
+/// Patch editable fields on a strategy instance.
+/// All fields are nullable — only non-null fields are applied.
+/// Blocked when Status == Running (user must stop/pause first).
+/// </summary>
+public record UpdateStrategyInstanceCommand(
+    Guid Id,
+    string? Name = null,
+    string? ParametersJson = null,
+    string? ConfigJson = null,
+    string? BrokerName = null,
+    string? InternalSymbol = null,
+    string? Timeframe = null,
+    string? ScheduleJson = null,
+    decimal? AllocatedCapital = null,
+    string Actor = "User") : IRequest<bool>;
+
+public class UpdateStrategyInstanceCommandHandler(
+    IStrategyInstanceRepository repo,
+    IAuditService audit,
+    Domain.Interfaces.IClock clock) : IRequestHandler<UpdateStrategyInstanceCommand, bool>
+{
+    public async Task<bool> Handle(UpdateStrategyInstanceCommand request, CancellationToken ct)
+    {
+        var instance = await repo.GetByIdAsync(request.Id, ct)
+            ?? throw new KeyNotFoundException($"Strategy instance {request.Id} not found.");
+
+        if (instance.Status == StrategyStatus.Running)
+            throw new InvalidOperationException(
+                "Cannot edit a running strategy — stop or pause it first.");
+
+        if (request.Name is not null) instance.Name = request.Name;
+        if (request.ParametersJson is not null) instance.ParametersJson = request.ParametersJson;
+        if (request.ConfigJson is not null) instance.ConfigJson = request.ConfigJson;
+        if (request.BrokerName is not null) instance.BrokerName = request.BrokerName;
+        if (request.InternalSymbol is not null) instance.InternalSymbol = request.InternalSymbol;
+        if (request.Timeframe is not null) instance.Timeframe = request.Timeframe;
+        if (request.ScheduleJson is not null) instance.ScheduleJson = request.ScheduleJson;
+        if (request.AllocatedCapital.HasValue) instance.AllocatedCapital = request.AllocatedCapital.Value;
+        instance.UpdatedAt = clock.NowInstant();
+
+        await repo.UpdateAsync(instance, ct);
+        await audit.LogAsync("STRATEGY_UPDATED", request.Actor, "StrategyInstance",
+            request.Id.ToString(),
+            new { request.Name, request.ParametersJson, request.Timeframe, request.InternalSymbol },
+            request.Id.ToString(), ct);
+        return true;
+    }
+}

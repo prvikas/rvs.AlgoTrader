@@ -13,14 +13,21 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// <summary>
 /// Receives CandleClosedEvent and dispatches strategy evaluation per running instance.
 /// Each instance evaluated sequentially within its own worker channel.
+///
+/// Routing:
+///   StrategyMode.Live        → LiveExecutionEngine (real orders)
+///   StrategyMode.Forward → ForwardTestEngine (paper trading, no real orders)
+///   Other modes              → skipped
+///
 /// HOLD and SKIPPED signals → signal_journal only, no domain event.
-/// BUY/SELL signals → SignalGenerated event + LiveExecutionEngine.
+/// BUY/SELL signals → SignalGenerated event + execution engine.
 /// </summary>
 public class StrategyEvaluationQueue(
     IStrategyInstanceRepository instanceRepo,
     ICandleCache candleCache,
     IStrategyFactory strategyFactory,
     ILiveExecutionEngine executionEngine,
+    IForwardTestEngine forwardTestEngine,
     ISignalJournalRepository signalJournal,
     IPublishEndpoint bus,
     IClock clock,
@@ -34,12 +41,12 @@ public class StrategyEvaluationQueue(
         var evt = context.Message;
         var ct = context.CancellationToken;
 
-        // Find all running instances watching this symbol + timeframe
+        // Find all running instances watching this symbol + timeframe (Live + ForwardTest)
         var instances = await instanceRepo.GetRunningAsync(ct);
         var matching = instances.Where(i =>
             i.InternalSymbol == evt.InternalSymbol &&
             i.Timeframe == evt.Timeframe &&
-            i.Mode == StrategyMode.Live).ToList();
+            i.Mode is StrategyMode.Live or StrategyMode.Forward).ToList();
 
         var tasks = matching.Select(instance => EvaluateInstanceAsync(instance, evt, ct));
         await Task.WhenAll(tasks);
@@ -106,7 +113,16 @@ public class StrategyEvaluationQueue(
                 result.EntryPrice, result.StopLoss, result.TakeProfit,
                 result.Reason ?? "", correlationId, clock.NowIst()), ct);
 
-            await executionEngine.ExecuteSignalAsync(instance, result, correlationId, ct);
+            // Route to the correct execution engine based on mode
+            if (instance.Mode == StrategyMode.Live)
+            {
+                await executionEngine.ExecuteSignalAsync(instance, result, correlationId, ct);
+            }
+            else if (instance.Mode == StrategyMode.Forward)
+            {
+                // ForwardTestEngine handles fill simulation and trade persistence
+                await forwardTestEngine.ProcessCandleAsync(instance, evt.ClosedCandle, ct);
+            }
         }
         finally
         {
