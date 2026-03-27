@@ -18,12 +18,14 @@ import { InstrumentsPage } from './InstrumentsPage'
 import { ForwardTestPage } from './ForwardTestPage'
 import { StrategyLabPage } from './StrategyLabPage'
 import { UniversePage } from './UniversePage'
+import { InstrumentTypesPage } from './InstrumentTypesPage'
+import { MasterDataRefreshPage } from './MasterDataRefreshPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
 import { useStrategyStream } from '../hooks/useSignalR'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'universe' | 'settings'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings'
 
 const ALL_STRATEGIES = [
   { name: 'PriceActionBreakout', desc: 'Consolidation range breakout with volume confirmation', comingSoon: false },
@@ -90,8 +92,10 @@ export function Dashboard() {
 
           {/* ── Setup ── */}
           <NavSectionLabel label="SETUP" />
+          <NavItem page="master-data" label="Master Data" icon="⬇" active={activePage} onClick={setActivePage} accent="#10b981" />
           <NavItem page="instruments" label="Instruments" icon="🔍" active={activePage} onClick={setActivePage} />
           <NavItem page="universe" label="Universe" icon="🌐" active={activePage} onClick={setActivePage} />
+          <NavItem page="instrument-types" label="Instrument Types" icon="🏷️" active={activePage} onClick={setActivePage} />
           <NavItem page="settings" label="Settings" icon="⚙" active={activePage} onClick={setActivePage} />
         </nav>
       </div>
@@ -102,7 +106,7 @@ export function Dashboard() {
         <div style={{ backgroundColor: '#1e1e2e', borderBottom: '1px solid #2d2d3f', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>
-              {{ portfolio: 'Portfolio', strategies: 'Strategies', orders: 'Orders', lab: 'Strategy Lab', backtest: 'Backtest', forwardtest: 'Forward Test', instruments: 'Instruments', settings: 'Settings' }[activePage]}
+              {{ portfolio: 'Portfolio', strategies: 'Strategies', orders: 'Orders', lab: 'Strategy Lab', backtest: 'Backtest', forwardtest: 'Forward Test', 'master-data': 'Master Data Refresh', instruments: 'Instruments', universe: 'Instrument Universe', 'instrument-types': 'Instrument Types', settings: 'Settings' }[activePage]}
             </h1>
             <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: signalRConnected ? '#10b981' : '#6b7280' }}>
               {signalRConnected ? '● Live' : '○ Disconnected'}
@@ -154,8 +158,12 @@ export function Dashboard() {
           {activePage === 'lab' && <StrategyLabPage />}
           {activePage === 'backtest' && <BacktestPage backtestResults={backtestResults ?? []} />}
           {activePage === 'forwardtest' && <ForwardTestPage />}
-          {activePage === 'instruments' && <InstrumentsPage />}
+          {activePage === 'master-data' && <MasterDataRefreshPage />}
+          {activePage === 'instruments' && (
+            <InstrumentsPage onGoToRefresh={() => setActivePage('master-data')} />
+          )}
           {activePage === 'universe' && <UniversePage />}
+          {activePage === 'instrument-types' && <InstrumentTypesPage />}
           {activePage === 'settings' && <SettingsPage />}
         </div>
       </div>

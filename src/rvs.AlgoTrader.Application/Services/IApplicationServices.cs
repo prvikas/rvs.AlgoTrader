@@ -308,8 +308,30 @@ public record DownloadResult(bool Success, int BarCount, string? DataHash, strin
 
 public interface IInstrumentRefreshService
 {
+    /// <summary>
+    /// Legacy / automated path: downloads + immediately saves using the filters
+    /// stored in app_config.  Used by Hangfire jobs and the post-login hook.
+    /// </summary>
     Task RefreshAsync(string brokerName, CancellationToken ct);
     Task RefreshAllBrokersAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Interactive wizard — Step 1.
+    /// Downloads instruments from the broker, stages them in memory (30-minute TTL),
+    /// and returns a preview with counts grouped by exchange, instrument type, and
+    /// equity-universe category so the user can decide what to save before writing to the DB.
+    /// </summary>
+    Task<Application.DTOs.Instruments.RefreshPreviewDto> PreviewAsync(
+        string brokerName, CancellationToken ct);
+
+    /// <summary>
+    /// Interactive wizard — Step 2.
+    /// Reads the staged instruments identified by <see cref="Application.DTOs.Instruments.RefreshCommitRequest.StagingToken"/>,
+    /// applies the user-selected filters, and writes the result to the instruments table.
+    /// Clears the staging entry on success.
+    /// </summary>
+    Task<Application.DTOs.Instruments.RefreshCommitResult> CommitAsync(
+        Application.DTOs.Instruments.RefreshCommitRequest request, CancellationToken ct);
 }
 
 /// <summary>

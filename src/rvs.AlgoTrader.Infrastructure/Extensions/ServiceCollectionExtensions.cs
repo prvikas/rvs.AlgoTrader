@@ -33,6 +33,7 @@ public static class ServiceCollectionExtensions
     {
         // Clock — production singleton
         services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<NodaTime.IClock>(NodaTime.SystemClock.Instance);
 
         // EF Core — PostgreSQL
         services.AddDbContext<AlgoTraderDbContext>(opts =>

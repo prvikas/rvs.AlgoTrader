@@ -100,6 +100,57 @@ export interface InstrumentsListParams {
   pageSize?: number
 }
 
+// ── Refresh preview / commit DTOs ─────────────────────────────────────────
+
+export interface TypeBucketRow {
+  /** "Equity" | "Futures" | "Options" | "Index" | "Other" */
+  bucket: string
+  count: number
+  /** Raw broker type codes inside this bucket, e.g. ["EQ","BE"] or ["FUT","FUTIDX"] */
+  typeCodes: string[]
+}
+
+export interface ExchangePreviewGroup {
+  exchange: string
+  total: number
+  types: TypeBucketRow[]
+}
+
+export interface CategoryPreviewRow {
+  category: string   // e.g. "LARGE_CAP"
+  label: string      // e.g. "Large-cap"
+  matchCount: number // how many downloaded equity symbols are in this category
+}
+
+export interface RefreshPreviewDto {
+  stagingToken: string
+  brokerName: string
+  totalDownloaded: number
+  stagedAt: string         // ISO UTC
+  expiresInMinutes: number
+  exchanges: ExchangePreviewGroup[]
+  equityCategories: CategoryPreviewRow[]
+}
+
+export interface RefreshCommitRequest {
+  stagingToken: string
+  includedExchanges: string[]
+  /** "Equity" | "Futures" | "Options" | "Index" */
+  includedInstrumentTypes: string[]
+  /** Universe category codes, e.g. ["NSE_EQUITY","LARGE_CAP"] */
+  includedEquityCategories: string[]
+}
+
+export interface RefreshCommitResult {
+  brokerName: string
+  saved: number
+  skipped: number
+  newCount: number
+  updatedCount: number
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
 export const instrumentsApi = {
   list: (params?: InstrumentsListParams) =>
     apiClient.get<ApiResponse<PagedResult<Instrument>>>('/instruments', { params }),
@@ -107,9 +158,22 @@ export const instrumentsApi = {
     apiClient.get<ApiResponse<PagedResult<Instrument>>>('/instruments', {
       params: { search: query, pageSize: 20 },
     }),
-  /** Trigger a master-data refresh from the broker (brokerName = "MStock" | "Zerodha" | "Upstox" | "all") */
+  /** Legacy / scheduled-job path: download + immediately save using stored filter config. */
   refresh: (brokerName = 'all') =>
     apiClient.post<ApiResponse<boolean>>(`/instruments/refresh?brokerName=${brokerName}`),
+
+  /**
+   * Wizard Step 1 — download instruments from the broker, stage them in memory,
+   * and return a preview with counts so the user can decide what to save.
+   */
+  preview: (brokerName: string) =>
+    apiClient.post<ApiResponse<RefreshPreviewDto>>(`/instruments/preview?brokerName=${encodeURIComponent(brokerName)}`),
+
+  /**
+   * Wizard Step 2 — apply the user's filter selections to the staged data and write to the DB.
+   */
+  commit: (req: RefreshCommitRequest) =>
+    apiClient.post<ApiResponse<RefreshCommitResult>>('/instruments/commit', req),
 }
 
 // Historical Data
@@ -453,6 +517,57 @@ export const universeApi = {
 
   seedDefaults: () =>
     apiClient.post<ApiResponse<number>>('/universe/seed-defaults'),
+}
+
+export const instrumentTypesApi = {
+  getFuturesTypes: () =>
+    apiClient.get<ApiResponse<string>>('/instrument-types/futures'),
+
+  getOptionsTypes: () =>
+    apiClient.get<ApiResponse<string>>('/instrument-types/options'),
+
+  updateFuturesTypes: (types: string) =>
+    apiClient.put<ApiResponse<string>>('/instrument-types/futures', { types }),
+
+  updateOptionsTypes: (types: string) =>
+    apiClient.put<ApiResponse<string>>('/instrument-types/options', { types }),
+
+  resetDefaults: () =>
+    apiClient.post<ApiResponse<string>>('/instrument-types/reset-defaults'),
+}
+
+// ── Refresh Filters ────────────────────────────────────────────────────────
+
+export interface RefreshFiltersDto {
+  /** Comma-separated exchanges to include, e.g. "NSE,NFO" */
+  includedExchanges: string
+  /** Comma-separated instrument types to include, e.g. "Equity,Futures,Options,Index" */
+  includedInstrumentTypes: string
+  /** Comma-separated equity universe categories to include, e.g. "NSE_EQUITY" */
+  includedEquityCategories: string
+  /** All known exchange values (for checkboxes) */
+  knownExchanges: string[]
+  /** All known instrument type values (for checkboxes) */
+  knownInstrumentTypes: string[]
+  /** All known equity category values (for checkboxes) */
+  knownEquityCategories: string[]
+}
+
+export interface UpdateRefreshFiltersRequest {
+  includedExchanges?: string
+  includedInstrumentTypes?: string
+  includedEquityCategories?: string
+}
+
+export const refreshFiltersApi = {
+  get: () =>
+    apiClient.get<ApiResponse<RefreshFiltersDto>>('/refresh-filters'),
+
+  update: (req: UpdateRefreshFiltersRequest) =>
+    apiClient.put<ApiResponse<RefreshFiltersDto>>('/refresh-filters', req),
+
+  resetDefaults: () =>
+    apiClient.post<ApiResponse<RefreshFiltersDto>>('/refresh-filters/reset-defaults'),
 }
 
 export const settingsApi = {
