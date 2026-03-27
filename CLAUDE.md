@@ -136,6 +136,13 @@ docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
 docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md
 SELF_LEARNING.md
 
+## Git workflow
+- **never create feature branches** — all edits go directly to master
+- do not create, switch to, or propose any branch other than master
+- do not open pull requests; commit directly to master
+- do not run `git checkout -b` or `git switch -c` under any circumstances
+
+
 ## Docs loading rules
 - do not read docs/STRATEGY.md for implementation; it is legacy/reference only
 - keep docs/IMPLEMENTATION_STATUS.md under 50 lines
