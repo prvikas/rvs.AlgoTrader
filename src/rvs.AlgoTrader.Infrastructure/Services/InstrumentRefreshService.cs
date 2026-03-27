@@ -334,36 +334,46 @@ public class InstrumentRefreshService(
     private async Task<UniverseConfig> BuildUniverseFromRequestAsync(
         RefreshCommitRequest req, CancellationToken ct)
     {
-        var includedEquityCategories = req.IncludedEquityCategories
-            .Select(c => c.ToUpperInvariant())
-            .ToHashSet();
+        // ── Wizard passthrough for equities ──────────────────────────────────
+        // The instrument_universe table is a curated list of symbols used by
+        // trading strategies (e.g. "trade NIFTY 50 stocks only").  It is NOT
+        // a gate for what gets saved into the instrument master.
+        //
+        // If we let the symbol-level filter run here we would save only the
+        // ~60 seeded universe rows instead of the full ~1,800+ NSE equities
+        // the broker sends.  Setting equitySymbols to empty triggers the
+        // passthrough branch in IsInUniverse (EquitySymbols.Count == 0 → true),
+        // so every equity on the selected exchanges is kept.
+        //
+        // The automated daily job (RefreshAsync → LoadUniverseAsync) continues
+        // to use the universe list to restrict which symbols are stored.
+        var equitySymbols = new HashSet<string>();   // always passthrough in wizard
 
-        var rows = await db.InstrumentUniverse
-            .Where(u => u.IsActive)
-            .Select(u => new { u.Symbol, u.Category })
-            .ToListAsync(ct);
+        // Option underlyings: also passthrough in the wizard so all NFO/BFO
+        // futures and options within the expiry window are kept.
+        var optionUnderlyings = new HashSet<string>();  // passthrough
 
-        var equitySymbols = rows
-            .Where(r => includedEquityCategories.Contains(r.Category.ToUpperInvariant()))
-            .Select(r => r.Symbol.ToUpperInvariant())
-            .ToHashSet();
+        logger.LogInformation(
+            "[InstrumentRefresh] Wizard commit: passthrough mode — all equities and F&O from " +
+            "selected exchanges will be saved (includedEquityCategories=[{Cats}] ignored for symbol filter)",
+            string.Join(",", req.IncludedEquityCategories));
 
-        var optionUnderlyings = rows
-            .Where(r => r.Category.ToUpperInvariant() == "OPTIONS_UNDERLYING")
-            .Select(r => r.Symbol.ToUpperInvariant())
-            .ToHashSet();
-
-        // Type classification config stays in app_config (not overridden per-request)
+        // Type classification config from app_config (not overridden per-request)
         var futuresTypesRaw = await config.GetAsync<string>("InstrumentFilter:FuturesTypes", ct)
             ?? "FUT,FUTIDX,FUTSTK,FUTURES,IF,SF,FUTCOM,FUTCUR,FUTIRD";
         var optionsTypesRaw = await config.GetAsync<string>("InstrumentFilter:OptionsTypes", ct)
             ?? "OPT,OPTIDX,OPTSTK,OPTIONS,CE,PE,IO,SO";
-        var expiryWeeks = await config.GetAsync<int?>("InstrumentFilter:NfoExpiryWeeks", ct) ?? 4;
+
+        // Wizard uses a wide expiry window (52 weeks ≈ 1 year) so all active contracts
+        // are saved — weekly, monthly, and quarterly expiries included.
+        // The automated daily job (LoadUniverseAsync) uses the tighter 4-week default
+        // to avoid accumulating thousands of far-dated option rows every day.
+        const int WizardExpiryWeeks = 52;
 
         return new UniverseConfig(
             EquitySymbols:          equitySymbols,
             OptionUnderlyings:      optionUnderlyings,
-            ExpiryWeeks:            expiryWeeks,
+            ExpiryWeeks:            WizardExpiryWeeks,
             FuturesTypes:           ToUpperHashSet(futuresTypesRaw),
             OptionsTypes:           ToUpperHashSet(optionsTypesRaw),
             IncludedExchanges:      req.IncludedExchanges.Select(e => e.ToUpperInvariant()).ToHashSet(),

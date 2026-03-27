@@ -5,6 +5,15 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 import { useAppStore } from './stores/appStore'
+import { isTokenValid } from './utils/auth'
+
+// ── Dev-only preview token ────────────────────────────────────────────────────
+// Injected before React mounts so the Zustand store reads it on first init.
+// Stripped entirely from production builds via import.meta.env.DEV (Vite dead-code).
+if (import.meta.env.DEV && !localStorage.getItem('jwt_token')) {
+  const p = btoa(JSON.stringify({ sub: 'dev-preview', exp: 9999999999 }))
+  localStorage.setItem('jwt_token', `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${p}.dev`)
+}
 
 // ── Global Error Boundary ─────────────────────────────────────────────────────
 // Prevents blank screen on render errors — shows a recoverable error panel instead.
@@ -24,7 +33,7 @@ class ErrorBoundary extends React.Component<
       return (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          minHeight: '100vh', background: '#0f0f1a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif',
+          minHeight: '100vh', background: '#090910', color: '#e2e8f0', fontFamily: "'Inter', system-ui, sans-serif",
           padding: 32,
         }}>
           <div style={{ maxWidth: 600, width: '100%', background: '#1e1e2e', border: '1px solid #7f1d1d', borderRadius: 10, padding: 28 }}>

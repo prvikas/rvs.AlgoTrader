@@ -30,6 +30,15 @@ public class InstrumentConfiguration : IEntityTypeConfiguration<Instrument>
                 v => v.ToDateTimeUtc(),
                 v => Instant.FromDateTimeUtc(v));
 
+        // Derivative fields — explicitly mapped so they are included in DB schema
+        // and queries regardless of EF convention. Column names match InitialMigration.sql.
+        // NOTE: option_type stored as integer (enum int value 0=Call, 1=Put) — do NOT
+        // change to string conversion without a DB column-type migration.
+        builder.Property(i => i.Underlying).HasColumnName("underlying").HasMaxLength(50);
+        builder.Property(i => i.StrikePrice).HasColumnName("strike_price").HasPrecision(18, 4);
+        builder.Property(i => i.OptionType).HasColumnName("option_type");
+        builder.Property(i => i.Expiry).HasColumnName("expiry");
+
         builder.HasIndex(i => i.InternalSymbol).IsUnique();
         builder.HasIndex(i => new { i.TradingSymbol, i.Exchange });
         builder.HasIndex(i => i.IsActive);

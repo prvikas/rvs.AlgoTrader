@@ -341,19 +341,32 @@ public class MStockClient(
         try
         {
             // Primary: bulk OpenAPIScripMaster — all exchanges in one JSON download.
-            // Endpoint returns a JSON array; each element has the same field names as
-            // the per-exchange CSV master (token, symbol, name, expiry, strike,
-            // lotsize, instrumenttype, exch_seg, tick_size).
+            // Endpoint returns either a plain JSON array ([...]) or a wrapped object
+            // ({"data":[...]}, {"scrips":[...]}, etc.) depending on API version.
             var req = CreateRequest(HttpMethod.Get, "/instruments/OpenAPIScripMaster");
             var response = await http.SendAsync(req, ct);
 
             if (response.IsSuccessStatusCode)
             {
                 var body = await response.Content.ReadAsStringAsync(ct);
-                // Detect format: JSON array starts with '['; CSV starts with a column header
-                var mappings = body.TrimStart().StartsWith('[')
-                    ? ParseScripMasterJson(body)
-                    : ParseScripMasterCsv(body, string.Empty);
+                var trimmed = body.TrimStart();
+
+                List<InstrumentTokenMapping> mappings;
+                if (trimmed.StartsWith('['))
+                {
+                    // Plain array format: [{"token":"...","symbol":"...",...},...]
+                    mappings = ParseScripMasterJson(body);
+                }
+                else if (trimmed.StartsWith('{'))
+                {
+                    // Wrapped object format: {"data":[...]} or {"scrips":[...]} etc.
+                    mappings = ParseScripMasterJsonWrapped(body);
+                }
+                else
+                {
+                    // Fallback: treat as CSV (unlikely for this endpoint but safe)
+                    mappings = ParseScripMasterCsv(body, string.Empty);
+                }
 
                 if (mappings.Count > 0)
                     return mappings;
@@ -386,11 +399,53 @@ public class MStockClient(
     }
 
     /// <summary>
+    /// Handles wrapped object responses from OpenAPIScripMaster, e.g.:
+    ///   { "data": [...] }  or  { "scrips": [...] }  or  { "result": [...] }
+    /// Searches all top-level properties for the first JSON array value and
+    /// delegates to ParseScripMasterJson.
+    /// </summary>
+    private static List<InstrumentTokenMapping> ParseScripMasterJsonWrapped(string json)
+    {
+        JsonElement root;
+        try { root = JsonDocument.Parse(json).RootElement; }
+        catch { return []; }
+
+        if (root.ValueKind != JsonValueKind.Object) return [];
+
+        // Common wrapper property names used by various broker APIs
+        var candidateProps = new[] { "data", "scrips", "result", "instruments", "records", "ScripMaster" };
+
+        // Try known property names first
+        foreach (var prop in candidateProps)
+        {
+            if (root.TryGetProperty(prop, out var val) && val.ValueKind == JsonValueKind.Array)
+            {
+                var results = ParseScripMasterJson(val.GetRawText());
+                if (results.Count > 0) return results;
+            }
+        }
+
+        // Fall back: scan all properties for the first non-empty array
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == JsonValueKind.Array)
+            {
+                var results = ParseScripMasterJson(prop.Value.GetRawText());
+                if (results.Count > 0) return results;
+            }
+        }
+
+        return [];
+    }
+
+    /// <summary>
     /// Parses the OpenAPIScripMaster JSON array returned by /instruments/OpenAPIScripMaster.
     /// JSON element shape (same field names as the per-exchange CSV):
     /// { "token":"3045", "symbol":"SBIN-EQ", "name":"STATE BANK OF INDIA",
     ///   "expiry":"", "strike":"-1", "lotsize":"1", "instrumenttype":"",
     ///   "exch_seg":"NSE", "tick_size":"5" }
+    /// For derivatives, expiry comes as "dd-MMM-yyyy" (e.g. "25-APR-2026") from MStock.
+    /// It is normalised to ISO "yyyy-MM-dd" here so downstream code can use LocalDatePattern.Iso.
     /// </summary>
     private static List<InstrumentTokenMapping> ParseScripMasterJson(string json)
     {
@@ -414,12 +469,13 @@ public class MStockClient(
             var symbol    = Str(item, "symbol");
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(symbol)) continue;
 
-            var name      = Str(item, "name");
-            var instrType = Str(item, "instrumenttype").ToUpper();
-            var expiry    = Str(item, "expiry");
-            var strike    = Str(item, "strike");
-            var optType   = Str(item, "optiontype");   // CE / PE (may be absent in some responses)
-            var exchSeg   = Str(item, "exch_seg").ToUpper();
+            var name       = Str(item, "name");
+            var instrType  = Str(item, "instrumenttype").ToUpper();
+            var expiryRaw  = Str(item, "expiry");                  // raw MStock form, e.g. "25-APR-2026" — used only for internalSymbol construction
+            var expiryIso  = NormalizeExpiryToIso(expiryRaw);      // "yyyy-MM-dd" — stored in Expiry; used by LocalDatePattern.Iso downstream
+            var strike     = Str(item, "strike");
+            var optType    = Str(item, "optiontype");   // CE / PE (may be absent in some responses)
+            var exchSeg    = Str(item, "exch_seg").ToUpper();
 
             // strike "-1" means no strike (equities/futures)
             var strikeClean = strike is "-1" or "" ? string.Empty : strike;
@@ -442,19 +498,21 @@ public class MStockClient(
             {
                 if (!string.IsNullOrEmpty(optType))
                     instrType = "OPT";   // option leg — CE or PE
-                else if (!string.IsNullOrEmpty(expiry) && string.IsNullOrEmpty(strikeClean))
+                else if (!string.IsNullOrEmpty(expiryIso) && string.IsNullOrEmpty(strikeClean))
                     instrType = "FUT";   // futures leg — has expiry, no strike
             }
 
+            // Build internalSymbol using MStock's compact date form (strip dashes from raw expiry)
+            // so the key matches MStock's own naming convention, e.g. "NFO:NIFTY25APR2026FUT".
             string internalSymbol;
-            if (!string.IsNullOrEmpty(expiry) && !string.IsNullOrEmpty(strikeClean) && !string.IsNullOrEmpty(optType))
+            if (!string.IsNullOrEmpty(expiryIso) && !string.IsNullOrEmpty(strikeClean) && !string.IsNullOrEmpty(optType))
             {
-                var expiryCompact = expiry.Replace("-", "");
+                var expiryCompact = expiryRaw.Replace("-", "");     // "25APR2026" from "25-APR-2026"
                 internalSymbol = $"{exchSeg}:{symbol}{expiryCompact}{optType}{strikeClean}";
             }
-            else if (!string.IsNullOrEmpty(expiry) && instrType is "FUT" or "FUTIDX" or "FUTSTK")
+            else if (!string.IsNullOrEmpty(expiryIso) && instrType is "FUT" or "FUTIDX" or "FUTSTK")
             {
-                var expiryCompact = expiry.Replace("-", "");
+                var expiryCompact = expiryRaw.Replace("-", "");
                 internalSymbol = $"{exchSeg}:{symbol}{expiryCompact[..Math.Min(5, expiryCompact.Length)]}FUT";
             }
             else
@@ -470,7 +528,7 @@ public class MStockClient(
                 TradingSymbol:   symbol,
                 Name:            string.IsNullOrEmpty(name) ? symbol : name,
                 InstrumentType:  string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
-                Expiry:          string.IsNullOrEmpty(expiry) || expiry == "1" ? null : expiry,
+                Expiry:          string.IsNullOrEmpty(expiryIso) ? null : expiryIso,
                 StrikePrice:     string.IsNullOrEmpty(strikeClean) ? null : strikeDecimal,
                 OptionType:      string.IsNullOrEmpty(optType) ? null : optType,
                 LotSize:         (int)(lotSize > 0 ? lotSize : 1),
@@ -520,7 +578,8 @@ public class MStockClient(
 
             var name      = Get(cols, "name");
             var instrType = Get(cols, "instrumenttype").ToUpper();
-            var expiry    = Get(cols, "expiry");       // e.g. 2024-12-26
+            var expiryRaw = Get(cols, "expiry");                   // raw MStock form — used for internalSymbol construction
+            var expiryIso = NormalizeExpiryToIso(expiryRaw);       // "yyyy-MM-dd" — stored in Expiry
             var strike    = Get(cols, "strike");
             var optType   = Get(cols, "optiontype");   // CE / PE
             var exchSeg   = Get(cols, "exch_seg").ToUpper();
@@ -534,22 +593,23 @@ public class MStockClient(
             {
                 if (!string.IsNullOrEmpty(optType))
                     instrType = "OPT";
-                else if (!string.IsNullOrEmpty(expiry) && string.IsNullOrEmpty(strike))
+                else if (!string.IsNullOrEmpty(expiryIso) && string.IsNullOrEmpty(strike))
                     instrType = "FUT";
             }
 
-            // Build InternalSymbol — mirror MStock's own naming convention
+            // Build InternalSymbol using raw expiry for MStock-compatible compact dates
+            // e.g. "25-APR-2026".Replace("-","") → "25APR2026" → "NFO:NIFTY25APR2026FUT"
             string internalSymbol;
-            if (!string.IsNullOrEmpty(expiry) && !string.IsNullOrEmpty(strike) && !string.IsNullOrEmpty(optType))
+            if (!string.IsNullOrEmpty(expiryIso) && !string.IsNullOrEmpty(strike) && !string.IsNullOrEmpty(optType))
             {
-                // Options: NFO:NIFTY2412019500CE
-                var expiryCompact = expiry.Replace("-", "");
+                // Options: NFO:NIFTY25APR202619500CE
+                var expiryCompact = expiryRaw.Replace("-", "");
                 internalSymbol = $"{exchSeg}:{symbol}{expiryCompact}{optType}{strike}";
             }
-            else if (!string.IsNullOrEmpty(expiry) && instrType is "FUT" or "FUTIDX" or "FUTSTK")
+            else if (!string.IsNullOrEmpty(expiryIso) && instrType is "FUT" or "FUTIDX" or "FUTSTK")
             {
-                // Futures: NFO:NIFTY24DECFUT (use short expiry: YYMMMDD → YYMM part)
-                var expiryCompact = expiry.Replace("-", "");
+                // Futures: NFO:NIFTY25APRFUT
+                var expiryCompact = expiryRaw.Replace("-", "");
                 internalSymbol = $"{exchSeg}:{symbol}{expiryCompact.Substring(0, Math.Min(5, expiryCompact.Length))}FUT";
             }
             else
@@ -566,7 +626,7 @@ public class MStockClient(
                 TradingSymbol:   symbol,
                 Name:            string.IsNullOrEmpty(name) ? symbol : name,
                 InstrumentType:  string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
-                Expiry:          string.IsNullOrEmpty(expiry) ? null : expiry,
+                Expiry:          string.IsNullOrEmpty(expiryIso) ? null : expiryIso,
                 StrikePrice:     string.IsNullOrEmpty(strike) ? null : strikeDecimal,
                 OptionType:      string.IsNullOrEmpty(optType) ? null : optType,
                 LotSize:         lotSize > 0 ? lotSize : 1,
@@ -575,5 +635,43 @@ public class MStockClient(
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Normalises MStock expiry dates to ISO "yyyy-MM-dd" format so that
+    /// NodaTime's LocalDatePattern.Iso can parse them downstream.
+    ///
+    /// MStock returns expiry as "dd-MMM-yyyy" (e.g. "25-APR-2026").
+    /// Some API versions may already return ISO "2026-04-25".
+    /// Both forms are handled; anything else is returned as-is and will be
+    /// treated as unparseable (instruments are accepted without an expiry filter
+    /// instead of being silently dropped).
+    /// </summary>
+    private static string NormalizeExpiryToIso(string raw)
+    {
+        if (string.IsNullOrEmpty(raw) || raw == "1") return string.Empty;
+
+        // Already ISO: "2026-04-25"
+        if (raw.Length == 10 && raw[4] == '-' && raw[7] == '-') return raw;
+
+        // MStock dd-MMM-yyyy: "25-APR-2026"
+        if (DateTime.TryParseExact(raw, "dd-MMM-yyyy",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var dt))
+            return dt.ToString("yyyy-MM-dd");
+
+        // MStock dd-MMM-yy: "25-APR-26" (two-digit year, seen in older responses)
+        if (DateTime.TryParseExact(raw, "dd-MMM-yy",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var dt2))
+            return dt2.ToString("yyyy-MM-dd");
+
+        // General fallback — try any common format
+        if (DateTime.TryParse(raw,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var dtGen))
+            return dtGen.ToString("yyyy-MM-dd");
+
+        return raw;   // leave as-is; will fail LocalDatePattern.Iso → treated as no-expiry
     }
 }

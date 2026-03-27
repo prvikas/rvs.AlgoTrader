@@ -173,34 +173,131 @@ try
                 }
 
                 // ── app_config defaults (only inserts missing keys) ──────────
-                // Brokers:Registered — comma-separated list of active brokers.
-                // Operators can change this via Settings → Brokers in the UI.
-                // instrument_universe is managed via Settings → Universe page.
+                // app_config schema: key, value, updated_at — no actor/correlation_id columns.
                 command.CommandText = """
-                    INSERT INTO app_config (key, value, actor, correlation_id, updated_at)
-                    VALUES ('Brokers:Registered', 'MStock,Zerodha,Upstox', 'system', 'startup', NOW())
+                    INSERT INTO app_config (key, value, updated_at)
+                    VALUES ('Brokers:Registered', 'MStock,Zerodha,Upstox', NOW())
                     ON CONFLICT (key) DO NOTHING;
                     """;
                 try { await command.ExecuteNonQueryAsync(); Console.WriteLine("[Startup] app_config defaults seeded."); }
                 catch (Exception acEx) { Console.WriteLine($"[Startup] WARNING: app_config seed failed: {acEx.Message}"); }
 
-                // Futures types — comma-separated list of instrument type codes that classify as futures
                 command.CommandText = """
-                    INSERT INTO app_config (key, value, actor, correlation_id, updated_at)
-                    VALUES ('InstrumentFilter:FuturesTypes', 'FUT,FUTIDX,FUTSTK,FUTURES,IF,SF,FUTCOM,FUTCUR,FUTIRD', 'system', 'startup', NOW())
+                    INSERT INTO app_config (key, value, updated_at)
+                    VALUES ('InstrumentFilter:FuturesTypes', 'FUT,FUTIDX,FUTSTK,FUTURES,IF,SF,FUTCOM,FUTCUR,FUTIRD', NOW())
                     ON CONFLICT (key) DO NOTHING;
                     """;
                 try { await command.ExecuteNonQueryAsync(); }
                 catch (Exception ftEx) { Console.WriteLine($"[Startup] WARNING: Futures types seed failed: {ftEx.Message}"); }
 
-                // Options types — comma-separated list of instrument type codes that classify as options
                 command.CommandText = """
-                    INSERT INTO app_config (key, value, actor, correlation_id, updated_at)
-                    VALUES ('InstrumentFilter:OptionsTypes', 'OPT,OPTIDX,OPTSTK,OPTIONS,CE,PE,IO,SO', 'system', 'startup', NOW())
+                    INSERT INTO app_config (key, value, updated_at)
+                    VALUES ('InstrumentFilter:OptionsTypes', 'OPT,OPTIDX,OPTSTK,OPTIONS,CE,PE,IO,SO', NOW())
                     ON CONFLICT (key) DO NOTHING;
                     """;
                 try { await command.ExecuteNonQueryAsync(); }
                 catch (Exception otEx) { Console.WriteLine($"[Startup] WARNING: Options types seed failed: {otEx.Message}"); }
+
+                // ── instrument_universe seed (idempotent — run 002 migration if table is empty) ──
+                command.CommandText = "SELECT COUNT(*) FROM instrument_universe;";
+                long universeCount = 0;
+                try { universeCount = (long?)await command.ExecuteScalarAsync() ?? 0; }
+                catch { universeCount = -1; }
+
+                if (universeCount == 0)
+                {
+                    Console.WriteLine("[Startup] instrument_universe is empty — searching for 002_InstrumentUniverse.sql...");
+                    string? universeMigrationPath = null;
+                    var universePaths = new[]
+                    {
+                        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "rvs.AlgoTrader.Infrastructure", "Persistence", "Migrations", "002_InstrumentUniverse.sql"),
+                        Path.Combine(AppContext.BaseDirectory, "..", "..", "rvs.AlgoTrader.Infrastructure", "Persistence", "Migrations", "002_InstrumentUniverse.sql"),
+                        Path.Combine(AppContext.BaseDirectory, "Migrations", "002_InstrumentUniverse.sql"),
+                        @"C:\Users\prvik\Downloads\algotrader-claude-kit\src\rvs.AlgoTrader.Infrastructure\Persistence\Migrations\002_InstrumentUniverse.sql"
+                    };
+                    foreach (var p in universePaths)
+                    {
+                        if (File.Exists(p)) { universeMigrationPath = p; break; }
+                    }
+
+                    if (!string.IsNullOrEmpty(universeMigrationPath))
+                    {
+                        var sql002 = await File.ReadAllTextAsync(universeMigrationPath);
+                        var stmts002 = new List<string>();
+                        var sb002 = new System.Text.StringBuilder();
+                        foreach (var line in sql002.Split('\n'))
+                        {
+                            var t = line.Trim();
+                            if (string.IsNullOrWhiteSpace(t) || t.StartsWith("--")) continue;
+                            sb002.AppendLine(line);
+                            if (t.EndsWith(';'))
+                            {
+                                var s = sb002.ToString().Trim();
+                                if (!string.IsNullOrWhiteSpace(s)) stmts002.Add(s);
+                                sb002.Clear();
+                            }
+                        }
+                        int seeded = 0;
+                        foreach (var s in stmts002)
+                        {
+                            command.CommandText = s;
+                            try { await command.ExecuteNonQueryAsync(); seeded++; }
+                            catch (Exception sEx) { Console.WriteLine($"[Startup] 002 stmt skip: {sEx.Message[..Math.Min(120, sEx.Message.Length)]}"); }
+                        }
+                        Console.WriteLine($"[Startup] 002_InstrumentUniverse.sql executed ({seeded} statements).");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[Startup] WARNING: 002_InstrumentUniverse.sql not found — instrument_universe will be empty (passthrough mode).");
+                    }
+                }
+                else if (universeCount > 0)
+                {
+                    Console.WriteLine($"[Startup] instrument_universe already has {universeCount} rows — skipping seed.");
+                }
+
+                // ── 003_FixInstrumentColumns.sql (idempotent — always run) ───
+                // Adds/renames derivative columns (underlying, strike_price, option_type, expiry)
+                // to match snake_case InstrumentConfiguration mappings.
+                {
+                    string? fix003Path = null;
+                    var fix003Paths = new[]
+                    {
+                        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "rvs.AlgoTrader.Infrastructure", "Persistence", "Migrations", "003_FixInstrumentColumns.sql"),
+                        Path.Combine(AppContext.BaseDirectory, "..", "..", "rvs.AlgoTrader.Infrastructure", "Persistence", "Migrations", "003_FixInstrumentColumns.sql"),
+                        Path.Combine(AppContext.BaseDirectory, "Migrations", "003_FixInstrumentColumns.sql"),
+                        @"C:\Users\prvik\Downloads\algotrader-claude-kit\src\rvs.AlgoTrader.Infrastructure\Persistence\Migrations\003_FixInstrumentColumns.sql"
+                    };
+                    foreach (var p in fix003Paths) { if (File.Exists(p)) { fix003Path = p; break; } }
+
+                    if (!string.IsNullOrEmpty(fix003Path))
+                    {
+                        var sql003 = await File.ReadAllTextAsync(fix003Path);
+                        var stmts003 = new List<string>();
+                        var sb003 = new System.Text.StringBuilder();
+                        bool inDollarBlock = false;
+                        foreach (var line in sql003.Split('\n'))
+                        {
+                            var t = line.Trim();
+                            if (string.IsNullOrWhiteSpace(t) || t.StartsWith("--")) continue;
+                            if (t.StartsWith("$$") || t.Contains("$$")) inDollarBlock = !inDollarBlock;
+                            sb003.AppendLine(line);
+                            if (!inDollarBlock && t.EndsWith(';'))
+                            {
+                                var s = sb003.ToString().Trim();
+                                if (!string.IsNullOrWhiteSpace(s)) stmts003.Add(s);
+                                sb003.Clear();
+                            }
+                        }
+                        foreach (var s in stmts003)
+                        {
+                            command.CommandText = s;
+                            try { await command.ExecuteNonQueryAsync(); }
+                            catch (Exception s3Ex) { Console.WriteLine($"[Startup] 003 stmt skip: {s3Ex.Message[..Math.Min(120, s3Ex.Message.Length)]}"); }
+                        }
+                        Console.WriteLine("[Startup] 003_FixInstrumentColumns.sql applied.");
+                    }
+                }
 
                 // ── broker_sessions table (idempotent — always run) ──────────
                 // Ensures the table exists regardless of when the DB was first

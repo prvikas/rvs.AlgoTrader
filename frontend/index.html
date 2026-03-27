@@ -4,13 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>rvs.AlgoTrader</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: #0f0f1a; color: #e2e8f0; }
+      body { background: #090910; color: #e2e8f0; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+      .num, td.num, .metric-value { font-family: 'JetBrains Mono', monospace; }
     </style>
   </head>
   <body>
     <div id="root"></div>
+    <!-- Dev-only: inject a fake JWT before any module loads so Zustand store init reads it -->
+    <script>
+      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+        if (!localStorage.getItem('jwt_token')) {
+          var p = btoa(JSON.stringify({ sub: 'dev-preview', exp: 9999999999 }));
+          localStorage.setItem('jwt_token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' + p + '.dev');
+        }
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

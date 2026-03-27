@@ -288,11 +288,7 @@ INSERT INTO instrument_universe (symbol, exchange, category) VALUES
 -- ────────────────────────────────────────────────────────────────────────────
 
 -- Default config: NFO option expiry lookahead = 4 weeks
-INSERT INTO app_config (key, value, description, updated_at, updated_by)
-VALUES (
-    'InstrumentFilter:NfoExpiryWeeks',
-    '4',
-    'How many weeks of NFO/BFO options to store. Options expiring more than N weeks from today are discarded during instrument refresh.',
-    NOW(),
-    'SYSTEM'
-) ON CONFLICT (key) DO NOTHING;
+-- app_config schema: key, value, updated_at (no description/updated_by columns)
+INSERT INTO app_config (key, value, updated_at)
+VALUES ('InstrumentFilter:NfoExpiryWeeks', '4', NOW())
+ON CONFLICT (key) DO NOTHING;

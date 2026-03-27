@@ -258,48 +258,41 @@ export function MasterDataRefreshPage() {
             </div>
           </SectionCard>
 
-          {/* ── Equity category (symbol) selection ── */}
+          {/* ── Equity category (symbol) reference ── */}
           {(selExchanges.has('NSE') || selExchanges.has('BSE')) &&
            selTypes.has('Equity') &&
            preview.equityCategories.length > 0 && (
             <SectionCard
-              title="3 · Equity Stock Categories"
-              subtitle="Further filter NSE / BSE equity symbols to specific universe categories"
+              title="3 · Equity Universe Categories (reference)"
+              subtitle="All NSE / BSE equities are saved in passthrough mode — these categories show which symbols are in your trading universe"
             >
+              <p style={{ fontSize: 12, color: '#10b981', marginBottom: 12, lineHeight: 1.5 }}>
+                ✓ Passthrough mode active — <strong>all equities</strong> from the selected exchanges will be saved regardless of universe membership.
+                The counts below show how many downloaded symbols match each universe category.
+              </p>
               {preview.equityCategories.every(c => c.matchCount === 0) ? (
                 <p style={{ fontSize: 13, color: '#f59e0b', lineHeight: 1.5 }}>
-                  ⚠ No equity symbols in the downloaded data match any Universe category.
-                  All NSE / BSE equities will be saved in passthrough mode.
-                  <br />
-                  To restrict which stocks are saved, go to the <strong>Universe</strong> page
-                  and add symbols with their category (Large-cap, Mid-cap, etc.).
+                  ⚠ No downloaded symbols match any Universe category yet.
+                  Go to the <strong>Universe</strong> page to add symbols with their category (Large-cap, Mid-cap, etc.).
                 </p>
               ) : (
-                <>
-                  <div style={S.chipRow}>
-                    {preview.equityCategories.map(cat => {
-                      const meta = CATEGORY_META[cat.category] ?? { icon: '📋', desc: cat.category }
-                      return (
-                        <FilterChip
-                          key={cat.category}
-                          label={cat.label}
-                          sublabel={meta.desc}
-                          count={cat.matchCount}
-                          active={selCategories.has(cat.category)}
-                          onToggle={() => toggle(selCategories, cat.category, setSelCategories)}
-                          color="#6366f1"
-                          icon={meta.icon}
-                        />
-                      )
-                    })}
-                  </div>
-                  {selCategories.size === 0 && (
-                    <p style={{ fontSize: 12, color: '#ef4444', marginTop: 8 }}>
-                      No categories selected — equity symbols will not be saved.
-                      Futures / Options are unaffected.
-                    </p>
-                  )}
-                </>
+                <div style={S.chipRow}>
+                  {preview.equityCategories.map(cat => {
+                    const meta = CATEGORY_META[cat.category] ?? { icon: '📋', desc: cat.category }
+                    return (
+                      <FilterChip
+                        key={cat.category}
+                        label={cat.label}
+                        sublabel={meta.desc}
+                        count={cat.matchCount}
+                        active
+                        onToggle={() => {/* informational only */}}
+                        color="#6366f1"
+                        icon={meta.icon}
+                      />
+                    )
+                  })}
+                </div>
               )}
             </SectionCard>
           )}
