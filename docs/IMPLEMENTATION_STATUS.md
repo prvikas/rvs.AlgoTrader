@@ -16,9 +16,9 @@ DONE | PARTIAL | STUB | MISSING | NOT\_REVIEWED
 
 | Claude docs | PARTIAL | strong content, too verbose, needs restructuring |
 
-| Strategy abstraction | NOT\_REVIEWED | |
+| Strategy abstraction | DONE | StrategyFactory w/ 3 implementations: PriceActionBreakout, EmaVwapMomentum, AlertCandleShort |
 
-| Backtest engine | NOT\_REVIEWED | |
+| Backtest engine | PARTIAL | BacktestEngine core logic complete; added `/api/backtest/download-history` endpoint; fixed error feedback to frontend |
 
 | Forward test engine | NOT\_REVIEWED | |
 
@@ -32,7 +32,8 @@ DONE | PARTIAL | STUB | MISSING | NOT\_REVIEWED
 
 | Risk controls | NOT\_REVIEWED | |
 
-| UI workflow | NOT\_REVIEWED | |
+| UI workflow | PARTIAL | Top-nav layout done, MetricCards + tables redesigned, forms use right drawers; pre-existing TS errors in InstrumentTypesPage/UniversePage unrelated |
+| Master data refresh | PARTIAL | Fixed: MStock wrapped-JSON parsing, missing DB columns (003 migration), instrument_universe seeding, broken app_config INSERTs, wizard universe-filter passthrough (was saving only 60/25k instruments) |
 
 | Tests | NOT\_REVIEWED | |
 

@@ -1,5 +1,36 @@
 # CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 <!-- always loaded — keep under 200 lines -->
+
+## Commands
+
+```bash
+# Backend
+dotnet build rvs.AlgoTrader.sln
+dotnet run --project src/rvs.AlgoTrader.API
+
+# Frontend
+cd frontend && npm install && npm run dev   # dev server on :3000, proxies API to :62318
+cd frontend && npm run build
+cd frontend && npm run lint
+
+# Tests
+./run-tests.sh unit          # xUnit unit tests
+./run-tests.sh arch          # NetArchTest architecture rules
+./run-tests.sh integration   # Testcontainers (requires Docker)
+./run-tests.sh e2e           # Playwright (starts dev server)
+./run-tests.sh all
+
+# Single test
+dotnet test tests/rvs.AlgoTrader.Tests.Unit --filter "FullyQualifiedName~ClassName"
+cd frontend && npm test      # Vitest single run
+cd frontend && npm run test:watch
+
+# Infrastructure (Docker)
+docker compose up -d         # TimescaleDB, Redis, RabbitMQ, Vault, Prometheus, Grafana
+```
 
 ## Identity
 repo: rvs.AlgoTrader | ns: rvs.AlgoTrader.*
@@ -158,13 +189,6 @@ docs/IMPLEMENTATION_STATUS.md | docs/REQUIREMENTS_DELTA.md
 docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
 docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md | docs/UI_DESIGN_SPEC.md
 SELF_LEARNING.md
-
-## Git workflow
-- **never create feature branches** — all edits go directly to master
-- do not create, switch to, or propose any branch other than master
-- do not open pull requests; commit directly to master
-- do not run `git checkout -b` or `git switch -c` under any circumstances
-
 
 ## Docs loading rules
 - do not read docs/STRATEGY.md for implementation; it is legacy/reference only
