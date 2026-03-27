@@ -15,6 +15,11 @@ primary broker: mStock Type B API
 6. state current phase + gaps + proposed next step
 7. wait for confirmation before writing any code
 
+## Git workflow
+- **never create feature branches** — all edits go directly to master
+- do not create, switch to, or propose any branch other than master
+- do not open pull requests; commit directly to master
+- do not run `git checkout -b` or `git switch -c` under any circumstances
 
 ## Model routing
 use the right model per task to reduce token cost:
@@ -125,6 +130,7 @@ AP-015 kill switch ignored on restart -> always blocks auto-resume
 AP-016 candle aggregation using static clock -> use IClock
 AP-017 silent cold restart -> surface event in UI
 AP-018 secret or API key echoed in output -> never log or print secrets
+AP-019 creating feature/topic branches -> always commit directly to master
 
 ## Reference repos
 see: docs/REFERENCES.md
