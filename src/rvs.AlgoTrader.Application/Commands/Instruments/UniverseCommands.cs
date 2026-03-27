@@ -1,9 +1,9 @@
 using MediatR;
-using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Instruments;
 using rvs.AlgoTrader.Application.Queries.Instruments;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Application.Commands.Instruments;
 
@@ -27,6 +27,39 @@ public record DeleteUniverseEntryCommand(Guid Id) : IRequest<bool>;
 /// Returns the number of new rows added.
 /// </summary>
 public record SeedDefaultUniverseCommand : IRequest<int>;
+
+// ── Known universe categories ─────────────────────────────────────────────────
+
+/// <summary>
+/// Well-known category values for instrument_universe entries.
+/// Equity-type categories (all except OPTIONS_UNDERLYING) contribute to the equity symbol allowlist
+/// during refresh when enabled via InstrumentFilter:IncludedEquityCategories.
+/// </summary>
+public static class UniverseCategories
+{
+    // Equity categories — control which symbols are saved for equity exchanges (NSE, BSE)
+    public const string NseEquity           = "NSE_EQUITY";
+    public const string LargeCap            = "LARGE_CAP";
+    public const string MidCap              = "MID_CAP";
+    public const string SmallCap            = "SMALL_CAP";
+    public const string NseZGroup           = "NSE_Z_GROUP";
+    public const string NseBGroup           = "NSE_B_GROUP";
+
+    // Derivative category — controls which underlyings are tracked for NFO/BFO
+    public const string OptionsUnderlying   = "OPTIONS_UNDERLYING";
+
+    /// <summary>All equity-type categories (excludes OPTIONS_UNDERLYING).</summary>
+    public static readonly IReadOnlyList<string> EquityCategories =
+    [
+        NseEquity, LargeCap, MidCap, SmallCap, NseZGroup, NseBGroup,
+    ];
+
+    /// <summary>All valid category values accepted by the API.</summary>
+    public static readonly IReadOnlySet<string> All = new HashSet<string>
+    {
+        NseEquity, LargeCap, MidCap, SmallCap, NseZGroup, NseBGroup, OptionsUnderlying,
+    };
+}
 
 // ── Default universe definition (single source of truth) ─────────────────────
 // Moved here so both the seed command and future tests reference the same list.
@@ -104,9 +137,9 @@ public class CreateUniverseEntryHandler(IInstrumentUniverseRepository repo, IClo
         var exchange = request.Exchange.Trim().ToUpperInvariant();
         var category = request.Category.Trim().ToUpperInvariant();
 
-        if (category is not ("NSE_EQUITY" or "OPTIONS_UNDERLYING"))
+        if (!UniverseCategories.All.Contains(category))
             throw new ArgumentException(
-                $"Invalid category '{category}'. Must be NSE_EQUITY or OPTIONS_UNDERLYING.");
+                $"Invalid category '{category}'. Must be one of: {string.Join(", ", UniverseCategories.All)}.");
 
         // Re-activate if already exists
         var existing = await repo.GetBySymbolAndCategoryAsync(symbol, category, ct);
@@ -125,7 +158,7 @@ public class CreateUniverseEntryHandler(IInstrumentUniverseRepository repo, IClo
             Exchange  = exchange,
             Category  = category,
             IsActive  = true,
-            CreatedAt = clock.GetCurrentInstant(),
+            CreatedAt = clock.NowInstant(),
         };
         await repo.AddAsync(entry, ct);
         return UniverseMapper.ToDto(entry);
@@ -169,7 +202,7 @@ public class SeedDefaultUniverseHandler(IInstrumentUniverseRepository repo, IClo
     public async Task<int> Handle(SeedDefaultUniverseCommand request, CancellationToken ct)
     {
         var existingKeys = await repo.GetExistingKeysAsync(ct);
-        var now          = clock.GetCurrentInstant();
+        var now          = clock.NowInstant();
 
         var toAdd = UniverseDefaults.Entries
             .Where(d => !existingKeys.Contains($"{d.Symbol}|{d.Category}"))
