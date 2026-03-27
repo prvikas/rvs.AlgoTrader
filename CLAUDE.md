@@ -21,6 +21,20 @@ primary broker: mStock Type B API
 - do not open pull requests; commit directly to master
 - do not run `git checkout -b` or `git switch -c` under any circumstances
 
+## Frontend UI rules
+authoritative design spec: docs/UI_DESIGN_SPEC.md — read before any frontend change
+- import colors/spacing from `src/styles/tokens.ts` — never use raw hex values inline
+- layout: top-nav bar (36px) + full-width content area — NO left sidebar
+- content padding: `12px 16px` (not 20px)
+- table row padding: `5px 10px` (not 12px)
+- metric card values: monospace font, 22px max
+- forms (create strategy, run backtest): right-side drawer at 520px width
+- section labels: 11px uppercase, border-bottom — no h2 with margin
+- background: `#090910` page, `#0d0d17` surfaces (not #0f0f1a / #1e1e2e)
+- green: `#00d07a`, red: `#ff4757` — not pastel variants
+- no emoji icons in navigation
+- minimum supported width: 1280px — no mobile breakpoints
+
 ## Model routing
 use the right model per task to reduce token cost:
 
@@ -131,6 +145,9 @@ AP-016 candle aggregation using static clock -> use IClock
 AP-017 silent cold restart -> surface event in UI
 AP-018 secret or API key echoed in output -> never log or print secrets
 AP-019 creating feature/topic branches -> always commit directly to master
+AP-020 raw hex color in frontend -> import from src/styles/tokens.ts
+AP-021 left sidebar layout -> use top-nav horizontal layout only
+AP-022 inline expanded forms -> use right-side drawer pattern
 
 ## Reference repos
 see: docs/REFERENCES.md
@@ -139,7 +156,7 @@ see: docs/REFERENCES.md
 docs/PLAN.md | docs/ARCHITECTURE.md | docs/WORKFLOW.md
 docs/IMPLEMENTATION_STATUS.md | docs/REQUIREMENTS_DELTA.md
 docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
-docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md
+docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md | docs/UI_DESIGN_SPEC.md
 SELF_LEARNING.md
 
 ## Docs loading rules
