@@ -2,21 +2,46 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { universeApi, InstrumentUniverseEntry } from '../api/client'
 
-const CATEGORIES = ['NSE_EQUITY', 'OPTIONS_UNDERLYING'] as const
+// All valid category values (must match UniverseCategories.All on the backend)
+const CATEGORIES = [
+  'NSE_EQUITY',
+  'LARGE_CAP',
+  'MID_CAP',
+  'SMALL_CAP',
+  'NSE_Z_GROUP',
+  'NSE_B_GROUP',
+  'OPTIONS_UNDERLYING',
+] as const
 type Category = (typeof CATEGORIES)[number]
 
+// Which exchanges are valid for each category
 const EXCHANGES: Record<Category, string[]> = {
-  NSE_EQUITY:          ['NSE'],
-  OPTIONS_UNDERLYING:  ['NFO', 'BFO', 'NSE'],
+  NSE_EQUITY:         ['NSE', 'BSE'],
+  LARGE_CAP:          ['NSE', 'BSE'],
+  MID_CAP:            ['NSE', 'BSE'],
+  SMALL_CAP:          ['NSE', 'BSE'],
+  NSE_Z_GROUP:        ['NSE'],
+  NSE_B_GROUP:        ['NSE', 'BSE'],
+  OPTIONS_UNDERLYING: ['NFO', 'BFO', 'NSE'],
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
   NSE_EQUITY:         'NSE Equity',
+  LARGE_CAP:          'Large-cap',
+  MID_CAP:            'Mid-cap',
+  SMALL_CAP:          'Small-cap',
+  NSE_Z_GROUP:        'Z Group',
+  NSE_B_GROUP:        'B Group',
   OPTIONS_UNDERLYING: 'Options Underlying',
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
   NSE_EQUITY:         '#3b82f6',
+  LARGE_CAP:          '#6366f1',
+  MID_CAP:            '#8b5cf6',
+  SMALL_CAP:          '#a78bfa',
+  NSE_Z_GROUP:        '#ef4444',
+  NSE_B_GROUP:        '#f97316',
   OPTIONS_UNDERLYING: '#10b981',
 }
 
@@ -183,9 +208,9 @@ export function UniversePage() {
     !search || r.symbol.toLowerCase().includes(search.toLowerCase())
   )
 
-  const equityCount    = (data ?? []).filter(r => r.category === 'NSE_EQUITY').length
+  const equityCount     = (data ?? []).filter(r => r.category !== 'OPTIONS_UNDERLYING').length
   const underlyingCount = (data ?? []).filter(r => r.category === 'OPTIONS_UNDERLYING').length
-  const activeCount    = (data ?? []).filter(r => r.isActive).length
+  const activeCount     = (data ?? []).filter(r => r.isActive).length
 
   return (
     <div style={S.page}>
@@ -212,7 +237,7 @@ export function UniversePage() {
         {[
           { label: 'Total',    value: data?.length ?? 0,  color: '#e2e8f0' },
           { label: 'Active',   value: activeCount,         color: '#10b981' },
-          { label: 'Equities', value: equityCount,         color: '#3b82f6' },
+          { label: 'Equity Symbols', value: equityCount,    color: '#3b82f6' },
           { label: 'Underlyings', value: underlyingCount,  color: '#10b981' },
         ].map(s => (
           <div key={s.label} style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: '10px 18px', minWidth: 100 }}>
@@ -244,11 +269,11 @@ export function UniversePage() {
               onChange={e => {
                 const cat = e.target.value as Category
                 setNewCategory(cat)
-                setNewExchange(EXCHANGES[cat][0])
+                setNewExchange((EXCHANGES[cat] ?? ['NSE'])[0])
               }}
             >
               {CATEGORIES.map(c => (
-                <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
+                <option key={c} value={c}>{CATEGORY_LABELS[c] ?? c}</option>
               ))}
             </select>
           </div>
@@ -259,7 +284,7 @@ export function UniversePage() {
               value={newExchange}
               onChange={e => setNewExchange(e.target.value)}
             >
-              {EXCHANGES[newCategory].map(ex => (
+              {(EXCHANGES[newCategory] ?? ['NSE']).map(ex => (
                 <option key={ex} value={ex}>{ex}</option>
               ))}
             </select>

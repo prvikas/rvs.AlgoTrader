@@ -2,6 +2,7 @@ using Hangfire;
 using Hangfire.Dashboard;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using NodaTime;
 using rvs.AlgoTrader.API.Extensions;
 using rvs.AlgoTrader.API.Hubs;
 using rvs.AlgoTrader.API.Messaging;
@@ -27,6 +28,10 @@ builder.Host.UseSerilog((ctx, lc) =>
           rollingInterval: Serilog.RollingInterval.Day,
           retainedFileCountLimit: 30,
           shared: true));
+
+// NodaTime.IClock — registered here directly so SystemClock (which takes NodaTime.IClock
+// in its constructor) resolves correctly before AddInfrastructureServices runs.
+builder.Services.AddSingleton<IClock>(SystemClock.Instance);
 
 // Infrastructure (EF Core, Redis, MassTransit, Hangfire, etc.)
 // Pass SignalRHubConsumer so it is registered in the same MassTransit bus instance.
@@ -178,6 +183,24 @@ try
                     """;
                 try { await command.ExecuteNonQueryAsync(); Console.WriteLine("[Startup] app_config defaults seeded."); }
                 catch (Exception acEx) { Console.WriteLine($"[Startup] WARNING: app_config seed failed: {acEx.Message}"); }
+
+                // Futures types — comma-separated list of instrument type codes that classify as futures
+                command.CommandText = """
+                    INSERT INTO app_config (key, value, actor, correlation_id, updated_at)
+                    VALUES ('InstrumentFilter:FuturesTypes', 'FUT,FUTIDX,FUTSTK,FUTURES,IF,SF,FUTCOM,FUTCUR,FUTIRD', 'system', 'startup', NOW())
+                    ON CONFLICT (key) DO NOTHING;
+                    """;
+                try { await command.ExecuteNonQueryAsync(); }
+                catch (Exception ftEx) { Console.WriteLine($"[Startup] WARNING: Futures types seed failed: {ftEx.Message}"); }
+
+                // Options types — comma-separated list of instrument type codes that classify as options
+                command.CommandText = """
+                    INSERT INTO app_config (key, value, actor, correlation_id, updated_at)
+                    VALUES ('InstrumentFilter:OptionsTypes', 'OPT,OPTIDX,OPTSTK,OPTIONS,CE,PE,IO,SO', 'system', 'startup', NOW())
+                    ON CONFLICT (key) DO NOTHING;
+                    """;
+                try { await command.ExecuteNonQueryAsync(); }
+                catch (Exception otEx) { Console.WriteLine($"[Startup] WARNING: Options types seed failed: {otEx.Message}"); }
 
                 // ── broker_sessions table (idempotent — always run) ──────────
                 // Ensures the table exists regardless of when the DB was first

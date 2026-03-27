@@ -1,19 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { instrumentsApi, historicalApi, brokerApi, Instrument } from '../api/client'
+import { instrumentsApi, historicalApi, Instrument } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface DownloadForm {
   timeframe: string
   fromDate: string
-}
-
-type BrokerStep = 'idle' | 'loading' | 'done' | 'error'
-
-interface RefreshProgress {
-  active: boolean
-  steps: { broker: string; status: BrokerStep; error?: string }[]
 }
 
 type SortDir = 'asc' | 'desc'
@@ -58,7 +51,7 @@ const gridCols = COLUMNS.map(c => c.width).join(' ')
 
 // ─── InstrumentsPage ──────────────────────────────────────────────────────────
 
-export function InstrumentsPage() {
+export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void }) {
   const qc = useQueryClient()
 
   // ── Filter / sort / page state ───────────────────────────────────────────
@@ -70,20 +63,6 @@ export function InstrumentsPage() {
   const [page, setPage]                       = useState(1)
   const [sortBy, setSortBy]                   = useState<string>('symbol')
   const [sortDir, setSortDir]                 = useState<SortDir>('asc')
-
-  // Broker list — fetched live so no hardcoded names here
-  const { data: brokerStatuses } = useQuery({
-    queryKey: ['broker-status'],
-    queryFn: () => brokerApi.status().then(r => Array.isArray(r.data.data) ? r.data.data : []),
-    staleTime: 15_000,
-  })
-  const allBrokers = (brokerStatuses ?? []).map(s => s.brokerName)
-
-  // Refresh progress state
-  const [refreshProgress, setRefreshProgress] = useState<RefreshProgress>({
-    active: false,
-    steps: [],  // populated when handleRefresh runs and broker list is known
-  })
 
   // Download modal
   const [downloadTarget, setDownloadTarget] = useState<Instrument | null>(null)
@@ -145,76 +124,6 @@ export function InstrumentsPage() {
   const totalCount  = data?.totalCount ?? 0
   const totalPages  = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
-  // ── Refresh logic ─────────────────────────────────────────────────────────
-
-  const handleRefresh = useCallback(async () => {
-    // Fetch live broker status — determines which brokers to refresh
-    let allBrokerNames: string[]
-    let authenticatedBrokers: string[]
-    try {
-      const res = await brokerApi.status()
-      const statuses = Array.isArray(res.data.data) ? res.data.data : []
-      allBrokerNames        = statuses.map(s => s.brokerName)
-      authenticatedBrokers  = statuses.filter(s => s.isAuthenticated).map(s => s.brokerName)
-    } catch {
-      allBrokerNames       = []
-      authenticatedBrokers = []
-    }
-
-    if (authenticatedBrokers.length === 0) {
-      setRefreshProgress({
-        active: false,
-        steps: allBrokerNames.map(b => ({
-          broker: b,
-          status: 'error' as BrokerStep,
-          error: 'Not authenticated — log in first',
-        })),
-      })
-      return
-    }
-
-    setRefreshProgress({
-      active: true,
-      steps: allBrokerNames.map(b => ({
-        broker: b,
-        status: (authenticatedBrokers.includes(b) ? 'idle' : 'error') as BrokerStep,
-        error: authenticatedBrokers.includes(b) ? undefined : 'Not authenticated — skipped',
-      })),
-    })
-
-    for (let i = 0; i < allBrokerNames.length; i++) {
-      const broker = allBrokerNames[i]
-      if (!authenticatedBrokers.includes(broker)) continue
-
-      setRefreshProgress(prev => ({
-        ...prev,
-        steps: prev.steps.map((s, idx) => idx === i ? { ...s, status: 'loading' } : s),
-      }))
-
-      try {
-        await instrumentsApi.refresh(broker)
-        setRefreshProgress(prev => ({
-          ...prev,
-          steps: prev.steps.map((s, idx) => idx === i ? { ...s, status: 'done' } : s),
-        }))
-      } catch (err: any) {
-        const errText = err?.response?.data?.error ?? `${broker} refresh failed`
-        setRefreshProgress(prev => ({
-          ...prev,
-          steps: prev.steps.map((s, idx) => idx === i ? { ...s, status: 'error', error: errText } : s),
-        }))
-      }
-    }
-
-    setRefreshProgress(prev => ({ ...prev, active: false }))
-    setTimeout(() => {
-      qc.invalidateQueries({ queryKey: ['instruments'] })
-    }, 500)
-  }, [qc])
-
-  const isRefreshing = refreshProgress.active
-  const anyStepDone  = refreshProgress.steps.some(s => s.status !== 'idle')
-
   // ── Download handler ──────────────────────────────────────────────────────
 
   const handleDownload = async () => {
@@ -257,65 +166,19 @@ export function InstrumentsPage() {
         </div>
 
         <button
-          onClick={handleRefresh}
-          disabled={isRefreshing}
+          onClick={onGoToRefresh}
           style={{
             padding: '8px 18px',
-            background: isRefreshing ? '#4b5563' : '#6366f1',
+            background: '#6366f1',
             color: '#fff', border: 'none', borderRadius: 6,
             fontSize: 13, fontWeight: 600,
-            cursor: isRefreshing ? 'not-allowed' : 'pointer',
+            cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 7,
           }}
         >
-          <span style={{ fontSize: 16, lineHeight: 1 }}>{isRefreshing ? '⟳' : '↻'}</span>
-          {isRefreshing ? 'Refreshing…' : 'Refresh Master Data'}
+          ⬇ Download Master Data
         </button>
       </div>
-
-      {/* ── Refresh progress panel ───────────────────────────────────────────── */}
-      {anyStepDone && (
-        <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, padding: '14px 18px' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Refresh Progress
-          </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            {refreshProgress.steps.map(step => (
-              <div key={step.broker} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                background: '#0f0f1a',
-                border: `1px solid ${step.status === 'done' ? '#16a34a' : step.status === 'error' ? '#dc2626' : step.status === 'loading' ? '#6366f1' : '#2d2d3f'}`,
-                borderRadius: 6, padding: '8px 14px', minWidth: 160,
-              }}>
-                <span style={{ fontSize: 16 }}>
-                  {step.status === 'idle' ? '○' : step.status === 'loading' ? <SpinIcon /> : step.status === 'done' ? '✓' : '✕'}
-                </span>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{step.broker}</div>
-                  <div style={{ fontSize: 11, color: step.status === 'done' ? '#86efac' : step.status === 'error' ? '#fca5a5' : step.status === 'loading' ? '#a5b4fc' : '#4b5563' }}>
-                    {step.status === 'idle' ? 'Waiting' : step.status === 'loading' ? 'Downloading…' : step.status === 'done' ? 'Done' : (step.error ?? 'Error')}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {isRefreshing && (
-            <div style={{ marginTop: 14, height: 4, background: '#2d2d3f', borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ height: '100%', background: '#6366f1', animation: 'progress-slide 1.4s ease-in-out infinite', width: '40%' }} />
-            </div>
-          )}
-
-          {!isRefreshing && (
-            <button
-              onClick={() => setRefreshProgress({ active: false, steps: allBrokers.map(b => ({ broker: b, status: 'idle' })) })}
-              style={{ marginTop: 10, background: 'none', border: 'none', color: '#64748b', fontSize: 12, cursor: 'pointer' }}
-            >
-              Dismiss
-            </button>
-          )}
-        </div>
-      )}
 
       {/* ── Filter bar ───────────────────────────────────────────────────────── */}
       <div style={{
