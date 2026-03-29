@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
@@ -8,25 +9,28 @@ using rvs.AlgoTrader.Domain.ValueObjects;
 namespace rvs.AlgoTrader.Backtesting.Engine;
 
 /// <summary>
-/// Forward test (paper trading) engine.
-/// Receives real-time CandleClosedEvents from CandleAggregatorService,
-/// evaluates strategy signals, simulates fills, and persists virtual trades.
-/// No real orders placed.
-/// Implements IForwardTestEngine defined in Application layer so
-/// StrategyEvaluationQueue (Infrastructure) can depend on it without
-/// a direct reference to rvs.AlgoTrader.Backtesting.
+/// Forward test (paper trading) engine — registered as Singleton so in-memory
+/// session state (_activeStates) persists across HTTP requests and candle events.
+///
+/// All scoped dependencies (ICandleCache, IForwardTestFillSimulator,
+/// IForwardTestSessionRepository, IForwardTestTradeRepository) are resolved
+/// per call via IServiceScopeFactory — same pattern as CandleAggregatorService.
+///
+/// Implements Application.Services.IForwardTestEngine so that
+/// StrategyEvaluationQueue (Infrastructure) can depend on it without a
+/// direct reference to rvs.AlgoTrader.Backtesting.
 /// </summary>
 public class ForwardTestEngine(
+    IServiceScopeFactory scopeFactory,
     IStrategyFactory strategyFactory,
-    ICandleCache candleCache,
-    IForwardTestFillSimulator fillSimulator,
-    IForwardTestSessionRepository sessionRepo,
-    IForwardTestTradeRepository tradeRepo,
     IClock clock,
-    ILogger<ForwardTestEngine> logger) : IForwardTestEngine  // IForwardTestEngine from Application.Services
+    ILogger<ForwardTestEngine> logger) : IForwardTestEngine
 {
-    // ConcurrentDictionary for thread safety in case of concurrent candle processing
+    // Keyed by strategy instance ID; holds in-memory position/P&L state.
+    // ConcurrentDictionary not needed — MassTransit consumer serialises access per instance.
     private readonly Dictionary<Guid, ForwardTestState> _activeStates = new();
+
+    // ── IForwardTestEngine ───────────────────────────────────────────────────
 
     public async Task ProcessCandleAsync(
         StrategyInstance instance, ClosedCandle candle, CancellationToken ct)
@@ -37,10 +41,17 @@ public class ForwardTestEngine(
             return;
         }
 
+        // Create a DI scope for all scoped services needed in this candle tick
+        using var scope = scopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+        var candleCache   = sp.GetRequiredService<ICandleCache>();
+        var fillSimulator = sp.GetRequiredService<IForwardTestFillSimulator>();
+        var tradeRepo     = sp.GetRequiredService<IForwardTestTradeRepository>();
+
         var candles = await candleCache.GetAsync(instance.InternalSymbol, instance.Timeframe, 500, ct);
         if (candles.Count < 20) return;
 
-        // Check if open position should close (SL/TP check against this candle)
+        // ── Check if open position should close (SL/TP) ───────────────────
         if (state.OpenTrade != null)
         {
             var closeResult = TryClosePosition(state.OpenTrade, candle);
@@ -76,8 +87,9 @@ public class ForwardTestEngine(
             }
         }
 
-        if (state.OpenTrade != null) return; // already in position
+        if (state.OpenTrade != null) return; // already in position — wait for close
 
+        // ── Evaluate strategy for new entry ──────────────────────────────
         var strategy = strategyFactory.Create(instance.StrategyType, instance.ParametersJson);
         var correlationId = Guid.NewGuid().ToString("N");
         var context = new StrategyContext(
@@ -101,8 +113,8 @@ public class ForwardTestEngine(
 
         if (signal.Signal is not ("BUY" or "SELL")) return;
 
-        var config = new FillSimConfig(SlippagePct: 0.0002m);
-        var fillResult = await fillSimulator.SimulateFillAsync(signal, [candle], clock, config, ct);
+        var fillConfig = new FillSimConfig(SlippagePct: 0.0002m);
+        var fillResult = await fillSimulator.SimulateFillAsync(signal, [candle], clock, fillConfig, ct);
         if (!fillResult.Filled || fillResult.FillPrice == null) return;
 
         var entryPrice = fillResult.FillPrice.Value;
@@ -116,8 +128,12 @@ public class ForwardTestEngine(
             signal.Signal, candle.InternalSymbol, entryPrice);
     }
 
-    public async Task<Guid> StartSessionAsync(StrategyInstance instance, decimal initialCapital, CancellationToken ct)
+    public async Task<Guid> StartSessionAsync(
+        StrategyInstance instance, decimal initialCapital, CancellationToken ct)
     {
+        using var scope = scopeFactory.CreateScope();
+        var sessionRepo = scope.ServiceProvider.GetRequiredService<IForwardTestSessionRepository>();
+
         var session = new ForwardTestSession
         {
             Id = Guid.NewGuid(),
@@ -128,6 +144,9 @@ public class ForwardTestEngine(
         };
         await sessionRepo.AddAsync(session, ct);
         _activeStates[instance.Id] = new ForwardTestState(session.Id, initialCapital);
+
+        logger.LogInformation("[ForwardTest] Session started for {Instance} (capital={Capital})",
+            instance.Name, initialCapital);
         return session.Id;
     }
 
@@ -135,6 +154,9 @@ public class ForwardTestEngine(
     {
         if (!_activeStates.TryGetValue(instanceId, out var state)) return;
         _activeStates.Remove(instanceId);
+
+        using var scope = scopeFactory.CreateScope();
+        var sessionRepo = scope.ServiceProvider.GetRequiredService<IForwardTestSessionRepository>();
 
         var session = await sessionRepo.GetByIdAsync(state.SessionId, ct);
         if (session != null)
@@ -148,7 +170,12 @@ public class ForwardTestEngine(
             session.Status = "Stopped";
             await sessionRepo.UpdateAsync(session, ct);
         }
+
+        logger.LogInformation("[ForwardTest] Session stopped for instance {InstanceId}. Trades={Trades} PnL={Pnl}",
+            instanceId, state.ClosedTradeCount, state.TotalPnl);
     }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static PositionCloseResult? TryClosePosition(ForwardTestOpenTrade trade, ClosedCandle candle)
     {
@@ -163,7 +190,7 @@ public class ForwardTestEngine(
             { exitPrice = trade.TakeProfit; reason = "TAKE_PROFIT"; }
             else return null;
         }
-        else
+        else // SELL / short
         {
             if (candle.High >= trade.StopLoss)
             { exitPrice = trade.StopLoss; reason = "STOP_LOSS"; }
@@ -179,20 +206,16 @@ public class ForwardTestEngine(
         return new PositionCloseResult(exitPrice, pnl, reason);
     }
 
-    private class ForwardTestState
+    // ── Private types ─────────────────────────────────────────────────────────
+
+    private class ForwardTestState(Guid sessionId, decimal initialCapital)
     {
-        public Guid SessionId { get; }
-        public decimal InitialCapital { get; }
+        public Guid SessionId { get; } = sessionId;
+        public decimal InitialCapital { get; } = initialCapital;
         public ForwardTestOpenTrade? OpenTrade { get; set; }
         public decimal TotalPnl { get; set; }
         public int ClosedTradeCount { get; set; }
         public int WinCount { get; set; }
-
-        public ForwardTestState(Guid sessionId, decimal initialCapital)
-        {
-            SessionId = sessionId;
-            InitialCapital = initialCapital;
-        }
     }
 
     private record ForwardTestOpenTrade(

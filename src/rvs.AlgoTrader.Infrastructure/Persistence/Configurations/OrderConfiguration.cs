@@ -23,6 +23,8 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Property(o => o.Price).HasColumnName("price").HasPrecision(18, 4);
         builder.Property(o => o.TriggerPrice).HasColumnName("trigger_price").HasPrecision(18, 4);
         builder.Property(o => o.FillPrice).HasColumnName("fill_price").HasPrecision(18, 4);
+        builder.Property(o => o.TrailingSl).HasColumnName("trailing_sl").HasPrecision(18, 4);
+        builder.Property(o => o.TrailingTp).HasColumnName("trailing_tp").HasPrecision(18, 4);
         builder.Property(o => o.Exchange).HasColumnName("exchange").HasMaxLength(10).IsRequired();
         builder.Property(o => o.ProductType).HasColumnName("product_type").HasMaxLength(10).IsRequired();
         builder.Property(o => o.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(100).IsRequired();

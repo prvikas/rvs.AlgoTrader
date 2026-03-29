@@ -13,10 +13,13 @@ public sealed class IndicatorService : IIndicatorService
     {
         if (closes.Length < period) return [];
         var result = new decimal[closes.Length - period + 1];
-        for (var i = period - 1; i < closes.Length; i++)
+        // O(n) sliding window — one pass, no inner loop
+        decimal sum = 0;
+        for (var i = 0; i < period; i++) sum += closes[i];
+        result[0] = sum / period;
+        for (var i = period; i < closes.Length; i++)
         {
-            decimal sum = 0;
-            for (var j = i - period + 1; j <= i; j++) sum += closes[j];
+            sum += closes[i] - closes[i - period];
             result[i - period + 1] = sum / period;
         }
         return result;
@@ -74,20 +77,33 @@ public sealed class IndicatorService : IIndicatorService
 
     public (decimal[] Upper, decimal[] Mid, decimal[] Lower) BollingerBands(decimal[] closes, int period, decimal stdDev)
     {
-        var sma = Sma(closes, period);
-        var upper = new decimal[sma.Length];
-        var lower = new decimal[sma.Length];
+        if (closes.Length < period) return ([], [], []);
+        var count = closes.Length - period + 1;
+        var upper = new decimal[count];
+        var mid   = new decimal[count];
+        var lower = new decimal[count];
 
-        for (var i = 0; i < sma.Length; i++)
+        // O(n) sliding window using sum and sum-of-squares.
+        // variance = E[x²] - (E[x])² — avoids any per-bar slice allocation.
+        decimal sum = 0, sumSq = 0;
+        for (var i = 0; i < period; i++) { sum += closes[i]; sumSq += closes[i] * closes[i]; }
+        for (var i = 0; i < count; i++)
         {
-            var slice = closes.Skip(i).Take(period).ToArray();
-            var avg = sma[i];
-            var variance = slice.Average(x => (x - avg) * (x - avg));
-            var sd = (decimal)Math.Sqrt((double)variance);
+            if (i > 0)
+            {
+                var add = closes[i + period - 1];
+                var rem = closes[i - 1];
+                sum   += add - rem;
+                sumSq += add * add - rem * rem;
+            }
+            var avg      = sum / period;
+            var variance = sumSq / period - avg * avg;
+            if (variance < 0m) variance = 0m; // guard against floating-point drift
+            var sd       = (decimal)Math.Sqrt((double)variance);
+            mid[i]   = avg;
             upper[i] = avg + stdDev * sd;
             lower[i] = avg - stdDev * sd;
         }
-
-        return (upper, sma, lower);
+        return (upper, mid, lower);
     }
 }

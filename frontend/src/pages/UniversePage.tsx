@@ -98,7 +98,6 @@ const S = {
     padding: '6px 14px',
     fontSize: 13,
     borderRadius: 6,
-    border: 'none',
     cursor: 'pointer',
     fontWeight: 600,
     background: variant === 'primary'  ? '#3b82f6'

@@ -21,6 +21,14 @@ public interface IBrokerMarketDataClient
         IEnumerable<string> brokerTokens, CancellationToken ct);
 
     Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct);
+
+    /// <summary>
+    /// Returns the maximum calendar days this broker accepts per historical data request for a given timeframe.
+    /// Implementations should override with broker-documented limits.
+    /// Default is conservative (30 days) to prevent silent truncation on unknown brokers.
+    /// </summary>
+    HistoricalQueryLimits GetHistoricalQueryLimits(string timeframe) => new(30);
+
     Task<MarketDepth> GetDepthAsync(string brokerToken, CancellationToken ct);
 }
 

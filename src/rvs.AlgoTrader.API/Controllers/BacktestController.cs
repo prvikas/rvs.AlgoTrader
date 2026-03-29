@@ -12,7 +12,10 @@ namespace rvs.AlgoTrader.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class BacktestController(IMediator mediator, IHistoricalDownloadService downloadService) : ControllerBase
+public class BacktestController(
+    IMediator mediator,
+    IHistoricalDownloadService downloadService,
+    IBacktestJobManager jobManager) : ControllerBase
 {
     [HttpPost("download-history")]
     public async Task<ActionResult<ApiResponse<object>>> DownloadHistory(
@@ -31,6 +34,10 @@ public class BacktestController(IMediator mediator, IHistoricalDownloadService d
             : BadRequest(ApiResponse.Fail<object>(result.Error ?? "Download failed"));
     }
 
+    /// <summary>
+    /// Synchronous backtest run (backward compat). Blocks until complete.
+    /// For long-running backtests, prefer POST /backtest/start.
+    /// </summary>
     [HttpPost("run")]
     public async Task<ActionResult<ApiResponse<BacktestResultDto>>> Run(
         [FromBody] BacktestRequestDto request, CancellationToken ct)
@@ -40,6 +47,43 @@ public class BacktestController(IMediator mediator, IHistoricalDownloadService d
             ? Ok(ApiResponse<BacktestResultDto>.Ok(result))
             : BadRequest(ApiResponse<BacktestResultDto>.Fail(result.Error ?? "Backtest failed"));
     }
+
+    /// <summary>
+    /// Async backtest — returns a jobId immediately (202 Accepted).
+    /// Subscribe to SignalR /hubs/backtest and call SubscribeToJob(jobId) for real-time updates.
+    /// Poll GET /backtest/{jobId}/status for progress without SignalR.
+    /// Supports running multiple strategies simultaneously.
+    /// </summary>
+    [HttpPost("start")]
+    public async Task<ActionResult<ApiResponse<object>>> Start(
+        [FromBody] BacktestRequestDto request, CancellationToken ct)
+    {
+        var jobId = await jobManager.EnqueueAsync(request, ct);
+        return Accepted(ApiResponse<object>.Ok(new { jobId }));
+    }
+
+    /// <summary>Get status/progress of an async backtest job.</summary>
+    [HttpGet("{jobId}/status")]
+    public ActionResult<ApiResponse<BacktestJobStatusDto>> GetStatus(string jobId)
+    {
+        var status = jobManager.GetStatus(jobId);
+        return status == null
+            ? NotFound(ApiResponse.Fail<BacktestJobStatusDto>($"Job '{jobId}' not found"))
+            : Ok(ApiResponse<BacktestJobStatusDto>.Ok(status));
+    }
+
+    /// <summary>Cancel a running backtest job.</summary>
+    [HttpPost("{jobId}/cancel")]
+    public ActionResult<ApiResponse<object>> Cancel(string jobId)
+    {
+        jobManager.CancelJob(jobId);
+        return Ok(ApiResponse<object>.Ok(new { jobId, status = "Cancelling" }));
+    }
+
+    /// <summary>List all active backtest job IDs.</summary>
+    [HttpGet("active")]
+    public ActionResult<ApiResponse<IReadOnlyList<string>>> GetActive()
+        => Ok(ApiResponse<IReadOnlyList<string>>.Ok(jobManager.GetActiveJobIds()));
 
     [HttpPost("walk-forward")]
     public async Task<ActionResult<ApiResponse<object>>> RunWalkForward(
@@ -55,6 +99,16 @@ public class BacktestController(IMediator mediator, IHistoricalDownloadService d
         var pdfBytes = await mediator.Send(new GetBacktestReportQuery(id), ct);
         if (pdfBytes == null) return NotFound();
         return File(pdfBytes, "application/pdf", $"backtest-{id}.pdf");
+    }
+
+    /// <summary>Get a single backtest result by ID (includes ChartSample if stored).</summary>
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<ApiResponse<BacktestResultDto>>> GetById(Guid id, CancellationToken ct)
+    {
+        var result = await mediator.Send(new GetBacktestResultQuery(id), ct);
+        return result == null
+            ? NotFound(ApiResponse.Fail<BacktestResultDto>($"Backtest run '{id}' not found"))
+            : Ok(ApiResponse<BacktestResultDto>.Ok(result));
     }
 
     [HttpGet]

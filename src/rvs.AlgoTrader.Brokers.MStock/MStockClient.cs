@@ -16,13 +16,16 @@ public class MStockOptions
     public string PrivateKey { get; set; } = "";
     public string ClientCode { get; set; } = "";
     public string Password { get; set; } = "";
+    /// <summary>WebSocket feed endpoint — configurable via Broker:MStock:WebSocketUrl in appsettings.</summary>
+    public string WebSocketUrl { get; set; } = "wss://api.mstock.trade/openapi/typeb/feed";
     // Note: TOTP is NOT stored here — it must be submitted interactively at login time
 }
 
 public class MStockClient(
     HttpClient http,
     MStockAuth auth,
-    IOptions<MStockOptions> options) : IFullBrokerClient
+    IOptions<MStockOptions> options,
+    ILogger<MStockClient> logger) : IFullBrokerClient
 {
     private readonly DateTimeZone _ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
     private string? _jwtToken;
@@ -36,6 +39,7 @@ public class MStockClient(
         if (!string.IsNullOrEmpty(_jwtToken))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _jwtToken);
         request.Headers.Add("X-PrivateKey", options.Value.ApiKey);
+        request.Headers.Add("X-Mirae-Version", "1");
     }
 
     private HttpRequestMessage CreateRequest(HttpMethod method, string path)
@@ -59,8 +63,8 @@ public class MStockClient(
     /// <inheritdoc/>
     public void RestoreToken(string accessToken, string? feedToken = null)
     {
-        _jwtToken   = accessToken;
-        _feedToken  = feedToken;   // may be null if not stored; WebSocket falls back to _jwtToken
+        _jwtToken = accessToken;
+        _feedToken = feedToken;   // may be null if not stored; WebSocket falls back to _jwtToken
     }
 
     public async Task<OrderResult> PlaceOrderAsync(OrderRequest request, CancellationToken ct)
@@ -168,38 +172,149 @@ public class MStockClient(
         {
             if (!doc.RootElement.GetProperty("data").TryGetProperty(token, out var d)) continue;
             result[token] = new OptionQuote(
-                InternalSymbol:    token,
-                LastTradedPrice:   d.GetProperty("ltp").GetDecimal(),
-                OpenInterest:      d.TryGetProperty("oi", out var oi) ? oi.GetInt64() : 0L,
-                OiChange:          d.TryGetProperty("oiChange", out var oiChg) ? oiChg.GetInt64() : 0L,
-                Volume:            d.TryGetProperty("volume", out var vol) ? vol.GetInt64() : 0L,
+                InternalSymbol: token,
+                LastTradedPrice: d.GetProperty("ltp").GetDecimal(),
+                OpenInterest: d.TryGetProperty("oi", out var oi) ? oi.GetInt64() : 0L,
+                OiChange: d.TryGetProperty("oiChange", out var oiChg) ? oiChg.GetInt64() : 0L,
+                Volume: d.TryGetProperty("volume", out var vol) ? vol.GetInt64() : 0L,
                 ImpliedVolatility: 0m,
-                BidPrice:          d.TryGetProperty("bestBid", out var bid) ? bid.GetDecimal() : 0m,
-                AskPrice:          d.TryGetProperty("bestAsk", out var ask) ? ask.GetDecimal() : 0m,
-                Delta:             0m);
+                BidPrice: d.TryGetProperty("bestBid", out var bid) ? bid.GetDecimal() : 0m,
+                AskPrice: d.TryGetProperty("bestAsk", out var ask) ? ask.GetDecimal() : 0m,
+                Delta: 0m);
         }
         return result;
     }
 
     public async Task<IReadOnlyList<OhlcvBar>> GetHistoricalDataAsync(HistoricalDataQuery query, CancellationToken ct)
     {
-        var from = query.FromDate.ToString("yyyy-MM-dd");
-        var to = query.ToDate.ToString("yyyy-MM-dd");
-        var req = CreateRequest(HttpMethod.Get,
-            $"/v1/historical-candle?symbol={query.BrokerToken}&resolution={query.Timeframe}&from={from}&to={to}");
+        // MStock Type B uses POST /v1/historical/candle/data with JSON body.
+        // Interval must be one of the named constants; date format is "yyyy-MM-dd HH:mm".
+        var interval = TimeframeToMStockInterval(query.Timeframe);
+
+        // Extract exchange from InternalSymbol ("NSE:AXISBANK" → "NSE", "BSE:TCS" → "BSE")
+        var parts = query.InternalSymbol.Split(':', 2);
+        var exchange = parts.Length == 2 ? parts[0].ToUpperInvariant() : "NSE";
+
+        // MStock limits the date window per request depending on interval.
+        // Use IST market open/close as from/to time anchors.
+        var fromStr = query.FromDate.ToString("yyyy-MM-dd") + " 09:00";
+        var toStr = query.ToDate.ToString("yyyy-MM-dd") + " 15:30";
+
+        logger.LogDebug(
+            "[MStock] GetHistoricalData POST /v1/historical — {Exchange} token={Token} interval={Interval} {From}→{To}",
+            exchange, query.BrokerToken, interval, fromStr, toStr);
+
+        var body = JsonSerializer.Serialize(new
+        {
+            exchange = exchange,
+            symboltoken = query.BrokerToken,
+            interval = interval,
+            fromdate = fromStr,
+            todate = toStr,
+        });
+
+        var req = CreateRequest(HttpMethod.Get, "/instruments/historical");
+        req.Content = new System.Net.Http.StringContent(body, System.Text.Encoding.UTF8, "application/json");
+
         var response = await http.SendAsync(req, ct);
         var json = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode) return [];
+
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogError(
+                "[MStock] GetHistoricalData HTTP {Status} for {Symbol}/{Tf}. Body: {Body}",
+                (int)response.StatusCode, query.InternalSymbol, query.Timeframe,
+                json.Length > 500 ? json[..500] : json);
+            throw new HttpRequestException(
+                $"MStock historical data request failed with HTTP {(int)response.StatusCode} ({response.StatusCode}) " +
+                $"for {query.InternalSymbol}/{query.Timeframe}. Body: {(json.Length > 300 ? json[..300] : json)}");
+        }
+
         var doc = JsonDocument.Parse(json);
         var bars = new List<OhlcvBar>();
-        foreach (var c in doc.RootElement.GetProperty("data").EnumerateArray())
+
+        // MStock response: { "status": true, "message": "SUCCESS", "data": [["2024-01-01T09:15:00+05:30", o, h, l, c, v], ...] }
+        if (!doc.RootElement.TryGetProperty("data", out var dataElement) ||
+            dataElement.ValueKind == JsonValueKind.Null)
         {
-            var ts = Instant.FromDateTimeUtc(DateTime.Parse(c[0].GetString()!).ToUniversalTime()).InZone(_ist);
-            bars.Add(new OhlcvBar(query.InternalSymbol, query.Timeframe, ts,
-                c[1].GetDecimal(), c[2].GetDecimal(), c[3].GetDecimal(), c[4].GetDecimal(), c[5].GetInt64()));
+            // API may return status:false with a message — log it
+            var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : "no data field";
+            logger.LogWarning(
+                "[MStock] GetHistoricalData returned no data for {Symbol}/{Tf}. message={Msg}. Body: {Body}",
+                query.InternalSymbol, query.Timeframe, msg,
+                json.Length > 300 ? json[..300] : json);
+            return [];
         }
+
+
+        if (!dataElement.TryGetProperty("candles", out var dataCandles) ||
+           dataCandles.ValueKind == JsonValueKind.Null)
+        {
+            // API may return status:false with a message — log it
+            var msg = dataElement.TryGetProperty("message", out var m) ? m.GetString() : "no candle data field";
+            logger.LogWarning(
+                "[MStock] GetHistoricalData returned no Candle data for {Symbol}/{Tf}. message={Msg}. Body: {Body}",
+                query.InternalSymbol, query.Timeframe, msg,
+                json.Length > 300 ? json[..300] : json);
+            return [];
+        }
+
+        foreach (var c in dataCandles.EnumerateArray())
+        {
+            // Each element is an array: [timestamp_str, open, high, low, close, volume]
+            if (c.GetArrayLength() < 6) continue;
+            var rawTs = c[0].GetString()!;
+            var ts = Instant.FromDateTimeUtc(DateTime.Parse(rawTs,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime())
+                .InZone(_ist);
+
+            bars.Add(new OhlcvBar(query.InternalSymbol, query.Timeframe, ts,
+                c[1].GetDecimal(), c[2].GetDecimal(),
+                c[3].GetDecimal(), c[4].GetDecimal(),
+                c[5].GetInt64()));
+        }
+
+        logger.LogInformation("[MStock] GetHistoricalData returned {Count} bars for {Symbol}/{Tf}",
+            bars.Count, query.InternalSymbol, query.Timeframe);
         return bars;
     }
+
+    /// <summary>
+    /// MStock Type B hard limit: 1000 candles per request.
+    /// NSE intraday session = 375 minutes (09:15–15:30).
+    /// Calendar days = trading days × 1.46 (365÷250), rounded down for safety.
+    /// </summary>
+    public HistoricalQueryLimits GetHistoricalQueryLimits(string timeframe) => timeframe switch
+    {
+        "1m" => new(2),    // 375 candles/day → 2 trading days → 3 calendar days
+        "3m" => new(8),   // 125 candles/day → 8 trading days → 11 calendar days
+        "5m" => new(13),   // 75 candles/day  → 13 trading days → 18 calendar days
+        "15m" => new(40),   // 25 candles/day  → 40 trading days → 55 calendar days
+        "30m" => new(76),  // 13 candles/day  → 76 trading days → 105 calendar days
+        "60m" => new(142),  // 7 candles/day   → 142 trading days → 195 calendar days
+        "1d" => new(1000), // 1 candle/day    → 1000 trading days → 1380 calendar days
+        _ => new(3)
+    };
+
+    /// <summary>
+    /// Maps our internal timeframe strings to MStock Type B interval constants.
+    /// Reference: mStock Type B API — POST /v1/historical/candle/data — interval field.
+    /// </summary>
+    private static string TimeframeToMStockInterval(string timeframe) => timeframe switch
+    {
+        "1m" => "ONE_MINUTE",
+        "3m" => "THREE_MINUTE",
+        "5m" => "FIVE_MINUTE",
+        "10m" => "TEN_MINUTE",
+        "15m" => "FIFTEEN_MINUTE",
+        "30m" => "THIRTY_MINUTE",
+        "60m" => "ONE_HOUR",
+        "1h" => "ONE_HOUR",
+        "1d" => "ONE_DAY",
+        _ => throw new ArgumentException($"Unsupported timeframe for MStock: '{timeframe}'. " +
+                     "Supported: 1m, 3m, 5m, 10m, 15m, 30m, 60m, 1d")
+    };
 
     public async Task<MarketDepth> GetDepthAsync(string brokerToken, CancellationToken ct)
     {
@@ -266,7 +381,7 @@ public class MStockClient(
         IEnumerable<string> brokerTokens,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        var wsUrl = "wss://api.mstock.trade/openapi/typeb/feed";
+        var wsUrl = options.Value.WebSocketUrl;
         using var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader("Authorization", $"Bearer {_feedToken ?? _jwtToken}");
         ws.Options.SetRequestHeader("X-PrivateKey", options.Value.ApiKey);
@@ -465,17 +580,17 @@ public class MStockClient(
 
         foreach (var item in root.EnumerateArray())
         {
-            var token     = Str(item, "token");
-            var symbol    = Str(item, "symbol");
+            var token = Str(item, "token");
+            var symbol = Str(item, "symbol");
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(symbol)) continue;
 
-            var name       = Str(item, "name");
-            var instrType  = Str(item, "instrumenttype").ToUpper();
-            var expiryRaw  = Str(item, "expiry");                  // raw MStock form, e.g. "25-APR-2026" — used only for internalSymbol construction
-            var expiryIso  = NormalizeExpiryToIso(expiryRaw);      // "yyyy-MM-dd" — stored in Expiry; used by LocalDatePattern.Iso downstream
-            var strike     = Str(item, "strike");
-            var optType    = Str(item, "optiontype");   // CE / PE (may be absent in some responses)
-            var exchSeg    = Str(item, "exch_seg").ToUpper();
+            var name = Str(item, "name");
+            var instrType = Str(item, "instrumenttype").ToUpper();
+            var expiryRaw = Str(item, "expiry");                  // raw MStock form, e.g. "25-APR-2026" — used only for internalSymbol construction
+            var expiryIso = NormalizeExpiryToIso(expiryRaw);      // "yyyy-MM-dd" — stored in Expiry; used by LocalDatePattern.Iso downstream
+            var strike = Str(item, "strike");
+            var optType = Str(item, "optiontype");   // CE / PE (may be absent in some responses)
+            var exchSeg = Str(item, "exch_seg").ToUpper();
 
             // strike "-1" means no strike (equities/futures)
             var strikeClean = strike is "-1" or "" ? string.Empty : strike;
@@ -502,6 +617,13 @@ public class MStockClient(
                     instrType = "FUT";   // futures leg — has expiry, no strike
             }
 
+            // Normalise equity symbol: MStock appends "-EQ" (e.g. "AXISBANK-EQ") for NSE/BSE equities.
+            // Strip it so internal symbols are canonical ("NSE:AXISBANK"), matching what users enter
+            // in strategy forms and what InstrumentRefreshService.NormaliseSymbol produces.
+            var baseSymbol = symbol.EndsWith("-EQ", StringComparison.OrdinalIgnoreCase)
+                ? symbol[..^3]
+                : symbol;
+
             // Build internalSymbol using MStock's compact date form (strip dashes from raw expiry)
             // so the key matches MStock's own naming convention, e.g. "NFO:NIFTY25APR2026FUT".
             string internalSymbol;
@@ -517,22 +639,22 @@ public class MStockClient(
             }
             else
             {
-                internalSymbol = $"{exchSeg}:{symbol}";
+                internalSymbol = $"{exchSeg}:{baseSymbol}";
             }
 
             results.Add(new InstrumentTokenMapping(
-                InternalSymbol:  internalSymbol,
-                BrokerToken:     token,
-                Exchange:        exchSeg,
-                BrokerName:      "MStock",
-                TradingSymbol:   symbol,
-                Name:            string.IsNullOrEmpty(name) ? symbol : name,
-                InstrumentType:  string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
-                Expiry:          string.IsNullOrEmpty(expiryIso) ? null : expiryIso,
-                StrikePrice:     string.IsNullOrEmpty(strikeClean) ? null : strikeDecimal,
-                OptionType:      string.IsNullOrEmpty(optType) ? null : optType,
-                LotSize:         (int)(lotSize > 0 ? lotSize : 1),
-                TickSize:        tickDecimal > 0 ? tickDecimal : 0.05m
+                InternalSymbol: internalSymbol,
+                BrokerToken: token,
+                Exchange: exchSeg,
+                BrokerName: "MStock",
+                TradingSymbol: symbol,
+                Name: string.IsNullOrEmpty(name) ? symbol : name,
+                InstrumentType: string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
+                Expiry: string.IsNullOrEmpty(expiryIso) ? null : expiryIso,
+                StrikePrice: string.IsNullOrEmpty(strikeClean) ? null : strikeDecimal,
+                OptionType: string.IsNullOrEmpty(optType) ? null : optType,
+                LotSize: (int)(lotSize > 0 ? lotSize : 1),
+                TickSize: tickDecimal > 0 ? tickDecimal : 0.05m
             ));
         }
 
@@ -572,17 +694,17 @@ public class MStockClient(
             var cols = lines[row].Split(',');
             if (cols.Length < 2) continue;
 
-            var token     = Get(cols, "token");
-            var symbol    = Get(cols, "symbol");
+            var token = Get(cols, "token");
+            var symbol = Get(cols, "symbol");
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(symbol)) continue;
 
-            var name      = Get(cols, "name");
+            var name = Get(cols, "name");
             var instrType = Get(cols, "instrumenttype").ToUpper();
             var expiryRaw = Get(cols, "expiry");                   // raw MStock form — used for internalSymbol construction
             var expiryIso = NormalizeExpiryToIso(expiryRaw);       // "yyyy-MM-dd" — stored in Expiry
-            var strike    = Get(cols, "strike");
-            var optType   = Get(cols, "optiontype");   // CE / PE
-            var exchSeg   = Get(cols, "exch_seg").ToUpper();
+            var strike = Get(cols, "strike");
+            var optType = Get(cols, "optiontype");   // CE / PE
+            var exchSeg = Get(cols, "exch_seg").ToUpper();
             if (string.IsNullOrEmpty(exchSeg)) exchSeg = exchange.ToUpper();
             int.TryParse(Get(cols, "lotsize"), out var lotSize);
             decimal.TryParse(Get(cols, "tick_size"), out var tickSize);
@@ -619,18 +741,18 @@ public class MStockClient(
             }
 
             results.Add(new InstrumentTokenMapping(
-                InternalSymbol:  internalSymbol,
-                BrokerToken:     token,
-                Exchange:        exchSeg,
-                BrokerName:      "MStock",
-                TradingSymbol:   symbol,
-                Name:            string.IsNullOrEmpty(name) ? symbol : name,
-                InstrumentType:  string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
-                Expiry:          string.IsNullOrEmpty(expiryIso) ? null : expiryIso,
-                StrikePrice:     string.IsNullOrEmpty(strike) ? null : strikeDecimal,
-                OptionType:      string.IsNullOrEmpty(optType) ? null : optType,
-                LotSize:         lotSize > 0 ? lotSize : 1,
-                TickSize:        tickSize > 0 ? tickSize : 0.05m
+                InternalSymbol: internalSymbol,
+                BrokerToken: token,
+                Exchange: exchSeg,
+                BrokerName: "MStock",
+                TradingSymbol: symbol,
+                Name: string.IsNullOrEmpty(name) ? symbol : name,
+                InstrumentType: string.IsNullOrEmpty(instrType) ? "EQ" : instrType,
+                Expiry: string.IsNullOrEmpty(expiryIso) ? null : expiryIso,
+                StrikePrice: string.IsNullOrEmpty(strike) ? null : strikeDecimal,
+                OptionType: string.IsNullOrEmpty(optType) ? null : optType,
+                LotSize: lotSize > 0 ? lotSize : 1,
+                TickSize: tickSize > 0 ? tickSize : 0.05m
             ));
         }
 

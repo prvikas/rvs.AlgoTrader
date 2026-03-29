@@ -177,6 +177,12 @@ public record LatencyReport(
     ZonedDateTime MeasuredAt
 );
 
+/// <summary>
+/// Maximum calendar days the broker accepts in a single historical data request, per timeframe.
+/// Used by HistoricalDownloadService to build date chunks that stay within broker limits.
+/// </summary>
+public record HistoricalQueryLimits(int MaxCalendarDaysPerRequest);
+
 public record InstrumentTokenMapping(
     string InternalSymbol,
     string BrokerToken,

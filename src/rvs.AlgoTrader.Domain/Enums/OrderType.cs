@@ -15,3 +15,4 @@ public enum AlertSeverity { Info, Warn, Critical }
 public enum AlertCategory { System, Strategy, Broker, DataQuality, Risk }
 public enum SkippedReason { Throttled, MarketClosed, KillSwitch, RiskLimit, InsufficientCapital, Timeout, OutsideSchedule, InsufficientData, FilterFailed }
 public enum StrategyRunStatus { Running, Stopped, Failed, Completed }
+public enum ScenarioStatus { Draft, Backtested, ForwardTest, Live, Archived }

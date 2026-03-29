@@ -17,8 +17,52 @@ namespace rvs.AlgoTrader.Application.Services;
 
 public interface IBacktestEngine
 {
-    Task<BacktestResult> RunAsync(BacktestRequest request, CancellationToken ct);
+    Task<BacktestResult> RunAsync(BacktestRequest request, CancellationToken ct,
+        IProgress<BacktestProgress>? progress = null);
 }
+
+/// <summary>
+/// A single OHLCV bar with indicator snapshot + optional signal, streamed to the frontend
+/// during the backtest run so the chart can update in rolling-window mode, and included
+/// in the downsampled ChartSample after completion for the full replay chart.
+/// </summary>
+public record BacktestChartBar(
+    long TimeMs,            // Unix epoch milliseconds (IST timestamp)
+    decimal Open,
+    decimal High,
+    decimal Low,
+    decimal Close,
+    long Volume,
+    string? Signal,         // "BUY", "SELL", or null (no signal this bar)
+    decimal? SignalPrice,   // Entry price when signal != null
+    decimal? StopLoss,
+    decimal? TakeProfit,
+    IReadOnlyDictionary<string, decimal>? Indicators); // e.g. { "ema5": 452.3, "vwap": 453.1 }
+
+public record BacktestProgress(
+    string JobId,
+    int CurrentBar,
+    int TotalBars,
+    decimal ProgressPct,   // 0–100
+    int TradesSoFar,
+    decimal CurrentEquity,
+    // Rolling 200-bar window sent with each 1% progress update.
+    // Frontend renders this as a live-updating candlestick chart.
+    IReadOnlyList<BacktestChartBar>? ChartBatch = null);
+
+public record BacktestMonthlyBreakdown(
+    int Year,
+    int Month,
+    decimal Pnl,
+    int Trades,
+    decimal WinRate);
+
+public record BacktestYearlyBreakdown(
+    int Year,
+    decimal Pnl,
+    decimal Return,
+    int Trades,
+    decimal WinRate);
 
 public record BacktestRequest(
     string StrategyName,
@@ -33,12 +77,18 @@ public record BacktestRequest(
     bool WalkForward = false,
     int WalkForwardInSampleBars = 200,
     int WalkForwardOutOfSampleBars = 50,
-    // 0=NextBarOpen (default, no lookahead), 1=NextBarOpenPlusSlippage, 2=SignalBarClose
     FillModel FillModel = FillModel.NextBarOpen,
-    // Additional adverse slippage in basis points. E.g. 5 = 0.05%. Default = 5 bps.
     decimal SlippageBasisPoints = 5m,
-    // Flat brokerage per order leg in INR (e.g. 20 for Zerodha/Upstox model).
-    decimal BrokerageFlatPerSide = 20m);
+    decimal BrokerageFlatPerSide = 20m,
+    string? JobId = null,
+    // ── Trailing stop parameters ──────────────────────────────────────────
+    decimal TrailActivationR = 0m,
+    decimal TrailOffsetR = 0.5m,
+    bool BreakEvenAt1R = false,
+    // ── Circuit breaker ───────────────────────────────────────────────────
+    // Stop the backtest early if equity falls below this fraction of InitialCapital.
+    // Default 0.5 = 50%.  Set to 0 to disable.
+    decimal CircuitBreakerPct = 0.5m);
 
 public record BacktestResult(
     bool Success,
@@ -63,13 +113,29 @@ public record BacktestResult(
     decimal AvgLoss,
     int MaxConsecutiveLosses,
     decimal ExpectancyPerTrade,
+    // New stats
+    decimal SortinoRatio,
+    decimal DailySharpe,
+    decimal MonthlySharpe,
+    decimal MonthlyWinRate,
+    int DrawdownRecoveryBars,
+    int MaxLots,
+    IReadOnlyList<BacktestMonthlyBreakdown> MonthlyBreakdown,
+    IReadOnlyList<BacktestYearlyBreakdown> YearlyBreakdown,
     IReadOnlyList<BacktestTrade> Trades,
     string? DataHash,
-    string? Error)
+    string? Error,
+    // Downsampled to ≤ 2000 bars for the post-run full replay chart.
+    // Contains all signal bars plus a uniform sample of the remaining bars.
+    IReadOnlyList<BacktestChartBar>? ChartSample = null,
+    // Circuit breaker: set when backtest is stopped early due to capital loss
+    bool CircuitBreakerHit = false,
+    string? CircuitBreakerReason = null)
 {
     public static BacktestResult Failed(string error) => new(
         false, "", "", "", LocalDate.MinIsoValue, LocalDate.MinIsoValue,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [], null, error);
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, [], [], [], null, error, null);
 
     /// <summary>Compute BacktestResult metrics directly from a trade list (for unit tests).</summary>
     public static BacktestResult FromTrades(IReadOnlyList<BacktestTrade> trades, decimal initialCapital)
@@ -119,7 +185,10 @@ public record BacktestResult(
             TotalTrades: trades.Count, WinCount: wins.Count, LossCount: losses.Count,
             AvgWin: avgWin, AvgLoss: avgLoss,
             MaxConsecutiveLosses: maxConsecLosses, ExpectancyPerTrade: expectancy,
-            Trades: trades, DataHash: null, Error: null);
+            SortinoRatio: 0m, DailySharpe: 0m, MonthlySharpe: 0m, MonthlyWinRate: 0m,
+            DrawdownRecoveryBars: 0, MaxLots: 0,
+            MonthlyBreakdown: [], YearlyBreakdown: [],
+            Trades: trades, DataHash: null, Error: null, ChartSample: null);
     }
 }
 
@@ -136,4 +205,8 @@ public record BacktestTrade(
     ZonedDateTime ExitTime,
     decimal GrossPnl,
     decimal NetPnl,
-    string ExitReason);
+    string ExitReason,
+    // ── Trailing stop state (managed by BacktestEngine, not strategy) ─────
+    decimal InitialStopLoss = 0m,   // original SL at entry — never changes, used to compute R
+    decimal BestPrice      = 0m,    // running high (longs) or running low (shorts) since entry
+    bool TrailActive       = false); // true once trailing has been activated

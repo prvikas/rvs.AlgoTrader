@@ -28,8 +28,27 @@ public class HistoricalDownloadService(
             internalSymbol, timeframe, from, to, brokerName);
 
         var instrument = await instrumentRepo.GetByInternalSymbolAsync(internalSymbol, ct);
+
+        // MStock scrip master appends "-EQ" to NSE/BSE equity symbols (e.g. AXISBANK-EQ).
+        // Try the suffixed form as a fallback so strategies using the canonical symbol
+        // ("NSE:AXISBANK") still resolve after an instrument refresh that stored "NSE:AXISBANK-EQ".
+        if (instrument == null && !internalSymbol.EndsWith("-EQ", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = internalSymbol.Split(':', 2);
+            if (parts.Length == 2)
+            {
+                var fallbackSymbol = $"{parts[0]}:{parts[1]}-EQ";
+                instrument = await instrumentRepo.GetByInternalSymbolAsync(fallbackSymbol, ct);
+                if (instrument != null)
+                    logger.LogDebug(
+                        "[HistoricalDownload] Resolved '{Original}' → '{Fallback}' via -EQ suffix lookup",
+                        internalSymbol, fallbackSymbol);
+            }
+        }
+
         if (instrument == null)
-            return new DownloadResult(false, 0, null, $"Instrument '{internalSymbol}' not found");
+            return new DownloadResult(false, 0, null, $"Instrument '{internalSymbol}' not found. " +
+                "Run instrument refresh (POST /api/instruments/refresh or the Instruments wizard) to populate the instruments table.");
 
         var brokerToken = brokerName switch
         {
@@ -43,14 +62,45 @@ public class HistoricalDownloadService(
             return new DownloadResult(false, 0, null, $"No broker token for {brokerName}:{internalSymbol}");
 
         var mdClient = brokerFactory.GetMarketDataClient(brokerName);
-        var query = new HistoricalDataQuery(brokerToken, internalSymbol, timeframe, from, to);
-        var bars = await mdClient.GetHistoricalDataAsync(query, ct);
 
-        if (bars.Count == 0)
-            return new DownloadResult(true, 0, null, "No data returned");
+        // Ask the broker for its per-request limit and chunk the date range accordingly.
+        var chunkDays = mdClient.GetHistoricalQueryLimits(timeframe).MaxCalendarDaysPerRequest;
+        var chunks    = BuildDateChunks(from, to, chunkDays);
+
+        logger.LogInformation(
+            "[HistoricalDownload] Fetching {Chunks} chunk(s) of up to {Days} days each ({Tf})",
+            chunks.Count, chunkDays, timeframe);
+
+        var allBars = new List<OhlcvBar>();
+        foreach (var (chunkFrom, chunkTo) in chunks)
+        {
+            ct.ThrowIfCancellationRequested();
+            var query = new HistoricalDataQuery(brokerToken, internalSymbol, timeframe, chunkFrom, chunkTo);
+            try
+            {
+                var chunk = await mdClient.GetHistoricalDataAsync(query, ct);
+                allBars.AddRange(chunk);
+                logger.LogDebug(
+                    "[HistoricalDownload] Chunk {From}–{To}: {Count} bars", chunkFrom, chunkTo, chunk.Count);
+            }
+            catch (HttpRequestException ex)
+            {
+                logger.LogError(ex, "[HistoricalDownload] Broker HTTP error for {Symbol}/{Tf} chunk {From}–{To}: {Message}",
+                    internalSymbol, timeframe, chunkFrom, chunkTo, ex.Message);
+                return new DownloadResult(false, 0, null,
+                    $"Broker request failed: {ex.Message}. " +
+                    "Check that the broker session is authenticated (POST /api/broker/authenticate) " +
+                    "and the instrument has a valid MStock token.");
+            }
+        }
+
+        if (allBars.Count == 0)
+            return new DownloadResult(false, 0, null,
+                $"Broker returned 0 bars for {internalSymbol}/{timeframe} ({from}–{to}). " +
+                "The date range may have no trading data, or the broker token may be incorrect.");
 
         // Convert to ClosedCandle value objects
-        var candles = bars.Select(b => new ClosedCandle(
+        var candles = allBars.Select(b => new ClosedCandle(
             b.InternalSymbol,
             b.Timeframe,
             b.OpenTime,
@@ -61,7 +111,7 @@ public class HistoricalDownloadService(
         await candleRepo.BulkInsertAsync(candles, ct);
 
         // Compute SHA-256 hash for reproducibility
-        var hash = ComputeDataHash(bars);
+        var hash = ComputeDataHash(allBars);
 
         logger.LogInformation("[HistoricalDownload] Downloaded {Count} bars for {Symbol}/{Tf}. Hash: {Hash}",
             candles.Count, internalSymbol, timeframe, hash[..12]);
@@ -82,14 +132,29 @@ public class HistoricalDownloadService(
 
     private static NodaTime.Duration TimeframeToInterval(string tf) => tf switch
     {
-        "1m" => NodaTime.Duration.FromMinutes(1),
-        "3m" => NodaTime.Duration.FromMinutes(3),
-        "5m" => NodaTime.Duration.FromMinutes(5),
+        "1m"  => NodaTime.Duration.FromMinutes(1),
+        "3m"  => NodaTime.Duration.FromMinutes(3),
+        "5m"  => NodaTime.Duration.FromMinutes(5),
         "15m" => NodaTime.Duration.FromMinutes(15),
         "30m" => NodaTime.Duration.FromMinutes(30),
         "60m" => NodaTime.Duration.FromMinutes(60),
-        "1d" => NodaTime.Duration.FromHours(6.25), // 9:15 to 15:30
-        _ => NodaTime.Duration.FromMinutes(1)
+        "1d"  => NodaTime.Duration.FromHours(6.25), // 9:15 to 15:30
+        _     => NodaTime.Duration.FromMinutes(1)
     };
+
+    /// <summary>Splits [from, to] into non-overlapping windows of at most <paramref name="chunkDays"/> days.</summary>
+    private static List<(DateOnly From, DateOnly To)> BuildDateChunks(DateOnly from, DateOnly to, int chunkDays)
+    {
+        var chunks = new List<(DateOnly, DateOnly)>();
+        var cursor = from;
+        while (cursor <= to)
+        {
+            var end = cursor.AddDays(chunkDays - 1);
+            if (end > to) end = to;
+            chunks.Add((cursor, end));
+            cursor = end.AddDays(1);
+        }
+        return chunks;
+    }
 }
 

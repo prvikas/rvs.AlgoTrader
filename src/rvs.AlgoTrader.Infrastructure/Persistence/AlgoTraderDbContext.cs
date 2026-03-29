@@ -30,6 +30,9 @@ public class AlgoTraderDbContext : DbContext
     // Backtest history
     public DbSet<BacktestRun> BacktestRuns => Set<BacktestRun>();
 
+    // Strategy scenarios
+    public DbSet<StrategyScenario> StrategyScenarios => Set<StrategyScenario>();
+
     // Instrument universe — controls which symbols are downloaded and stored
     public DbSet<InstrumentUniverse> InstrumentUniverse => Set<InstrumentUniverse>();
 

@@ -17,6 +17,7 @@ public class StrategyInstanceManager(
     IStrategyRunRepository runRepo,
     CandleAggregatorService aggregator,
     IInstrumentRepository instrumentRepo,
+    IForwardTestEngine forwardTestEngine,
     IAuditService audit,
     IClock clock,
     ILogger<StrategyInstanceManager> logger) : IStrategyInstanceManager
@@ -50,6 +51,15 @@ public class StrategyInstanceManager(
         instance.UpdatedAt = nowInstant;
         await instanceRepo.UpdateAsync(instance, ct);
         _activeRuns[instanceId] = run.Id;
+
+        // For Forward mode: initialise the ForwardTestEngine session so candle ticks are processed
+        if (instance.Mode == StrategyMode.Forward)
+        {
+            var capital = instance.AllocatedCapital > 0 ? instance.AllocatedCapital : 100_000m;
+            var sessionId = await forwardTestEngine.StartSessionAsync(instance, capital, ct);
+            logger.LogInformation("[StrategyManager] ForwardTest session {SessionId} started for '{Name}'",
+                sessionId, instance.Name);
+        }
 
         // Update candle aggregator subscriptions
         await RefreshSubscriptionsAsync(ct);
@@ -95,6 +105,12 @@ public class StrategyInstanceManager(
             _activeRuns.Remove(instanceId);
         }
 
+        // For Forward mode: finalise the session (compute WinRate, FinalPnl, mark Stopped)
+        if (instance.Mode == StrategyMode.Forward)
+        {
+            await forwardTestEngine.StopSessionAsync(instanceId, ct);
+        }
+
         instance.Status = StrategyStatus.Stopped;
         instance.CurrentRunId = null;
         instance.UpdatedAt = nowInstant;
@@ -113,19 +129,36 @@ public class StrategyInstanceManager(
     {
         var running = await instanceRepo.GetRunningAsync(ct);
         var symbols = new HashSet<string>();
-        var brokerName = "Zerodha";
+        var brokerName = "MStock"; // primary broker; overridden below if instances specify another
 
         foreach (var inst in running)
         {
-            var instrument = await instrumentRepo.GetBySymbolAsync(inst.InternalSymbol, ct);
-            if (instrument != null)
+            if (string.IsNullOrWhiteSpace(inst.InternalSymbol))
             {
-                brokerName = inst.BrokerName ?? brokerName;
-                var token = instrument.GetBrokerToken(brokerName);
-                if (token != null) symbols.Add(token);
+                logger.LogWarning("[StrategyManager] Instance '{Name}' has no InternalSymbol — skipping subscription", inst.Name);
+                continue;
             }
+
+            var instrument = await instrumentRepo.GetBySymbolAsync(inst.InternalSymbol, ct);
+            if (instrument == null)
+            {
+                logger.LogWarning("[StrategyManager] Instrument not found for symbol '{Symbol}' (instance '{Name}')",
+                    inst.InternalSymbol, inst.Name);
+                continue;
+            }
+
+            var instBroker = inst.BrokerName ?? brokerName;
+            brokerName = instBroker; // last running instance wins; single-broker model
+            var token = instrument.GetBrokerToken(instBroker);
+            if (token != null)
+                symbols.Add(token);
+            else
+                logger.LogWarning("[StrategyManager] No broker token for {Broker}:{Symbol} (instance '{Name}')",
+                    instBroker, inst.InternalSymbol, inst.Name);
         }
 
         aggregator.UpdateSubscriptions(symbols, brokerName);
+        logger.LogInformation("[StrategyManager] Aggregator subscriptions updated: {Count} symbol(s) via {Broker}",
+            symbols.Count, brokerName);
     }
 }

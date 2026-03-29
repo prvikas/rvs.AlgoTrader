@@ -54,3 +54,4 @@ redis_data/
 
 # Claude-specific — never commit session outputs
 .claude/session-*.md
+/.claude/worktrees/sweet-curie

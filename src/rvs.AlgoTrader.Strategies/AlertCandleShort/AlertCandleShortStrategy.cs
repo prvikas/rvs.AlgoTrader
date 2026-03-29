@@ -66,10 +66,18 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
             return Task.FromResult(SignalResult.Skip(SkippedReason.InsufficientData,
                 $"Need at least {config.EmaPeriod + 1} candles for EMA warm-up; have {candles.Count}"));
 
-        // ── Step 1: Compute 5-EMA over the full candle array (aligned by index) ──
+        // ── Step 1: Compute EMAs over the full candle array (aligned by index) ──
 
-        var closes = candles.Select(c => c.Close).ToArray();
-        var ema    = ComputeEmaFull(closes, config.EmaPeriod);
+        var closes = new decimal[candles.Count];
+        for (int ci = 0; ci < candles.Count; ci++) closes[ci] = candles[ci].Close;
+        var ema      = ComputeEmaFull(closes, config.EmaPeriod);
+        var emaTrend = config.TrendFilterPeriod > 0
+            ? ComputeEmaFull(closes, config.TrendFilterPeriod)
+            : null;
+
+        // Indicator snapshot for chart overlay — computed once, attached to every return path
+        var emaAtCurrentBar = ema[candles.Count - 1];
+        var indicators = new Dictionary<string, decimal> { [$"ema{config.EmaPeriod}"] = emaAtCurrentBar };
 
         // ── Step 2: Identify today's candles (IST date of most recent bar) ───────
 
@@ -86,97 +94,190 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
         // Need at least 2 today's bars: the Alert Candle + the breakout bar
         if (todayBarCount < 2)
             return Task.FromResult(SignalResult.Hold(
-                "Waiting — need at least 2 closed bars today to check Alert Candle pattern"));
+                "Waiting — need at least 2 closed bars today to check Alert Candle pattern",
+                indicatorValues: indicators));
 
-        // ── Step 3: Scan today's candles for the FIRST Alert Candle + breakout ──
+        // ── Step 3: Session avg volume (for breakout confirmation filter) ──────
 
-        // Scan from the start of today up to (but not including) the last bar,
-        // because the breakout bar is always the candle AFTER the alert candle.
-        int? alertCandleIdx  = null;
-        int? breakoutCandleIdx = null;
-
-        for (int i = todayStart; i < candles.Count - 1; i++)
+        double sessionVolSum = 0;
+        int    sessionVolCount = 0;
+        // Use bars from today up to (not including) the last bar
+        for (int vi = todayStart; vi < candles.Count - 1; vi++)
         {
-            // EMA must be warmed up at this index
+            sessionVolSum += (double)candles[vi].Volume;
+            sessionVolCount++;
+        }
+        var sessionAvgVol = sessionVolCount > 0 ? sessionVolSum / sessionVolCount : 0d;
+
+        // ── Step 4: Scan today's candles for the FIRST Alert Candle + breakout ──
+        //
+        // SHORT setup: entire candle floats ABOVE the fast EMA (low > EMA).
+        //   Breakout bar: breaks below the alert candle's Low → SELL at alertCandle.Low.
+        //   Stop: alertCandle.High | TP: entry − risk × RRR
+        //
+        // LONG setup (when AllowLong=true): entire candle floats BELOW the fast EMA (high < EMA).
+        //   Breakout bar: breaks above the alert candle's High → BUY at alertCandle.High.
+        //   Stop: alertCandle.Low | TP: entry + risk × RRR
+        //
+        // One-trade-per-day: the earliest pattern that fires wins; once any breakout bar is
+        // in history the strategy returns HOLD for the rest of the day.
+
+        int? shortAlertIdx = null, shortBreakoutIdx = null;
+        int? longAlertIdx  = null, longBreakoutIdx  = null;
+
+        int scanStart = todayStart + config.SessionStartBufferBars;
+
+        for (int i = scanStart; i < candles.Count - 1; i++)
+        {
             if (ema[i] == 0m) continue;
-
             var candidate = candles[i];
+            int nextI     = i + 1;
 
-            // ALERT CANDLE RULE: low must NOT touch the EMA — strict ">" required.
-            // "Does not touch the 5-EMA at all" means the entire candle floats above.
-            if (candidate.Low <= ema[i]) continue; // low at or below EMA → not an Alert Candle
-
-            // The next candle must break below the Alert Candle's low to trigger entry
-            int nextI = i + 1;
-            if (candles[nextI].Low < candidate.Low)
+            // ── SHORT alert candle: low floats ABOVE the EMA ─────────────
+            if (shortAlertIdx == null && candidate.Low > ema[i])
             {
-                alertCandleIdx   = i;
-                breakoutCandleIdx = nextI;
-                break; // Only care about the FIRST occurrence
+                // Trend filter: only short below the trend EMA
+                bool trendOkShort = emaTrend == null || emaTrend[i] == 0m || candidate.Close < emaTrend[i];
+                if (trendOkShort && candles[nextI].Low < candidate.Low)
+                {
+                    shortAlertIdx    = i;
+                    shortBreakoutIdx = nextI;
+                }
             }
+
+            // ── LONG alert candle: high floats BELOW the EMA ─────────────
+            if (config.AllowLong && longAlertIdx == null && candidate.High < ema[i])
+            {
+                // Trend filter: only long above the trend EMA
+                bool trendOkLong = emaTrend == null || emaTrend[i] == 0m || candidate.Close > emaTrend[i];
+                if (trendOkLong && candles[nextI].High > candidate.High)
+                {
+                    longAlertIdx    = i;
+                    longBreakoutIdx = nextI;
+                }
+            }
+
+            // Stop after both are found
+            if (shortAlertIdx != null && (longAlertIdx != null || !config.AllowLong))
+                break;
         }
 
-        // ── Step 4: No pattern found today → wait ─────────────────────────────
+        // ── Step 5: No pattern found today → wait ────────────────────────────
 
-        if (alertCandleIdx == null)
+        if (shortAlertIdx == null && longAlertIdx == null)
             return Task.FromResult(SignalResult.Hold(
-                "No Alert Candle + breakout pattern found in today's session yet"));
+                "No Alert Candle + breakout pattern found in today's session yet",
+                indicatorValues: indicators));
 
-        // ── Step 5: Pattern found — was it already signalled? ─────────────────
+        // ── Step 6: One-trade-per-day — did earliest pattern already fire? ────
 
-        // If the breakout bar is NOT the most recently closed candle, it already happened.
-        // The strategy emits SELL exactly once: on the bar that IS the breakout.
-        // All subsequent bars see the breakout in historical data → HOLD (one trade per day).
-        if (breakoutCandleIdx!.Value < candles.Count - 1)
+        // Find whichever breakout occurred first chronologically
+        int? earliestBreakout = null;
+        if (shortBreakoutIdx.HasValue) earliestBreakout = shortBreakoutIdx;
+        if (longBreakoutIdx.HasValue  && (earliestBreakout == null || longBreakoutIdx < earliestBreakout))
+            earliestBreakout = longBreakoutIdx;
+
+        if (earliestBreakout!.Value < candles.Count - 1)
             return Task.FromResult(SignalResult.Hold(
-                "Alert Candle signal already triggered earlier today — one trade per day rule"));
+                "Alert Candle signal already triggered earlier today — one trade per day rule",
+                indicatorValues: indicators));
 
-        // ── Step 6: This bar IS the breakout → generate SELL signal ──────────
+        // ── Step 7: Breakout bar is the current bar → generate signal ─────────
 
-        var alertCandle = candles[alertCandleIdx.Value];
-        var emaAtAlert  = ema[alertCandleIdx.Value];
+        // Determine which pattern fires on this bar
+        bool shortFires = shortBreakoutIdx.HasValue && shortBreakoutIdx.Value == candles.Count - 1;
+        bool longFires  = longBreakoutIdx.HasValue  && longBreakoutIdx.Value  == candles.Count - 1;
 
-        // Entry: at Alert Candle Low (stop-sell trigger price)
-        // In live trading, this is placed as a sell-stop order at alertCandle.Low.
-        // For the strategy signal, entry = alertCandle.Low.
-        var entry = alertCandle.Low;
-        var sl    = alertCandle.High;
-        var risk  = sl - entry;
-
-        // Safety check: alert candle must have a valid body (high > low)
-        if (risk <= 0)
+        // If both fire simultaneously (rare — very wide bar), prefer neither (ambiguous)
+        if (shortFires && longFires)
             return Task.FromResult(SignalResult.Hold(
-                $"Invalid alert candle: high ({alertCandle.High}) ≤ low ({alertCandle.Low})"));
+                "Both long and short patterns fired on same bar — ambiguous, no trade",
+                indicatorValues: indicators));
 
-        // ATR filter (optional): skip signals in extremely thin markets
-        if (config.MinRiskPoints > 0 && risk < config.MinRiskPoints)
-            return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
-                $"Risk of {risk:F2} pts below minimum {config.MinRiskPoints} pts — candle too small to trade"));
-
-        var tp = entry - risk * config.RiskRewardRatio;
-
-        var diagnostics = new
+        // ── Breakout volume filter ────────────────────────────────────────────
+        if (config.BreakoutVolumeMultiple > 0m && sessionAvgVol > 0)
         {
-            AlertCandleTime  = alertCandle.OpenTime.ToString(),
-            AlertCandleHigh  = alertCandle.High,
-            AlertCandleLow   = alertCandle.Low,
-            AlertCandleClose = alertCandle.Close,
-            EmaAtAlertBar    = Math.Round(emaAtAlert, 2),
-            LowAboveEmaBy    = Math.Round(alertCandle.Low - emaAtAlert, 2),
-            BreakoutBarLow   = candles[^1].Low,
-            Risk             = Math.Round(risk, 2),
-            RiskRewardRatio  = config.RiskRewardRatio,
-            Remark           = "First trigger of the day — subsequent bars will HOLD"
-        };
+            var breakoutVol = (double)candles[^1].Volume;
+            if (breakoutVol < sessionAvgVol * (double)config.BreakoutVolumeMultiple)
+                return Task.FromResult(SignalResult.Hold(
+                    $"Breakout bar volume ({breakoutVol:F0}) < {config.BreakoutVolumeMultiple}× session avg ({sessionAvgVol:F0}) — low conviction",
+                    indicatorValues: indicators));
+        }
 
-        return Task.FromResult(SignalResult.Sell(
-            entryPrice: entry,
-            stopLoss:   sl,
-            takeProfit: tp,
-            reason: $"Alert Candle Short: Low={entry} floated {alertCandle.Low - emaAtAlert:F2}pts above EMA({config.EmaPeriod})={emaAtAlert:F2}. " +
-                    $"Breakout confirmed. SL={sl}, TP={tp:F2} (1:{config.RiskRewardRatio:F0} RRR). " +
-                    $"EOD exit: 15:15 IST via schedule force-exit.",
-            diagnosticsJson: diagnostics));
+        // ── SHORT signal ──────────────────────────────────────────────────────
+        if (shortFires)
+        {
+            var alertCandle = candles[shortAlertIdx!.Value];
+            var emaAtAlert  = ema[shortAlertIdx.Value];
+            var entry = alertCandle.Low;
+            var sl    = alertCandle.High;
+            var risk  = sl - entry;
+
+            if (risk <= 0)
+                return Task.FromResult(SignalResult.Hold(
+                    $"Invalid short alert candle: high ({alertCandle.High}) ≤ low ({alertCandle.Low})",
+                    indicatorValues: indicators));
+
+            if (config.MinRiskPoints > 0 && risk < config.MinRiskPoints)
+                return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
+                    $"Short risk {risk:F2}pts below minimum {config.MinRiskPoints}pts"));
+
+            var tp = entry - risk * config.RiskRewardRatio;
+
+            return Task.FromResult(SignalResult.Sell(
+                entryPrice: entry,
+                stopLoss:   sl,
+                takeProfit: tp,
+                reason: $"Alert Candle Short: Low={entry:F2} floated {alertCandle.Low - emaAtAlert:F2}pts above EMA({config.EmaPeriod})={emaAtAlert:F2}. " +
+                        $"SL={sl:F2} TP={tp:F2} (1:{config.RiskRewardRatio:F0} RRR)",
+                diagnosticsJson: new
+                {
+                    AlertCandleTime = alertCandle.OpenTime.ToString(),
+                    AlertCandleHigh = alertCandle.High, AlertCandleLow = alertCandle.Low,
+                    EmaAtAlertBar   = Math.Round(emaAtAlert, 2),
+                    FloatAboveEma   = Math.Round(alertCandle.Low - emaAtAlert, 2),
+                    BreakoutBarLow  = candles[^1].Low,
+                    Risk            = Math.Round(risk, 2)
+                },
+                indicatorValues: indicators));
+        }
+
+        // ── LONG signal ───────────────────────────────────────────────────────
+        {
+            var alertCandle = candles[longAlertIdx!.Value];
+            var emaAtAlert  = ema[longAlertIdx.Value];
+            var entry = alertCandle.High;
+            var sl    = alertCandle.Low;
+            var risk  = entry - sl;
+
+            if (risk <= 0)
+                return Task.FromResult(SignalResult.Hold(
+                    $"Invalid long alert candle: high ({alertCandle.High}) ≤ low ({alertCandle.Low})",
+                    indicatorValues: indicators));
+
+            if (config.MinRiskPoints > 0 && risk < config.MinRiskPoints)
+                return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
+                    $"Long risk {risk:F2}pts below minimum {config.MinRiskPoints}pts"));
+
+            var tp = entry + risk * config.RiskRewardRatio;
+
+            return Task.FromResult(SignalResult.Buy(
+                entryPrice: entry,
+                stopLoss:   sl,
+                takeProfit: tp,
+                reason: $"Alert Candle Long: High={entry:F2} floated {emaAtAlert - alertCandle.High:F2}pts below EMA({config.EmaPeriod})={emaAtAlert:F2}. " +
+                        $"SL={sl:F2} TP={tp:F2} (1:{config.RiskRewardRatio:F0} RRR)",
+                diagnosticsJson: new
+                {
+                    AlertCandleTime  = alertCandle.OpenTime.ToString(),
+                    AlertCandleHigh  = alertCandle.High, AlertCandleLow = alertCandle.Low,
+                    EmaAtAlertBar    = Math.Round(emaAtAlert, 2),
+                    FloatBelowEma    = Math.Round(emaAtAlert - alertCandle.High, 2),
+                    BreakoutBarHigh  = candles[^1].High,
+                    Risk             = Math.Round(risk, 2)
+                },
+                indicatorValues: indicators));
+        }
     }
 
     // ── Private: EMA calculation ───────────────────────────────────────────
@@ -220,26 +321,66 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
 /// </summary>
 public class AlertCandleShortConfig
 {
-    /// <summary>EMA period. Rule specifies 5-period EMA. Do not change without backtesting.</summary>
-    public int     EmaPeriod          { get; set; } = 5;
+    /// <summary>Fast EMA period for the alert-candle pattern. Default 5 per strategy spec.</summary>
+    public int     EmaPeriod              { get; set; } = 5;
 
     /// <summary>
-    /// Minimum Risk:Reward ratio for take profit.
-    /// Rule specifies "minimum 1:3", so default is 3.0.
+    /// Minimum Risk:Reward ratio. Spec says "minimum 1:3" → default 3.0.
     /// TP = entry − risk × RiskRewardRatio.
     /// </summary>
-    public decimal RiskRewardRatio    { get; set; } = 3.0m;
+    public decimal RiskRewardRatio        { get; set; } = 3.0m;
 
     /// <summary>
-    /// Minimum risk in points to filter out tiny candles.
-    /// Set to 0 to disable (take all valid alert candles regardless of size).
-    /// Default 0 — the original rules don't specify a minimum candle size.
-    /// Example: set to 20 for Nifty (20-point minimum risk = 20-point candle size).
+    /// Minimum risk in points. Filters tiny alert candles that produce noisy signals.
+    /// Default 15 pts (suitable for BankNifty 5-min; set to 0 to disable).
     /// </summary>
-    public decimal MinRiskPoints      { get; set; } = 0m;
+    public decimal MinRiskPoints          { get; set; } = 15m;
+
+    /// <summary>
+    /// Trend filter EMA period. Alert candles are only valid when close &lt; EMA(this period).
+    /// Prevents shorting into an uptrend — the primary cause of losses in this strategy.
+    /// Default 20. Set to 0 to disable the trend filter.
+    /// </summary>
+    public int     TrendFilterPeriod      { get; set; } = 20;
+
+    /// <summary>
+    /// Skip this many bars at the start of each session before scanning for alert candles.
+    /// Opening bars (first 15 min of a 5-min chart = 3 bars) are erratic and produce
+    /// false setups. Default 3. Set to 0 to disable.
+    /// </summary>
+    public int     SessionStartBufferBars { get; set; } = 3;
+
+    /// <summary>
+    /// Volume confirmation on the breakout bar. The bar that breaks the alert candle
+    /// boundary must have volume ≥ this multiple of the session average.
+    /// Higher volume on the breakout = institutional participation = higher confidence.
+    /// Default 1.5. Set to 0 to disable.
+    /// </summary>
+    public decimal BreakoutVolumeMultiple { get; set; } = 1.5m;
+
+    /// <summary>
+    /// Enable the long-side mirror of the Alert Candle setup.
+    /// Long alert candle: entire candle (including high) floats BELOW the fast EMA.
+    /// Entry: when the next bar breaks above the alert candle's High (stop-buy at alertHigh).
+    /// Stop: alert candle Low. TP: entry + risk × RRR.
+    /// Only takes long signals when price is above the trend EMA.
+    /// Default false (short-only per original spec).
+    /// </summary>
+    public bool    AllowLong              { get; set; } = false;
 
     public static AlertCandleShortConfig FromJson(string json)
         => JsonSerializer.Deserialize<AlertCandleShortConfig>(json,
                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
            ?? new AlertCandleShortConfig();
+
+    public static IReadOnlyList<StrategyParamDef> GetSchema() =>
+    [
+        new("EmaPeriod",              "EMA Period",                "int",     5,    Min: 3,    Max: 20,  Hint: "The EMA the Alert Candle must float ABOVE (no wick touch)"),
+        new("RiskRewardRatio",        "Min Risk:Reward",           "decimal", 3.0m, Min: 1.5m, Max: 10.0m, Step: 0.5m, Hint: "TP = entry − (SL − entry) × this. Spec minimum is 1:3"),
+        new("MinRiskPoints",          "Min Risk (points)",         "decimal", 15m,  Min: 0m,   Max: 500m, Step: 5m,   Hint: "Skip if SL−Entry < this. Filters tiny candles. 0 = disabled"),
+        new("TrendFilterPeriod",      "Trend Filter EMA Period",   "int",     20,   Min: 0,    Max: 100, Hint: "Only short when close < this EMA. Set to 0 to disable"),
+        new("SessionStartBufferBars", "Session Start Buffer Bars", "int",     3,    Min: 0,    Max: 12,   Hint: "Skip first N bars of each session (opening noise)"),
+        new("BreakoutVolumeMultiple", "Breakout Volume Multiple",  "decimal", 1.5m, Min: 0.0m, Max: 5.0m, Step: 0.5m, Hint: "Breakout bar must have volume ≥ this × session avg. 0 = disabled"),
+        new("AllowLong",              "Allow Long Trades",         "bool",    false, Hint: "Mirror long setup: candle high floats below EMA → next bar breaks above → BUY"),
+    ];
 }

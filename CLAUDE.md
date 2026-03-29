@@ -1,41 +1,8 @@
 # CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-<!-- always loaded — keep under 200 lines -->
-
-## Commands
-
-```bash
-# Backend
-dotnet build rvs.AlgoTrader.sln
-dotnet run --project src/rvs.AlgoTrader.API
-
-# Frontend
-cd frontend && npm install && npm run dev   # dev server on :3000, proxies API to :62318
-cd frontend && npm run build
-cd frontend && npm run lint
-
-# Tests
-./run-tests.sh unit          # xUnit unit tests
-./run-tests.sh arch          # NetArchTest architecture rules
-./run-tests.sh integration   # Testcontainers (requires Docker)
-./run-tests.sh e2e           # Playwright (starts dev server)
-./run-tests.sh all
-
-# Single test
-dotnet test tests/rvs.AlgoTrader.Tests.Unit --filter "FullyQualifiedName~ClassName"
-cd frontend && npm test      # Vitest single run
-cd frontend && npm run test:watch
-
-# Infrastructure (Docker)
-docker compose up -d         # TimescaleDB, Redis, RabbitMQ, Vault, Prometheus, Grafana
-```
+<!-- always loaded — keep under 100 lines; full detail lives in docs/ -->
 
 ## Identity
-repo: rvs.AlgoTrader | ns: rvs.AlgoTrader.*
-stack: .NET 9 / C# 13 / React 19 / PostgreSQL+TimescaleDB / Redis / RabbitMQ
-primary broker: mStock Type B API
+repo: rvs.AlgoTrader | ns: rvs.AlgoTrader.* | stack: .NET 9 / C# 13 / React 19 / TimescaleDB / Redis / RabbitMQ | broker: mStock Type B API
 
 ## Session start (every session, no exceptions)
 1. read this file
@@ -46,158 +13,70 @@ primary broker: mStock Type B API
 6. state current phase + gaps + proposed next step
 7. wait for confirmation before writing any code
 
+## Commands
+```bash
+dotnet build rvs.AlgoTrader.sln
+dotnet run --project src/rvs.AlgoTrader.API
+cd frontend && npm run dev        # :3000, proxies API to :62318
+./run-tests.sh [unit|arch|integration|e2e|all]
+dotnet test tests/rvs.AlgoTrader.Tests.Unit --filter "FullyQualifiedName~MyTestName"
+docker compose up -d              # TimescaleDB, Redis, RabbitMQ, Vault, Prometheus, Grafana
+```
+
 ## Git workflow
 - **never create feature branches** — all edits go directly to master
-- do not create, switch to, or propose any branch other than master
-- do not open pull requests; commit directly to master
-- do not run `git checkout -b` or `git switch -c` under any circumstances
-
-## Frontend UI rules
-authoritative design spec: docs/UI_DESIGN_SPEC.md — read before any frontend change
-- import colors/spacing from `src/styles/tokens.ts` — never use raw hex values inline
-- layout: top-nav bar (36px) + full-width content area — NO left sidebar
-- content padding: `12px 16px` (not 20px)
-- table row padding: `5px 10px` (not 12px)
-- metric card values: monospace font, 22px max
-- forms (create strategy, run backtest): right-side drawer at 520px width
-- section labels: 11px uppercase, border-bottom — no h2 with margin
-- background: `#090910` page, `#0d0d17` surfaces (not #0f0f1a / #1e1e2e)
-- green: `#00d07a`, red: `#ff4757` — not pastel variants
-- no emoji icons in navigation
-- minimum supported width: 1280px — no mobile breakpoints
+- no PRs; no `git checkout -b` / `git switch -c` under any circumstances
 
 ## Model routing
-use the right model per task to reduce token cost:
+haiku: reading files, doc/status updates, commit messages, simple edits
+sonnet (default): features, tests, refactoring, strategy code
+opus (escalate only): new bounded contexts, architecture conflicts, multi-system debug, new phase planning
+switch: /model haiku | /model sonnet | /model opus | /effort low | /effort high
 
-haiku:
-- reading files for context
-- updating IMPLEMENTATION_STATUS.md
-- updating REQUIREMENTS_DELTA.md
-- writing git commit messages
-- doc-update skill tasks
-- session-summary hook output
-- simple search/replace edits
-
-sonnet (default):
-- implementing features
-- writing tests
-- refactoring existing code
-- strategy implementation
-- reviewing anti-patterns
-
-opus (escalate only):
-- designing new bounded contexts
-- resolving complex architecture conflicts
-- debugging hard multi-system issues
-- planning a new phase from scratch
-
-switch model: /model haiku | /model sonnet | /model opus
-reduce thinking: /effort low (for simple tasks) | /effort high (for complex)
-disable thinking for doc-only tasks: /config thinking false
-
-## Priority workflow
-research -> backtest -> forward test -> approval gate -> live deploy -> monitor
-
-## Product focus
-- prioritize backtest/forward test/live lifecycle
-- mStock Type B is primary data + execution source
-- no DB schema changes unless explicitly requested
-- improve existing code; no greenfield rewrites
-- future: screener, news, events, analytics
+## Frontend UI rules
+spec: docs/UI_DESIGN_SPEC.md — read before any frontend change
+- colors/spacing from `frontend/src/styles/tokens.ts` — never raw hex inline (AP-020)
+- top-nav (36px) + full-width — NO left sidebar (AP-021); right-side drawer for forms 520px (AP-022)
+- padding: `12px 16px` content, `5px 10px` table rows; metric values: monospace 22px max
+- bg: `#090910` page / `#0d0d17` surfaces; green `#00d07a` / red `#ff4757`
+- no emoji in nav; min-width 1280px; no mobile breakpoints
 
 ## Hard rules
-- no DateTime.Now / DateTimeOffset.UtcNow — use IClock
-- no partial candle in IStrategy.EvaluateAsync
-- no cross-context direct calls
-- backtesting never calls broker APIs
-- forward testing never places real orders
-- no hardcoded secrets — ever
-- no secrets in logs or output
-- no business config in appsettings
-- no naked short options in any strategy
-- no DB schema changes unless explicitly asked
-- no MediatR for trivial CRUD
-- standard business API envelope on all endpoints
-- audit_log INSERT-only
-- Idempotency-Key required on all order placement
-- kill switch dual-writes Redis + DB
-- capital reservation via atomic Redis Lua script
-- never echo .env values, API keys, or tokens in output
+- no DateTime.Now — use IClock (AP-001, AP-016)
+- no partial candle in EvaluateAsync (AP-007); backtesting never calls broker; fwd test never places real orders (AP-002)
+- no hardcoded secrets; never echo secrets/keys in output (AP-006, AP-018)
+- no cross-context direct calls; no MediatR for trivial CRUD (AP-003)
+- audit_log INSERT-only (AP-009); kill switch dual-writes Redis+DB (AP-015)
+- Idempotency-Key on all orders (AP-004); capital reserve via atomic Redis Lua (AP-005)
+- standard API envelope on all endpoints; no DB schema changes unless asked (AP-013)
+- DB migrations: `*.sql` in `src/.../Persistence/Migrations/` auto-discovered in numeric order by `DatabaseMigrationRunner`; never modify an applied migration — add a new numbered file
+- broker HTTP must use Polly (AP-010); timeseries queries must bound timestamps (AP-014)
+- frontend order submit: crypto.randomUUID() per submit (AP-012)
+- no naked short options in any strategy; no business config in appsettings
+see full list: docs/ANTI_PATTERNS.md
 
 ## Architecture
 layers: Domain <- Application <- Infrastructure <- API
 contexts: TradingExecution | DataIngestion | Backtesting
-execution engines:
-  BacktestExecutionEngine — historical simulation only
-  SimulatedExecutionEngine — forward test, no real orders
-  LiveExecutionEngine — real broker execution
-
-rule: same IStrategy + IIndicatorService logic across all 3 modes; only IExecutionEngine differs
+engines: BacktestExecutionEngine (historical) | SimulatedExecutionEngine (fwd, no real orders) | LiveExecutionEngine (broker)
+rule: same IStrategy + IIndicatorService across all 3 modes; only IExecutionEngine differs
+see: docs/ARCHITECTURE.md
 
 ## Strategy targets
-STRAT-001: VCP swing (daily equity)
-STRAT-002: Fibonacci hedged option spread
-STRAT-003: Intraday PCR/OI/VWAP/gamma options
-authoritative strategy definitions: docs/STRATEGY_SPECS.md
-docs/STRATEGY.md is legacy background/reference only; do not use it for implementation decisions
+STRAT-001: VCP swing (daily equity) | STRAT-002: Fibonacci hedged option spread | STRAT-003: Intraday PCR/OI/VWAP/gamma options
+authoritative: docs/STRATEGY_SPECS.md — docs/STRATEGY.md is legacy, do not use for implementation
 
-## Data sources
-primary: mStock Type B API
-breadth: NSE Bhavcopy daily CSV (BreadthService)
-events: NSE corporate calendar (EventCalendarService)
-IV verification: mStock get_option_chain_data — must verify live response schema
-see: docs/DATA_SOURCES.md
-
-## Approval gate
-live deployment requires:
-- backtest CAGR >= threshold
-- backtest max drawdown <= threshold
-- min forward test days met
-- manual approval recorded in strategy_approvals table
-see: docs/WORKFLOW.md
-
-## Anti-patterns
-AP-001 DateTime.Now -> use IClock
-AP-002 backtesting injecting broker -> use historical data only
-AP-003 MediatR on trivial CRUD -> direct service call
-AP-004 missing Idempotency-Key -> enforce before order processing
-AP-005 non-atomic capital reserve -> single Redis Lua script
-AP-006 hardcoded secret -> ISecretsProvider
-AP-007 partial candle in strategy -> closed candle events only
-AP-008 missing correlation ID in logs -> Serilog enrichment
-AP-009 UPDATE/DELETE on audit_log -> INSERT only
-AP-010 broker HTTP without Polly -> retry + circuit + timeout
-AP-011 order without market calendar check -> validate session first
-AP-012 frontend submit without idempotency key -> crypto.randomUUID() per submit
-AP-013 schema change without migration -> not allowed unless requested
-AP-014 timeseries query without time range -> always bound timestamps
-AP-015 kill switch ignored on restart -> always blocks auto-resume
-AP-016 candle aggregation using static clock -> use IClock
-AP-017 silent cold restart -> surface event in UI
-AP-018 secret or API key echoed in output -> never log or print secrets
-AP-019 creating feature/topic branches -> always commit directly to master
-AP-020 raw hex color in frontend -> import from src/styles/tokens.ts
-AP-021 left sidebar layout -> use top-nav horizontal layout only
-AP-022 inline expanded forms -> use right-side drawer pattern
-
-## Reference repos
-see: docs/REFERENCES.md
+## Workflow & approval gate
+research → backtest → forward test → approval gate → live deploy → monitor
+live requires: CAGR/drawdown thresholds + min fwd-test days + manual approval in strategy_approvals
+see: docs/WORKFLOW.md | docs/APPROVAL_CRITERIA.md | docs/DATA_SOURCES.md
 
 ## Docs map
-docs/PLAN.md | docs/ARCHITECTURE.md | docs/WORKFLOW.md
-docs/IMPLEMENTATION_STATUS.md | docs/REQUIREMENTS_DELTA.md
-docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
-docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md | docs/UI_DESIGN_SPEC.md
-SELF_LEARNING.md
-
-## Docs loading rules
-- do not read docs/STRATEGY.md for implementation; it is legacy/reference only
+docs/PLAN.md | docs/ARCHITECTURE.md | docs/WORKFLOW.md | docs/IMPLEMENTATION_STATUS.md
+docs/REQUIREMENTS_DELTA.md | docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
+docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md | docs/UI_DESIGN_SPEC.md | docs/ANTI_PATTERNS.md | SELF_LEARNING.md
 - keep docs/IMPLEMENTATION_STATUS.md under 50 lines
-- prefer linked detailed docs over repeating large content here
+- docs/STRATEGY.md is legacy — never use for implementation decisions
 
 ## Post-change updates
-after meaningful changes always update:
-- docs/IMPLEMENTATION_STATUS.md
-- docs/REQUIREMENTS_DELTA.md if requirements changed
-- docs/STRATEGY_SPECS.md if strategy rules changed
-- SELF_LEARNING.md if repeatable mistake found
+update after meaningful changes: docs/IMPLEMENTATION_STATUS.md | docs/REQUIREMENTS_DELTA.md (if reqs changed) | docs/STRATEGY_SPECS.md (if strategy rules changed) | SELF_LEARNING.md (if repeatable mistake found)

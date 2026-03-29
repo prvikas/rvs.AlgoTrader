@@ -7,6 +7,7 @@ using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Infrastructure.Persistence;
+using rvs.AlgoTrader.Infrastructure.Services;
 
 namespace rvs.AlgoTrader.Infrastructure.Repositories;
 
@@ -139,8 +140,13 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
         return (items.Select(ToDto).ToList(), total);
     }
 
-    public Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct)
-        => Task.FromResult<byte[]?>(null); // PDF reports not yet implemented
+    public async Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct)
+    {
+        var run = await db.BacktestRuns.FirstOrDefaultAsync(r => r.Id == runId, ct);
+        if (run == null) return null;
+        var dto = ToDto(run);
+        return BacktestReportGenerator.Generate(dto);
+    }
 
     public async Task SaveAsync(BacktestResultDto result, CancellationToken ct)
     {
@@ -179,6 +185,12 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
             ExpectancyPerTrade = result.ExpectancyPerTrade,
             DataHash = result.DataHash,
             TradesJson = tradesJson,
+            ExtendedStatsJson = System.Text.Json.JsonSerializer.Serialize(new {
+                result.SortinoRatio, result.DailySharpe, result.MonthlySharpe,
+                result.MonthlyWinRate, result.DrawdownRecoveryBars, result.MaxLots,
+                MonthlyBreakdown = result.MonthlyBreakdown ?? [],
+                YearlyBreakdown  = result.YearlyBreakdown  ?? []
+            }),
             RanAt = NodaTime.SystemClock.Instance.GetCurrentInstant()
         };
 
@@ -193,6 +205,29 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
         {
             try { trades = System.Text.Json.JsonSerializer.Deserialize<List<BacktestTradeDto>>(r.TradesJson); }
             catch { /* ignore deserialisation errors */ }
+        }
+
+        decimal sortinoRatio = 0, dailySharpe = 0, monthlySharpe = 0, monthlyWinRate = 0;
+        int ddRecoveryBars = 0, maxLots = 0;
+        IReadOnlyList<BacktestMonthlyBreakdownDto>? monthlyBreakdown = null;
+        IReadOnlyList<BacktestYearlyBreakdownDto>? yearlyBreakdown = null;
+        if (!string.IsNullOrEmpty(r.ExtendedStatsJson))
+        {
+            try
+            {
+                var ext = System.Text.Json.JsonDocument.Parse(r.ExtendedStatsJson).RootElement;
+                if (ext.TryGetProperty("SortinoRatio", out var sr)) sortinoRatio = sr.GetDecimal();
+                if (ext.TryGetProperty("DailySharpe", out var ds)) dailySharpe = ds.GetDecimal();
+                if (ext.TryGetProperty("MonthlySharpe", out var ms)) monthlySharpe = ms.GetDecimal();
+                if (ext.TryGetProperty("MonthlyWinRate", out var mwr)) monthlyWinRate = mwr.GetDecimal();
+                if (ext.TryGetProperty("DrawdownRecoveryBars", out var drb)) ddRecoveryBars = drb.GetInt32();
+                if (ext.TryGetProperty("MaxLots", out var ml)) maxLots = ml.GetInt32();
+                if (ext.TryGetProperty("MonthlyBreakdown", out var mb))
+                    monthlyBreakdown = System.Text.Json.JsonSerializer.Deserialize<List<BacktestMonthlyBreakdownDto>>(mb.GetRawText());
+                if (ext.TryGetProperty("YearlyBreakdown", out var yb))
+                    yearlyBreakdown = System.Text.Json.JsonSerializer.Deserialize<List<BacktestYearlyBreakdownDto>>(yb.GetRawText());
+            }
+            catch { /* ignore */ }
         }
 
         return new BacktestResultDto(
@@ -219,10 +254,18 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
             AvgLoss: r.AvgLoss,
             MaxConsecutiveLosses: r.MaxConsecutiveLosses,
             ExpectancyPerTrade: r.ExpectancyPerTrade,
+            SortinoRatio: sortinoRatio,
+            DailySharpe: dailySharpe,
+            MonthlySharpe: monthlySharpe,
+            MonthlyWinRate: monthlyWinRate,
+            DrawdownRecoveryBars: ddRecoveryBars,
+            MaxLots: maxLots,
             DataHash: r.DataHash,
             Error: null,
             StartedAt: r.RanAt.ToDateTimeOffset(),
-            Trades: trades);
+            Trades: trades,
+            MonthlyBreakdown: monthlyBreakdown,
+            YearlyBreakdown: yearlyBreakdown);
     }
 }
 

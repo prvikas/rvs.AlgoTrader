@@ -30,5 +30,9 @@ public class CandleConfiguration : IEntityTypeConfiguration<Candle>
                 v => Instant.FromDateTimeUtc(v));
 
         builder.HasIndex(c => new { c.InternalSymbol, c.Timeframe, c.OpenTime });
+
+        // Id and BrokerName are in-memory only — no column in the candles table
+        builder.Ignore(c => c.Id);
+        builder.Ignore(c => c.BrokerName);
     }
 }

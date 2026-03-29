@@ -23,7 +23,7 @@ public class BacktestService(
         var request = BuildRequest(dto);
 
         // First attempt
-        var result = await engine.RunAsync(request, ct);
+        var result = await engine.RunAsync(request, ct, progress: null);
 
         // If insufficient data, auto-download from broker and retry once
         if (!result.Success &&
@@ -55,7 +55,7 @@ public class BacktestService(
             logger.LogInformation("[BacktestService] Downloaded {Count} bars ({Tf}). Retrying backtest...",
                 dl.BarCount, downloadTf);
 
-            result = await engine.RunAsync(request, ct);
+            result = await engine.RunAsync(request, ct, progress: null);
         }
 
         // Persist successful run to DB
@@ -109,6 +109,12 @@ public class BacktestService(
         AvgLoss: r.AvgLoss,
         MaxConsecutiveLosses: r.MaxConsecutiveLosses,
         ExpectancyPerTrade: r.ExpectancyPerTrade,
+        SortinoRatio: r.SortinoRatio,
+        DailySharpe: r.DailySharpe,
+        MonthlySharpe: r.MonthlySharpe,
+        MonthlyWinRate: r.MonthlyWinRate,
+        DrawdownRecoveryBars: r.DrawdownRecoveryBars,
+        MaxLots: r.MaxLots,
         DataHash: r.DataHash,
         Error: r.Error,
         StartedAt: DateTimeOffset.UtcNow,
@@ -122,7 +128,9 @@ public class BacktestService(
             NetPnl: t.NetPnl,
             EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
             ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o")
-        )).ToList());
+        )).ToList(),
+        MonthlyBreakdown: r.MonthlyBreakdown.Select(m => new BacktestMonthlyBreakdownDto(m.Year, m.Month, m.Pnl, m.Trades, m.WinRate)).ToList(),
+        YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList());
 }
 
 /// <summary>

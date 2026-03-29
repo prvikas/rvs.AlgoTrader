@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { refreshFiltersApi, RefreshFiltersDto } from '../api/client'
+import { refreshFiltersApi } from '../api/client'
 import { useState } from 'react'
 
 /**

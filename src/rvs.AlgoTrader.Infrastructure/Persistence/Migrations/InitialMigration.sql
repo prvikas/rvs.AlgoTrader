@@ -1,11 +1,12 @@
 -- rvs.AlgoTrader Initial Migration
 -- PostgreSQL (TimescaleDB optional)
+-- Idempotent — safe to run multiple times.
 
 -- Enable TimescaleDB (optional - skip if not installed)
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- instruments
-CREATE TABLE instruments (
+CREATE TABLE IF NOT EXISTS instruments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     internal_symbol VARCHAR(50) NOT NULL UNIQUE,
     trading_symbol VARCHAR(50) NOT NULL,
@@ -25,10 +26,10 @@ CREATE TABLE instruments (
     last_refreshed_at TIMESTAMPTZ,
     UNIQUE(trading_symbol, exchange)
 );
-CREATE INDEX idx_instruments_active ON instruments(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_instruments_active ON instruments(is_active) WHERE is_active = true;
 
 -- candles (TimescaleDB hypertable if available, else regular table)
-CREATE TABLE candles (
+CREATE TABLE IF NOT EXISTS candles (
     internal_symbol VARCHAR(50) NOT NULL,
     timeframe VARCHAR(10) NOT NULL,
     open_time TIMESTAMPTZ NOT NULL,
@@ -41,10 +42,10 @@ CREATE TABLE candles (
     is_closed BOOL NOT NULL DEFAULT true,
     PRIMARY KEY (internal_symbol, timeframe, open_time)
 );
-CREATE INDEX idx_candles_symbol_tf ON candles(internal_symbol, timeframe, open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_candles_symbol_tf ON candles(internal_symbol, timeframe, open_time DESC);
 
 -- risk_profiles
-CREATE TABLE risk_profiles (
+CREATE TABLE IF NOT EXISTS risk_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(200) NOT NULL,
     max_position_size_pct NUMERIC(6,4) NOT NULL DEFAULT 0.02,
@@ -57,7 +58,7 @@ CREATE TABLE risk_profiles (
 );
 
 -- strategy_instances
-CREATE TABLE strategy_instances (
+CREATE TABLE IF NOT EXISTS strategy_instances (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(200) NOT NULL,
     strategy_name VARCHAR(100) NOT NULL,
@@ -79,11 +80,11 @@ CREATE TABLE strategy_instances (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_strategy_instances_status ON strategy_instances(status);
-CREATE INDEX idx_strategy_instances_symbol ON strategy_instances(internal_symbol, status);
+CREATE INDEX IF NOT EXISTS idx_strategy_instances_status ON strategy_instances(status);
+CREATE INDEX IF NOT EXISTS idx_strategy_instances_symbol ON strategy_instances(internal_symbol, status);
 
 -- strategy_runs
-CREATE TABLE strategy_runs (
+CREATE TABLE IF NOT EXISTS strategy_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     strategy_instance_id UUID NOT NULL REFERENCES strategy_instances(id),
     broker_name VARCHAR(50),
@@ -98,11 +99,11 @@ CREATE TABLE strategy_runs (
     loss_count INT DEFAULT 0,
     max_drawdown NUMERIC(18,4) DEFAULT 0
 );
-CREATE INDEX idx_strategy_runs_instance ON strategy_runs(strategy_instance_id);
-CREATE INDEX idx_strategy_runs_status ON strategy_runs(status);
+CREATE INDEX IF NOT EXISTS idx_strategy_runs_instance ON strategy_runs(strategy_instance_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_runs_status ON strategy_runs(status);
 
 -- orders
-CREATE TABLE orders (
+CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     broker_name VARCHAR(50) NOT NULL,
     broker_order_id VARCHAR(100),
@@ -128,13 +129,13 @@ CREATE TABLE orders (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_orders_broker_status ON orders(broker_name, status);
-CREATE INDEX idx_orders_strategy_run ON orders(strategy_run_id);
-CREATE INDEX idx_orders_broker_order_id ON orders(broker_order_id);
-CREATE UNIQUE INDEX idx_orders_idempotency ON orders(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_orders_broker_status ON orders(broker_name, status);
+CREATE INDEX IF NOT EXISTS idx_orders_strategy_run ON orders(strategy_run_id);
+CREATE INDEX IF NOT EXISTS idx_orders_broker_order_id ON orders(broker_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency ON orders(idempotency_key);
 
 -- positions
-CREATE TABLE positions (
+CREATE TABLE IF NOT EXISTS positions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     broker_name VARCHAR(50) NOT NULL,
     internal_symbol VARCHAR(50) NOT NULL,
@@ -156,12 +157,12 @@ CREATE TABLE positions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_positions_broker_open ON positions(broker_name, is_open);
-CREATE INDEX idx_positions_strategy_run ON positions(strategy_run_id);
-CREATE INDEX idx_positions_symbol_open ON positions(internal_symbol, is_open);
+CREATE INDEX IF NOT EXISTS idx_positions_broker_open ON positions(broker_name, is_open);
+CREATE INDEX IF NOT EXISTS idx_positions_strategy_run ON positions(strategy_run_id);
+CREATE INDEX IF NOT EXISTS idx_positions_symbol_open ON positions(internal_symbol, is_open);
 
 -- capital_allocations
-CREATE TABLE capital_allocations (
+CREATE TABLE IF NOT EXISTS capital_allocations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     strategy_instance_id UUID NOT NULL REFERENCES strategy_instances(id),
     broker_name VARCHAR(50) NOT NULL DEFAULT '',
@@ -172,42 +173,12 @@ CREATE TABLE capital_allocations (
     UNIQUE(strategy_instance_id)
 );
 
--- forward_test_sessions
-CREATE TABLE forward_test_sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    strategy_instance_id UUID NOT NULL REFERENCES strategy_instances(id),
-    started_at TIMESTAMPTZ NOT NULL,
-    ended_at TIMESTAMPTZ,
-    initial_capital NUMERIC(18,4) NOT NULL,
-    final_capital NUMERIC(18,4) DEFAULT 0,
-    final_pnl NUMERIC(18,4) DEFAULT 0,
-    trade_count INT DEFAULT 0,
-    win_rate NUMERIC(6,4) DEFAULT 0,
-    status VARCHAR(30) DEFAULT 'Running'
-);
-
--- forward_test_trades
-CREATE TABLE forward_test_trades (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID NOT NULL REFERENCES forward_test_sessions(id),
-    internal_symbol VARCHAR(50) NOT NULL,
-    direction VARCHAR(10) NOT NULL,
-    quantity INT NOT NULL,
-    entry_price NUMERIC(18,4) NOT NULL,
-    exit_price NUMERIC(18,4),
-    simulated_fill_price NUMERIC(18,4),
-    slippage NUMERIC(18,4) DEFAULT 0,
-    pnl NUMERIC(18,4) DEFAULT 0,
-    realized_pnl NUMERIC(18,4),
-    close_reason VARCHAR(100),
-    entry_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    exit_time TIMESTAMPTZ,
-    opened_at TIMESTAMPTZ,
-    closed_at TIMESTAMPTZ
-);
+-- forward_test_sessions and forward_test_trades are defined in 004_BacktestAndForwardTestTrades.sql
+-- which has the full schema including max_drawdown, sharpe_ratio, source_backtest_id.
+-- Do not define them here to avoid duplicate IF NOT EXISTS silently masking missing columns.
 
 -- audit_log (append-only, SEBI compliance)
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
     event_type VARCHAR(100) NOT NULL,
     entity_type VARCHAR(50),
@@ -217,13 +188,16 @@ CREATE TABLE audit_log (
     correlation_id VARCHAR(100),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_audit_log_occurred ON audit_log(occurred_at DESC);
-CREATE INDEX idx_audit_log_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_occurred ON audit_log(occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
+-- DROP IF EXISTS before CREATE so re-runs are safe (no IF NOT EXISTS syntax for rules)
+DROP RULE IF EXISTS no_update_audit ON audit_log;
 CREATE RULE no_update_audit AS ON UPDATE TO audit_log DO INSTEAD NOTHING;
+DROP RULE IF EXISTS no_delete_audit ON audit_log;
 CREATE RULE no_delete_audit AS ON DELETE TO audit_log DO INSTEAD NOTHING;
 
 -- signal_journal
-CREATE TABLE signal_journal (
+CREATE TABLE IF NOT EXISTS signal_journal (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     strategy_instance_id UUID NOT NULL REFERENCES strategy_instances(id),
     strategy_name VARCHAR(100),
@@ -238,17 +212,17 @@ CREATE TABLE signal_journal (
     correlation_id VARCHAR(100),
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_signal_journal_instance ON signal_journal(strategy_instance_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_signal_journal_instance ON signal_journal(strategy_instance_id, occurred_at DESC);
 
 -- app_config
-CREATE TABLE app_config (
+CREATE TABLE IF NOT EXISTS app_config (
     key VARCHAR(200) PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- monitoring_alert_rules
-CREATE TABLE monitoring_alert_rules (
+CREATE TABLE IF NOT EXISTS monitoring_alert_rules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     alert_type VARCHAR(100) NOT NULL,
     metric_name VARCHAR(100) NOT NULL,
@@ -261,7 +235,7 @@ CREATE TABLE monitoring_alert_rules (
 );
 
 -- broker_latency_log
-CREATE TABLE broker_latency_log (
+CREATE TABLE IF NOT EXISTS broker_latency_log (
     id BIGSERIAL PRIMARY KEY,
     broker_name VARCHAR(50) NOT NULL,
     p50_ms DOUBLE PRECISION NOT NULL,
@@ -272,7 +246,7 @@ CREATE TABLE broker_latency_log (
 );
 
 -- watchlists
-CREATE TABLE watchlists (
+CREATE TABLE IF NOT EXISTS watchlists (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(200) NOT NULL,
     created_by VARCHAR(100) NOT NULL DEFAULT '',
@@ -281,7 +255,7 @@ CREATE TABLE watchlists (
 );
 
 -- watchlist_symbols
-CREATE TABLE watchlist_symbols (
+CREATE TABLE IF NOT EXISTS watchlist_symbols (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     watchlist_id UUID NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
     internal_symbol VARCHAR(50) NOT NULL,
@@ -291,7 +265,7 @@ CREATE TABLE watchlist_symbols (
 );
 
 -- symbol_data_preferences
-CREATE TABLE symbol_data_preferences (
+CREATE TABLE IF NOT EXISTS symbol_data_preferences (
     internal_symbol VARCHAR(50) PRIMARY KEY,
     preferred_broker VARCHAR(50),
     preferred_timeframes TEXT[] DEFAULT '{}',
@@ -299,3 +273,44 @@ CREATE TABLE symbol_data_preferences (
     notes TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── EF compatibility: restore DB-level defaults stripped by EnsureCreatedAsync ──
+-- EF creates columns without DB-level defaults (it manages values in C#).
+-- When migrations INSERT rows without specifying these columns, Postgres
+-- returns NOT NULL violations unless the defaults are set here first.
+-- All ALTER COLUMN SET DEFAULT calls are idempotent.
+
+-- UUID primary keys
+ALTER TABLE instruments              ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE risk_profiles            ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE strategy_instances       ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE strategy_runs            ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE orders                   ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE positions                ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE capital_allocations      ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE signal_journal           ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE monitoring_alert_rules   ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE watchlists               ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE watchlist_symbols        ALTER COLUMN id SET DEFAULT gen_random_uuid();
+-- forward_test_sessions and forward_test_trades id defaults are set in 004
+
+-- Timestamp defaults (EF sets these in C# via IClock; DB-level fallback needed for SQL inserts)
+ALTER TABLE risk_profiles            ALTER COLUMN created_at           SET DEFAULT NOW();
+ALTER TABLE risk_profiles            ALTER COLUMN updated_at           SET DEFAULT NOW();
+ALTER TABLE strategy_instances       ALTER COLUMN created_at           SET DEFAULT NOW();
+ALTER TABLE strategy_instances       ALTER COLUMN updated_at           SET DEFAULT NOW();
+ALTER TABLE orders                   ALTER COLUMN created_at           SET DEFAULT NOW();
+ALTER TABLE orders                   ALTER COLUMN updated_at           SET DEFAULT NOW();
+ALTER TABLE positions                ALTER COLUMN created_at           SET DEFAULT NOW();
+ALTER TABLE positions                ALTER COLUMN updated_at           SET DEFAULT NOW();
+ALTER TABLE capital_allocations      ALTER COLUMN created_at           SET DEFAULT NOW();
+ALTER TABLE capital_allocations      ALTER COLUMN updated_at           SET DEFAULT NOW();
+ALTER TABLE watchlists               ALTER COLUMN created_at           SET DEFAULT NOW();
+ALTER TABLE watchlists               ALTER COLUMN updated_at           SET DEFAULT NOW();
+ALTER TABLE watchlist_symbols        ALTER COLUMN added_at             SET DEFAULT NOW();
+
+-- Boolean defaults
+ALTER TABLE instruments              ALTER COLUMN is_active            SET DEFAULT true;
+ALTER TABLE watchlist_symbols        ALTER COLUMN sort_order           SET DEFAULT 0;
+ALTER TABLE symbol_data_preferences  ALTER COLUMN is_monitored         SET DEFAULT false;
+ALTER TABLE symbol_data_preferences  ALTER COLUMN preferred_timeframes SET DEFAULT '{}';

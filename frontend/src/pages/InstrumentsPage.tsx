@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { instrumentsApi, historicalApi, Instrument } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -52,8 +52,6 @@ const gridCols = COLUMNS.map(c => c.width).join(' ')
 // ─── InstrumentsPage ──────────────────────────────────────────────────────────
 
 export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void }) {
-  const qc = useQueryClient()
-
   // ── Filter / sort / page state ───────────────────────────────────────────
   const [search, setSearch]                   = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')

@@ -210,6 +210,17 @@ public class UpstoxClient(
         return bars;
     }
 
+    /// <summary>
+    /// Upstox v2 per-request historical data limits (calendar days).
+    /// Source: https://upstox.com/developer/api-documentation/historical-candle-data
+    /// Intraday timeframes: 30 days; daily: 2 years (730 days).
+    /// </summary>
+    public HistoricalQueryLimits GetHistoricalQueryLimits(string timeframe) => timeframe switch
+    {
+        "1d"  => new(730),
+        _     => new(30)
+    };
+
     public async Task<MarketDepth> GetDepthAsync(string brokerToken, CancellationToken ct)
     {
         var quote = await GetQuoteAsync(brokerToken, ct);

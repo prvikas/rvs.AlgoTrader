@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
@@ -7,7 +8,7 @@ using rvs.AlgoTrader.Infrastructure.Persistence;
 
 namespace rvs.AlgoTrader.Infrastructure.Repositories;
 
-public class CandleRepository(AlgoTraderDbContext db) : ICandleRepository
+public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> logger) : ICandleRepository
 {
     private static readonly DateTimeZone Utc = DateTimeZone.Utc;
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
@@ -40,8 +41,42 @@ public class CandleRepository(AlgoTraderDbContext db) : ICandleRepository
     public async Task BulkInsertAsync(IEnumerable<ClosedCandle> candles, CancellationToken ct = default)
     {
         var entities = candles.Select(ToEntity).ToList();
-        await db.Candles.AddRangeAsync(entities, ct);
-        await db.SaveChangesAsync(ct);
+        if (entities.Count == 0) return;
+
+        // Idempotent insert: skip rows that already exist in the DB.
+        // This makes re-downloading the same date range safe — no PK violations.
+        if (entities.Count > 0)
+        {
+            var symbol    = entities[0].InternalSymbol;
+            var timeframe = entities[0].Timeframe;
+            var minTime   = entities.Min(e => e.OpenTime);
+            var maxTime   = entities.Max(e => e.OpenTime);
+
+            var existingKeys = await db.Candles
+                .Where(c => c.InternalSymbol == symbol && c.Timeframe == timeframe
+                            && c.OpenTime >= minTime && c.OpenTime <= maxTime)
+                .Select(c => c.OpenTime)
+                .ToHashSetAsync(ct);
+
+            entities = entities.Where(e => !existingKeys.Contains(e.OpenTime)).ToList();
+        }
+
+        if (entities.Count == 0)
+        {
+            logger.LogDebug("[CandleRepo] BulkInsert: all candles already present — skipped");
+            return;
+        }
+
+        const int BatchSize = 500;
+        for (int i = 0; i < entities.Count; i += BatchSize)
+        {
+            var batch = entities.Skip(i).Take(BatchSize).ToList();
+            await db.Candles.AddRangeAsync(batch, ct);
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear(); // prevent memory bloat on large downloads
+        }
+
+        logger.LogDebug("[CandleRepo] BulkInsert: {Count} new candles written", entities.Count);
     }
 
     // ── Additional methods used by Infrastructure internally ─────────────────
@@ -99,12 +134,25 @@ public class CandleRepository(AlgoTraderDbContext db) : ICandleRepository
         // (1d is the one case where we still prefer direct download — not aggregated from 1m
         //  because an NSE trading day is 375 bars = expensive + boundary complex)
         if (targetTimeframe == "1m" || targetTimeframe == "1d")
+        {
+            logger.LogWarning(
+                "[CandleRepo] No stored candles for {Symbol}/{Tf} between {From} and {To}. " +
+                "Cannot aggregate (base timeframe). Trigger a historical download first.",
+                symbol, targetTimeframe, from, to);
             return stored; // nothing to aggregate from/to
+        }
 
         var oneMinute = await GetAsync(symbol, "1m", from, to, ct);
         if (oneMinute.Count == 0)
+        {
+            logger.LogWarning(
+                "[CandleRepo] No candles for {Symbol} at {Tf} or 1m between {From} and {To}. " +
+                "DB is empty for this range — historical download required.",
+                symbol, targetTimeframe, from, to);
             return stored; // no source data at all
+        }
 
+        logger.LogDebug("[CandleRepo] Aggregating {Count} 1m bars → {Tf} for {Symbol}", oneMinute.Count, targetTimeframe, symbol);
         return AggregateCandles(oneMinute, symbol, targetTimeframe);
     }
 

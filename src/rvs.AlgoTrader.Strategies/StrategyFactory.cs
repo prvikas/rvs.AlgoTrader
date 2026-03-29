@@ -40,4 +40,14 @@ public class StrategyFactory : IStrategyFactory
 
     public IEnumerable<string> GetRegisteredNames()
         => ["PriceActionBreakout", "EmaVwapMomentum", "AlertCandleShort"];
+
+    public IReadOnlyList<StrategyParamDef> GetParameterSchema(string strategyName)
+        => strategyName switch
+        {
+            "PriceActionBreakout" => PriceActionBreakoutConfig.GetSchema(),
+            "EmaVwapMomentum"     => EmaVwapMomentumConfig.GetSchema(),
+            "AlertCandleShort"    => AlertCandleShortConfig.GetSchema(),
+            _ => throw new InvalidOperationException(
+                $"Unknown strategy: '{strategyName}'. Registered: {string.Join(", ", GetRegisteredNames())}")
+        };
 }

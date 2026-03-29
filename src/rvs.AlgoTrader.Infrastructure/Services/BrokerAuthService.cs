@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using rvs.AlgoTrader.Application.DTOs.Broker;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
-using rvs.AlgoTrader.Brokers.MStock;
 using rvs.AlgoTrader.Brokers.Upstox.Auth;
 using rvs.AlgoTrader.Brokers.Zerodha.Auth;
 
@@ -15,11 +14,16 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// Authenticates with brokers, stores sessions, and triggers instrument master refresh
 /// immediately after each successful login — mirroring OpenAlgo's on-login behaviour.
 ///
+/// Authentication is performed through IBrokerClientFactory so the token is set on the
+/// factory's cached client instance (the same instance used for all subsequent API calls).
+/// Injecting MStockClient directly creates a separate transient instance that is discarded
+/// after the request, leaving the factory's instance unauthenticated.
+///
 /// Background refresh uses IServiceScopeFactory to create a fresh DI scope so we don't
 /// capture a disposed request scope (IInstrumentRefreshService is scoped).
 /// </summary>
 public class BrokerAuthService(
-    MStockClient mStockClient,
+    IBrokerClientFactory brokerFactory,
     ZerodhaAuth zerodhaAuth,
     UpstoxAuth upstoxAuth,
     IAppBrokerSessionManager sessionManager,
@@ -31,6 +35,9 @@ public class BrokerAuthService(
     public async Task<BrokerAuthResultDto> AuthenticateMStockAsync(
         string apiKey, string clientCode, string password, string totp, CancellationToken ct)
     {
+        // Use the factory's cached client so _jwtToken is set on the same instance
+        // that HistoricalDownloadService, LiveExecutionEngine, etc. will use.
+        var mStockClient = brokerFactory.GetClient("MStock");
         var creds = new BrokerCredentials("MStock", apiKey, null, null, null, clientCode, password, totp);
         var result = await mStockClient.AuthenticateAsync(creds, ct);
 
@@ -66,6 +73,9 @@ public class BrokerAuthService(
         if (result.Success)
         {
             await sessionManager.StoreSessionAsync("Zerodha", result, ct);
+            // Inject the token directly into the factory's cached client instance so it's
+            // immediately usable for market-data / order calls without requiring a restart.
+            brokerFactory.GetClient("Zerodha").RestoreToken(result.AccessToken!, null);
             FireAndForgetRefresh("Zerodha");
         }
 
@@ -98,6 +108,8 @@ public class BrokerAuthService(
         if (result.Success)
         {
             await sessionManager.StoreSessionAsync("Upstox", result, ct);
+            // Inject the token directly into the factory's cached client instance.
+            brokerFactory.GetClient("Upstox").RestoreToken(result.AccessToken!, null);
             FireAndForgetRefresh("Upstox");
         }
 

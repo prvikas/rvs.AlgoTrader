@@ -14,7 +14,7 @@ export function InstrumentTypesPage() {
     queryFn: () => instrumentTypesApi.getFuturesTypes(),
     staleTime: 30_000,
   })
-  const futuresTypes = futuresTypesResp?.data || ''
+  const futuresTypes = futuresTypesResp?.data?.data ?? ''
 
   // Fetch options types
   const { data: optionsTypesResp, isLoading: optionsLoading } = useQuery({
@@ -22,7 +22,7 @@ export function InstrumentTypesPage() {
     queryFn: () => instrumentTypesApi.getOptionsTypes(),
     staleTime: 30_000,
   })
-  const optionsTypes = optionsTypesResp?.data || ''
+  const optionsTypes = optionsTypesResp?.data?.data ?? ''
 
   // Update futures types mutation
   const updateFuturesMutation = useMutation({

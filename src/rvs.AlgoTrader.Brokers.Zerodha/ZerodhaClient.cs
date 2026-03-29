@@ -204,6 +204,22 @@ public class ZerodhaClient(
         return bars;
     }
 
+    /// <summary>
+    /// Zerodha Kite Connect per-request historical data limits (calendar days).
+    /// Source: https://kite.trade/docs/connect/v3/historical/
+    /// </summary>
+    public HistoricalQueryLimits GetHistoricalQueryLimits(string timeframe) => timeframe switch
+    {
+        "1m"  => new(60),
+        "3m"  => new(100),
+        "5m"  => new(100),
+        "15m" => new(200),
+        "30m" => new(200),
+        "60m" => new(400),
+        "1d"  => new(2000),
+        _     => new(60)
+    };
+
     public async Task<MarketDepth> GetDepthAsync(string brokerToken, CancellationToken ct)
     {
         var quote = await GetQuoteAsync(brokerToken, ct);

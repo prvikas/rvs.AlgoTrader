@@ -7,7 +7,7 @@
 -- Run after InitialMigration.sql.
 -- Add symbols via INSERT or via the UI (InstrumentUniversePage).
 
-CREATE TABLE instrument_universe (
+CREATE TABLE IF NOT EXISTS instrument_universe (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     symbol     VARCHAR(50)  NOT NULL,
     exchange   VARCHAR(10)  NOT NULL,  -- "NSE" for equities/indexes, "NFO" for option underlyings
@@ -17,7 +17,14 @@ CREATE TABLE instrument_universe (
     UNIQUE (symbol, exchange, category)
 );
 
-CREATE INDEX idx_instrument_universe_category ON instrument_universe(category, is_active);
+-- EF's EnsureCreatedAsync creates columns without DB-level defaults (it sets
+-- values in C# instead). Ensure defaults exist so seed INSERTs that omit these
+-- columns get correct values rather than NULL constraint violations.
+ALTER TABLE instrument_universe ALTER COLUMN id        SET DEFAULT gen_random_uuid();
+ALTER TABLE instrument_universe ALTER COLUMN is_active SET DEFAULT TRUE;
+ALTER TABLE instrument_universe ALTER COLUMN created_at SET DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_instrument_universe_category ON instrument_universe(category, is_active);
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- SEED: Option Underlyings — NFO index options/futures tracked by this system
@@ -27,7 +34,8 @@ INSERT INTO instrument_universe (symbol, exchange, category) VALUES
 ('BANKNIFTY',   'NFO', 'OPTIONS_UNDERLYING'),   -- NIFTY BANK index options
 ('FINNIFTY',    'NFO', 'OPTIONS_UNDERLYING'),   -- NIFTY FIN SERVICE index options
 ('MIDCPNIFTY',  'NFO', 'OPTIONS_UNDERLYING'),   -- NIFTY MIDCAP SELECT options
-('NIFTYNXT50',  'NFO', 'OPTIONS_UNDERLYING');   -- NIFTY NEXT 50 options
+('NIFTYNXT50',  'NFO', 'OPTIONS_UNDERLYING')    -- NIFTY NEXT 50 options
+ON CONFLICT (symbol, exchange, category) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- SEED: NSE_EQUITY — NIFTY 50 (50 stocks)
@@ -82,7 +90,8 @@ INSERT INTO instrument_universe (symbol, exchange, category) VALUES
 ('TITAN',       'NSE', 'NSE_EQUITY'),
 ('TRENT',       'NSE', 'NSE_EQUITY'),
 ('ULTRACEMCO',  'NSE', 'NSE_EQUITY'),
-('WIPRO',       'NSE', 'NSE_EQUITY');
+('WIPRO',       'NSE', 'NSE_EQUITY')
+ON CONFLICT (symbol, exchange, category) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- SEED: NSE_EQUITY — NIFTY NEXT 50 (50 stocks)
@@ -137,7 +146,8 @@ INSERT INTO instrument_universe (symbol, exchange, category) VALUES
 ('VOLTAS',      'NSE', 'NSE_EQUITY'),
 ('ZOMATO',      'NSE', 'NSE_EQUITY'),
 ('SWIGGY',      'NSE', 'NSE_EQUITY'),
-('HYUNDAI',     'NSE', 'NSE_EQUITY');
+('HYUNDAI',     'NSE', 'NSE_EQUITY')
+ON CONFLICT (symbol, exchange, category) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- SEED: NSE_EQUITY — NIFTY MIDCAP 150 (150 stocks)
@@ -279,7 +289,8 @@ INSERT INTO instrument_universe (symbol, exchange, category) VALUES
 ('UCOBANK',     'NSE', 'NSE_EQUITY'),
 ('VAIBHAVGBL',  'NSE', 'NSE_EQUITY'),
 ('VIJAYABANK',  'NSE', 'NSE_EQUITY'),
-('WOCKPHARMA',  'NSE', 'NSE_EQUITY');
+('WOCKPHARMA',  'NSE', 'NSE_EQUITY')
+ON CONFLICT (symbol, exchange, category) DO NOTHING;
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- To add more symbols: INSERT INTO instrument_universe (symbol, exchange, category) VALUES (...)

@@ -35,3 +35,80 @@ Claude must inspect code first, then update docs, then implement the smallest sa
 ## Rule
 Do not assume missing features.
 Verify in code first.
+
+---
+
+## Database migrations
+
+Migrations are plain SQL files. They **run automatically on every API startup** — no CLI commands, no manual steps.
+
+### Location
+
+```
+src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/
+```
+
+### How the runner works
+
+`DatabaseMigrationRunner` runs before the app accepts any requests:
+
+1. Ensures the database exists.
+2. Creates a `schema_migrations` tracking table (once, ever).
+3. Sorts all `*.sql` files by filename (lexicographic — numeric prefix determines order).
+4. For each file **not yet recorded** in `schema_migrations`: executes it, then records it.
+5. Already-applied files are skipped on every subsequent startup.
+
+### Adding a migration
+
+Create a new file with the next number in sequence:
+
+```
+008_YourDescription.sql
+```
+
+Write idempotent SQL — always use `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`:
+
+```sql
+-- 008_YourDescription.sql
+-- Idempotent — safe to run multiple times.
+
+ALTER TABLE some_table
+    ADD COLUMN IF NOT EXISTS new_column TEXT;
+
+CREATE INDEX IF NOT EXISTS ix_some_table_new_column
+    ON some_table (new_column);
+```
+
+Restart the API. Done. **`Program.cs` never changes.**
+
+### Naming convention
+
+Use zero-padded 3-digit prefixes so sort order is always correct:
+`008_`, `009_`, `010_`, `011_` …
+
+### Rules
+
+| Do | Don't |
+|---|---|
+| Create a new numbered file for every schema change | Edit an already-applied migration file |
+| Use `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` | Use `dotnet ef migrations add` (EF auto-migrations are disabled) |
+| Let the runner apply it on startup | Add migration code to `Program.cs` |
+
+### Inspect applied migrations
+
+```sql
+SELECT name, applied_at FROM schema_migrations ORDER BY applied_at;
+```
+
+### Current migration history
+
+| File | What it does |
+|---|---|
+| `InitialMigration.sql` | Baseline schema — all core tables (idempotent; sets `gen_random_uuid()` defaults for EF compat) |
+| `002_InstrumentUniverse.sql` | Instrument universe table + default seed rows |
+| `003_FixInstrumentColumns.sql` | Derivative instrument columns (underlying, strike, expiry) |
+| `004_BacktestAndForwardTestTrades.sql` | Backtest runs + forward test sessions/trades (incl. max_drawdown, sharpe_ratio, source_backtest_id) |
+| `005_BacktestExtendedStats.sql` | Extended stats columns on `backtest_runs` |
+| `006_StrategyInstancePnl.sql` | Intraday P&L columns on `strategy_instances` |
+| `007_StrategyScenarios.sql` | `strategy_scenarios` table + scenario columns on `backtest_runs` |
+| `008_BrokerSessions.sql` | `broker_sessions` table for token persistence across restarts |

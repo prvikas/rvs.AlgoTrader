@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
+using NodaTime.Serialization.SystemTextJson;
 using System.Text;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Backtesting.Engine;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Services;
 using rvs.AlgoTrader.Strategies;
+using rvs.AlgoTrader.API.Services;
 
 namespace rvs.AlgoTrader.API.Extensions;
 
@@ -19,6 +22,8 @@ public static class ServiceCollectionExtensions
                 opts.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
                 opts.JsonSerializerOptions.DefaultIgnoreCondition =
                     System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+                // NodaTime types (LocalDate, Instant, ZonedDateTime, etc.) used in request/response DTOs
+                opts.JsonSerializerOptions.ConfigureForNodaTime(NodaTime.DateTimeZoneProviders.Tzdb);
             });
 
         services.AddEndpointsApiExplorer();
@@ -67,6 +72,16 @@ public static class ServiceCollectionExtensions
         // Infrastructure defines IBacktestEngine (Application layer interface) but cannot reference
         // the Backtesting assembly directly (CLAUDE.md Rule #2 — no cross-context direct calls).
         services.AddScoped<IBacktestEngine, BacktestEngine>();
+
+        // IBacktestProgressPusher — implemented here (API) because it requires IHubContext<BacktestHub>.
+        // BacktestJobManager (Infrastructure) depends on IBacktestProgressPusher (Application interface)
+        // to avoid a circular dependency (Infrastructure → API is not allowed).
+        services.AddSingleton<IBacktestProgressPusher, SignalRBacktestProgressPusher>();
+
+        // IBacktestJobManager — singleton so job state survives across HTTP request scopes.
+        // Depends on IBacktestProgressPusher (registered above) and IBacktestEngine (scoped).
+        // Uses IServiceScopeFactory to resolve scoped services per job run.
+        services.AddSingleton<IBacktestJobManager, BacktestJobManager>();
 
         // ForwardTestEngine — must be Singleton: holds in-memory _activeStates per instance.
         // Scoped lifetime would lose all state on every new HTTP request scope.

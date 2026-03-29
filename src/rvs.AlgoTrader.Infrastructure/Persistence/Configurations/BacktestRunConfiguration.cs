@@ -35,7 +35,10 @@ public class BacktestRunConfiguration : IEntityTypeConfiguration<BacktestRun>
         b.Property(x => x.ExpectancyPerTrade).HasColumnName("expectancy_per_trade").HasColumnType("numeric(18,2)");
         b.Property(x => x.DataHash).HasColumnName("data_hash").HasMaxLength(64);
         b.Property(x => x.TradesJson).HasColumnName("trades_json").HasColumnType("text");
+        b.Property(x => x.ExtendedStatsJson).HasColumnName("extended_stats_json").HasColumnType("text");
         b.Property(x => x.RanAt).HasColumnName("ran_at");
+        b.Property(x => x.ScenarioId).HasColumnName("scenario_id");
+        b.Property(x => x.EffectiveParametersJson).HasColumnName("effective_parameters_json").HasColumnType("text");
 
         b.HasIndex(x => new { x.StrategyName, x.InternalSymbol, x.Timeframe })
             .HasDatabaseName("idx_backtest_runs_strategy_symbol");

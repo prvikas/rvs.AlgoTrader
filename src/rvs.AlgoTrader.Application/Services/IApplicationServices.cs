@@ -306,6 +306,44 @@ public interface IBacktestService
     Task<object> RunWalkForwardAsync(DTOs.Backtest.BacktestRequestDto request, CancellationToken ct);
 }
 
+/// <summary>
+/// Manages async backtest jobs. Each call to EnqueueAsync starts a background task
+/// and returns a jobId immediately. Use GetStatus to poll or subscribe via BacktestHub.
+/// </summary>
+public interface IBacktestJobManager
+{
+    /// <summary>Start a backtest in the background. Returns jobId immediately.</summary>
+    Task<string> EnqueueAsync(DTOs.Backtest.BacktestRequestDto request, CancellationToken ct);
+    /// <summary>
+    /// Start a scenario-tagged backtest. ParametersJson in mergedRequest must already be the
+    /// merged effective params (base + override). On success, updates scenario → Backtested
+    /// and sets LastBacktestRunId.
+    /// </summary>
+    Task<string> EnqueueScenarioAsync(Guid scenarioId, DTOs.Backtest.BacktestRequestDto mergedRequest, CancellationToken ct);
+    /// <summary>Get current status of a job (null if not found).</summary>
+    DTOs.Backtest.BacktestJobStatusDto? GetStatus(string jobId);
+    /// <summary>Cancel a running job.</summary>
+    void CancelJob(string jobId);
+    /// <summary>List all active (Queued/Running) job IDs.</summary>
+    IReadOnlyList<string> GetActiveJobIds();
+}
+
+/// <summary>
+/// Abstracts SignalR progress push out of BacktestJobManager so Infrastructure
+/// does not need to reference the API project (avoids circular dependency).
+/// Implemented in API as SignalRBacktestProgressPusher.
+/// </summary>
+public interface IBacktestProgressPusher
+{
+    Task PushProgressAsync(string jobId, DTOs.Backtest.BacktestJobStatusDto status);
+    Task PushCompletedAsync(string jobId, DTOs.Backtest.BacktestJobStatusDto status);
+    /// <summary>
+    /// Push a rolling chart batch (last ~200 bars) to the frontend during a running backtest.
+    /// Sent as a separate SignalR event ("BacktestChartUpdate") to keep the status DTO lean.
+    /// </summary>
+    Task PushChartUpdateAsync(string jobId, IReadOnlyList<DTOs.Backtest.BacktestChartBarDto> bars);
+}
+
 public interface ILiveExecutionEngine
 {
     Task ExecuteSignalAsync(

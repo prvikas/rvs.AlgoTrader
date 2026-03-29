@@ -11,6 +11,12 @@
     <ProjectReference Include="..\rvs.AlgoTrader.Brokers.Zerodha\rvs.AlgoTrader.Brokers.Zerodha.csproj" />
     <ProjectReference Include="..\rvs.AlgoTrader.Brokers.Upstox\rvs.AlgoTrader.Brokers.Upstox.csproj" />
   </ItemGroup>
+  <!-- Copy SQL migration files to output directory so DatabaseMigrationRunner can find them at runtime -->
+  <ItemGroup>
+    <None Update="Persistence\Migrations\*.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL.NodaTime" />
@@ -25,6 +31,7 @@
     <PackageReference Include="Polly" />
     <PackageReference Include="NodaTime" />
     <PackageReference Include="NodaTime.Serialization.SystemTextJson" />
+    <PackageReference Include="QuestPDF" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />

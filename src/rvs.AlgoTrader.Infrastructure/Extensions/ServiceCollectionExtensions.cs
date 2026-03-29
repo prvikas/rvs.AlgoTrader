@@ -35,6 +35,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<NodaTime.IClock>(NodaTime.SystemClock.Instance);
 
+        // Migration runner — auto-applies all numbered *.sql files on startup
+        services.AddScoped<rvs.AlgoTrader.Infrastructure.Persistence.DatabaseMigrationRunner>();
+
         // EF Core — PostgreSQL
         services.AddDbContext<AlgoTraderDbContext>(opts =>
             opts.UseNpgsql(
@@ -150,6 +153,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IForwardTestSessionRepository, ForwardTestSessionRepository>();
         services.AddScoped<IForwardTestTradeRepository, ForwardTestTradeRepository>();
         services.AddScoped<IWatchlistRepository, WatchlistRepository>();
+        services.AddScoped<IStrategyScenarioRepository, StrategyScenarioRepository>();
 
         // Broker HTTP clients (typed clients via IHttpClientFactory)
         services.AddHttpClient<MStockAuth>();

@@ -16,7 +16,7 @@ public class StrategyInstanceRepository(AlgoTraderDbContext db) : IStrategyInsta
         => await db.StrategyInstances.ToListAsync(ct);
 
     public async Task<IReadOnlyList<StrategyInstance>> GetAllActiveAsync(CancellationToken ct = default)
-        => await db.StrategyInstances.Where(s => s.IsActive).ToListAsync(ct);
+        => await db.StrategyInstances.Where(s => s.Status != StrategyStatus.Stopped).ToListAsync(ct);
 
     public async Task<IReadOnlyList<StrategyInstance>> GetRunningAsync(CancellationToken ct = default)
         => await db.StrategyInstances.Where(s => s.Status == StrategyStatus.Running).ToListAsync(ct);

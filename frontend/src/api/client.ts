@@ -55,7 +55,15 @@ export const strategiesApi = {
     apiClient.post<ApiResponse<boolean>>(`/strategies/${id}/stop`, { instanceId: id, reason }),
   signals: (id: string, limit = 100) =>
     apiClient.get<ApiResponse<SignalJournalEntry[]>>(`/strategies/${id}/signals`, { params: { limit } }),
+  update: (id: string, cmd: Partial<CreateStrategyCommand>) =>
+    apiClient.put<ApiResponse<boolean>>(`/strategies/${id}`, cmd),
   delete: (id: string) => apiClient.delete<ApiResponse<boolean>>(`/strategies/${id}`),
+  /** Fetches the full parameter schema for a strategy (single source of truth on backend). */
+  getSchema: (strategyName: string) =>
+    apiClient.get<ApiResponse<StrategyParamDef[]>>(`/strategies/schema/${encodeURIComponent(strategyName)}`),
+  /** Returns all registered strategy names. */
+  getRegisteredNames: () =>
+    apiClient.get<ApiResponse<string[]>>('/strategies/registered'),
 }
 
 // Kill switch
@@ -200,10 +208,26 @@ export interface HistoricalDownloadJob {
 
 // Backtest
 export const backtestApi = {
+  /** Synchronous run — blocks until complete. Use `start` for long backtests. */
   run: (req: BacktestRequest) =>
     apiClient.post<ApiResponse<BacktestResult>>('/backtest/run', req),
+  /** Async run — returns jobId immediately (202). Subscribe to /hubs/backtest or poll status. */
+  start: (req: BacktestRequest) =>
+    apiClient.post<ApiResponse<{ jobId: string }>>('/backtest/start', req),
+  /** Poll progress/result of an async backtest job. */
+  status: (jobId: string) =>
+    apiClient.get<ApiResponse<BacktestJobStatus>>(`/backtest/${jobId}/status`),
+  /** Cancel a running job. */
+  cancel: (jobId: string) =>
+    apiClient.post<ApiResponse<unknown>>(`/backtest/${jobId}/cancel`),
+  /** List all active (Queued/Running) job IDs. */
+  activeJobs: () =>
+    apiClient.get<ApiResponse<string[]>>('/backtest/active'),
   list: (strategyName?: string) =>
     apiClient.get<ApiResponse<BacktestResult[]>>('/backtest', { params: { strategyName } }),
+  /** Fetch a single saved result by ID (includes chartSample). */
+  get: (id: string) =>
+    apiClient.get<ApiResponse<BacktestResult>>(`/backtest/${id}`),
   report: (id: string) =>
     apiClient.get(`/backtest/${id}/report`, { responseType: 'blob' }),
 }
@@ -321,6 +345,30 @@ export interface BacktestRequest {
   slippageBasisPoints?: number
   /** Flat brokerage per order leg in INR. Default = 20 (Zerodha/Upstox model). */
   brokerageFlatPerSide?: number
+  /** Trailing stop: R-multiple gain required before trail activates. 0 = disabled. */
+  trailActivationR?: number
+  /** Trailing stop: offset behind best price in R multiples. Default = 0.5. */
+  trailOffsetR?: number
+  /** Slide SL to break-even once 1R is gained. Default = false. */
+  breakEvenAt1R?: boolean
+  /** Stop backtest when equity < initialCapital × circuitBreakerPct. 0 = disabled. Default = 0.5 (50%). */
+  circuitBreakerPct?: number
+}
+
+export interface BacktestMonthlyBreakdown {
+  year: number
+  month: number
+  pnl: number
+  trades: number
+  winRate: number
+}
+
+export interface BacktestYearlyBreakdown {
+  year: number
+  pnl: number
+  return: number
+  trades: number
+  winRate: number
 }
 
 export interface BacktestResult {
@@ -347,10 +395,25 @@ export interface BacktestResult {
   avgLoss?: number
   maxConsecutiveLosses?: number
   expectancyPerTrade?: number
+  // Extended stats
+  sortinoRatio?: number
+  dailySharpe?: number
+  monthlySharpe?: number
+  monthlyWinRate?: number
+  drawdownRecoveryBars?: number
+  maxLots?: number
   dataHash?: string
   startedAt?: string   // UTC ISO — display in IST
   trades?: BacktestTradeResult[]
+  monthlyBreakdown?: BacktestMonthlyBreakdown[]
+  yearlyBreakdown?: BacktestYearlyBreakdown[]
+  // Downsampled (≤ 2000 bars) candlestick + indicator data for the full replay chart
+  chartSample?: BacktestChartBar[]
   error?: string
+  /** True when the backtest was stopped early by the circuit breaker. */
+  circuitBreakerHit?: boolean
+  /** Human-readable reason for the circuit breaker trigger. */
+  circuitBreakerReason?: string
 }
 
 export interface BacktestTradeResult {
@@ -363,6 +426,116 @@ export interface BacktestTradeResult {
   netPnl: number
   entryTime: string  // UTC ISO
   exitTime: string   // UTC ISO
+}
+
+/**
+ * A single OHLCV bar with optional indicator values and signal marker.
+ * Received during the run (BacktestChartUpdate SignalR event, rolling 200 bars)
+ * and after completion (BacktestResult.chartSample, downsampled ≤ 2000 bars).
+ */
+export interface BacktestChartBar {
+  timeMs: number                          // Unix epoch milliseconds
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  signal?: 'BUY' | 'SELL' | null         // trade signal on this bar
+  signalPrice?: number
+  stopLoss?: number
+  takeProfit?: number
+  indicators?: Record<string, number>     // e.g. { ema5: 452.3, vwap: 453.1 }
+}
+
+/** Status of an async backtest job (from GET /backtest/{jobId}/status). */
+export interface BacktestJobStatus {
+  jobId: string
+  status: 'Queued' | 'Downloading' | 'Running' | 'Completed' | 'Failed' | 'Cancelled'
+  progressPct: number    // 0–100
+  currentBar: number
+  totalBars: number
+  tradesSoFar: number
+  currentEquity: number
+  error?: string
+  result?: BacktestResult
+}
+
+// ── Scenarios ─────────────────────────────────────────────────────────────────
+
+export interface StrategyScenario {
+  id: string
+  strategyInstanceId: string
+  name: string
+  description?: string
+  /** Partial JSON object — only keys that differ from the instance base, e.g. {"LookbackBars":30} */
+  parametersJsonOverride?: string
+  status: 'Draft' | 'Backtested' | 'ForwardTest' | 'Live' | 'Archived'
+  lastBacktestRunId?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ScenarioComparisonRow {
+  scenarioId: string
+  scenarioName: string
+  parametersJsonOverride?: string
+  totalReturn?: number
+  maxDrawdown?: number
+  sharpeRatio?: number
+  winRate?: number
+  totalTrades?: number
+  profitFactor?: number
+  expectancyPerTrade?: number
+  status: string
+  lastBacktestRunId?: string
+}
+
+export interface ScenarioJobResult {
+  scenarioId: string
+  jobId: string
+}
+
+export interface CreateScenarioRequest {
+  name: string
+  description?: string
+  parametersJsonOverride?: string
+}
+
+export interface UpdateScenarioRequest {
+  name?: string
+  description?: string
+  parametersJsonOverride?: string
+}
+
+export interface RunScenariosRequest {
+  internalSymbol: string
+  timeframe: string
+  fromDate: string
+  toDate: string
+  initialCapital?: number
+  riskPerTradePercent?: number
+  scenarioIds?: string[]
+}
+
+export const scenariosApi = {
+  list: (instanceId: string) =>
+    apiClient.get<ApiResponse<StrategyScenario[]>>(`/strategies/${instanceId}/scenarios`),
+  get: (instanceId: string, scenarioId: string) =>
+    apiClient.get<ApiResponse<StrategyScenario>>(`/strategies/${instanceId}/scenarios/${scenarioId}`),
+  compare: (instanceId: string) =>
+    apiClient.get<ApiResponse<ScenarioComparisonRow[]>>(`/strategies/${instanceId}/scenarios/compare`),
+  create: (instanceId: string, req: CreateScenarioRequest) =>
+    apiClient.post<ApiResponse<string>>(`/strategies/${instanceId}/scenarios`, req),
+  update: (instanceId: string, scenarioId: string, req: UpdateScenarioRequest) =>
+    apiClient.put<ApiResponse<boolean>>(`/strategies/${instanceId}/scenarios/${scenarioId}`, req),
+  delete: (instanceId: string, scenarioId: string) =>
+    apiClient.delete<ApiResponse<boolean>>(`/strategies/${instanceId}/scenarios/${scenarioId}`),
+  promote: (instanceId: string, scenarioId: string, targetStatus: string) =>
+    apiClient.post<ApiResponse<boolean>>(
+      `/strategies/${instanceId}/scenarios/${scenarioId}/promote`,
+      { targetStatus }),
+  run: (instanceId: string, req: RunScenariosRequest) =>
+    apiClient.post<ApiResponse<ScenarioJobResult[]>>(`/strategies/${instanceId}/scenarios/run`, req),
 }
 
 // Forward Test
@@ -642,4 +815,30 @@ export interface CreateStrategyCommand {
   scheduleJson?: string     // JSON-serialised ScheduleConfig — session times, days, auto-resume, etc.
   failureBehaviorJson?: string  // JSON-serialised FailureBehaviorConfig
   allocatedCapital?: number
+}
+
+// ── Strategy Parameter Schema ────────────────────────────────────────────────
+// These types mirror rvs.AlgoTrader.Domain.Interfaces.StrategyParamDef.
+// The backend is the single source of truth — fetched via GET /strategies/schema/{name}.
+// The frontend never hardcodes parameter definitions; it renders them dynamically.
+
+export interface StrategyParamOption {
+  value: string
+  label: string
+}
+
+export interface StrategyParamDef {
+  /** Property name on the backend Config class — used as the JSON key in parametersJson */
+  key: string
+  /** Human-readable label for the UI */
+  label: string
+  /** Input type: "int" | "decimal" | "bool" | "select" */
+  type: 'int' | 'decimal' | 'bool' | 'select'
+  /** Default value from the backend Config class */
+  default: number | boolean | string | null
+  min?: number
+  max?: number
+  step?: number
+  hint?: string
+  options?: StrategyParamOption[]
 }

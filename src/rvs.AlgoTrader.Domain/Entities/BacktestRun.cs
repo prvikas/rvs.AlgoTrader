@@ -34,7 +34,15 @@ public class BacktestRun
     public decimal ExpectancyPerTrade { get; set; }
     /// <summary>SHA-256 hash of candle data + parameters — ensures reproducibility.</summary>
     public string? DataHash { get; set; }
+
+    /// <summary>Scenario that triggered this run, if any.</summary>
+    public Guid? ScenarioId { get; set; }
+
+    /// <summary>Effective merged parameters used for this run (base + scenario override).</summary>
+    public string? EffectiveParametersJson { get; set; }
     /// <summary>JSON array of BacktestTradeDto objects.</summary>
     public string TradesJson { get; set; } = "[]";
+    /// <summary>JSON-serialized extended stats (Sortino, Monthly/Yearly breakdown, etc.).</summary>
+    public string? ExtendedStatsJson { get; set; }
     public Instant RanAt { get; set; }
 }

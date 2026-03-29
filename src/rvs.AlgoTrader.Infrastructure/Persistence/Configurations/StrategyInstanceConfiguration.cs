@@ -40,8 +40,13 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
                 v => v.ToDateTimeUtc(),
                 v => Instant.FromDateTimeUtc(v));
 
-        // Ignore computed properties (read-only aliases)
+        // Ignore computed/legacy properties not persisted in strategy_instances table
         builder.Ignore(s => s.StrategyName);
+        builder.Ignore(s => s.WatchlistId);
+        builder.Ignore(s => s.IsActive);
+        builder.Ignore(s => s.ConfigJson);
+        builder.Ignore(s => s.CreatedBy);
+        builder.Ignore(s => s.CurrentRunId);
 
         builder.HasIndex(s => s.Status);
         builder.HasIndex(s => new { s.InternalSymbol, s.Status });

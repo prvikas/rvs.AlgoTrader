@@ -5,7 +5,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 import { useAppStore } from './stores/appStore'
-import { isTokenValid } from './utils/auth'
 
 // ── Dev-only preview token ────────────────────────────────────────────────────
 // Injected before React mounts so the Zustand store reads it on first init.

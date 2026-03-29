@@ -183,6 +183,17 @@ public interface IBacktestRunRepository
     Task SaveAsync(DTOs.Backtest.BacktestResultDto result, CancellationToken ct);
 }
 
+public interface IStrategyScenarioRepository
+{
+    Task<Domain.Entities.StrategyScenario?> GetByIdAsync(Guid id, CancellationToken ct);
+    Task<IReadOnlyList<Domain.Entities.StrategyScenario>> GetByInstanceAsync(Guid instanceId, CancellationToken ct);
+    Task AddAsync(Domain.Entities.StrategyScenario scenario, CancellationToken ct);
+    Task UpdateAsync(Domain.Entities.StrategyScenario scenario, CancellationToken ct);
+    Task DeleteAsync(Guid id, CancellationToken ct);
+    /// <summary>True if the scenario has at least one persisted BacktestRun.</summary>
+    Task<bool> HasBacktestAsync(Guid scenarioId, CancellationToken ct);
+}
+
 public interface IBacktestCostProfileRepository
 {
     Task<IReadOnlyList<DTOs.Backtest.BacktestCostProfileDto>> GetAllAsync(CancellationToken ct);
