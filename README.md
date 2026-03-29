@@ -4,6 +4,72 @@
 
 ---
 
+## 🗓️ Monthly Engineering Review — Last Business Day of Every Month
+
+> **Every role below must complete their review checklist before the end of each month.**
+> Open new GitHub Issues for any gaps found. Tag them with the appropriate label (`sre`, `performance`, `bug`, `enhancement`).
+> Review session should be completed **before EOD on the last business day of the month**.
+
+---
+
+### 🔧 SRE Review — Site Reliability Engineer
+
+Review the following areas and open issues for any gaps found. Reference issues [#132](https://github.com/prvikas/rvs.AlgoTrader/issues/132)–[#140](https://github.com/prvikas/rvs.AlgoTrader/issues/140) as baseline.
+
+**Monthly SRE Checklist:**
+
+- [ ] **Observability** — Prometheus metrics collecting? Grafana dashboards loading? No missing panels?
+- [ ] **Alerting** — All Telegram/email alerts firing correctly? No alert fatigue (too many false positives)?
+- [ ] **SLO Compliance** — Review SLO error budgets. Is any SLO below target for the month?
+- [ ] **Pre-Market Check** — Did the 08:45 IST readiness check pass every trading day this month? Any failures uninvestigated?
+- [ ] **DB Backup** — Verify last backup completed successfully. Test restore on staging if not done in 30 days
+- [ ] **DB Migrations** — Any new migrations added without a corresponding `.down.sql` rollback script?
+- [ ] **Disk / DB Growth** — Check `ohlcv_bars` row count and compressed size vs. last month. Retention policy running?
+- [ ] **Log Sink** — Are logs persisting to file sink? Seq ingesting without errors? No log volume filling up?
+- [ ] **Deployment Runbook** — Any production deployment this month? Post-mortem written if incident occurred?
+- [ ] **Staging Environment** — Does staging reflect production config? Any drift between envs?
+- [ ] **Circuit Breaker** — Was the broker API circuit breaker triggered this month? Root cause documented?
+- [ ] **Incident Log** — Any unresolved P0/P1 incidents from this month? Runbook updated after each incident?
+
+**Labels to use:** `sre` `bug` `data-integrity` `observability` `resilience`
+
+---
+
+### ⚡ Performance Review — Performance Engineer
+
+Review the following areas and open issues for any gaps found. Reference issues [#141](https://github.com/prvikas/rvs.AlgoTrader/issues/141)–[#148](https://github.com/prvikas/rvs.AlgoTrader/issues/148) as baseline.
+
+**Monthly Performance Checklist:**
+
+- [ ] **DB Query Plans** — Run `EXPLAIN ANALYZE` on top-5 slowest queries (check pg_stat_statements). Any new seq scans on large tables?
+- [ ] **Index Health** — Any new query patterns added this month without corresponding composite indexes? Index bloat > 30%?
+- [ ] **Backtest Speed** — Run benchmark: 1-year 5-min NIFTY backtest. Is it completing < 5s? Any regression from last month?
+- [ ] **BulkInsert Throughput** — Historical downloader: 10k candle insert time < 400ms? Any EF Core batching regressions?
+- [ ] **Redis Memory** — `INFO memory` on Redis. Any keys without TTL growing unbounded? Total memory vs. last month?
+- [ ] **Redis Round-Trips** — `CandleCache.AppendAsync` still using pipeline/Lua? No regression to 2-call pattern?
+- [ ] **Walk-Forward Timing** — 8-window walk-forward completing < 10s? Parallelism semaphore not deadlocking?
+- [ ] **LOH Allocation** — dotMemory / BenchmarkDotNet: Any new LOH allocations > 5 MB per request introduced this month?
+- [ ] **Heap Growth** — Is the API process heap growing over a 24-hour market day? Measure start-of-day vs. end-of-day RSS
+- [ ] **API Latency** — p95 latency for `/api/backtest` < 10s? `/api/strategies` < 100ms? `/api/orders` < 500ms?
+- [ ] **TimescaleDB Compression** — Compression job ran? Chunks older than 7 days compressed? Compression ratio > 80%?
+- [ ] **Hangfire Jobs** — Any recurring jobs taking longer than their schedule interval? Backlog queue depth > 0?
+
+**Labels to use:** `performance` `bug` `database` `cache`
+
+---
+
+### 📋 Review Issue Template
+
+When opening a monthly review issue, use this title format:
+```
+[MONTHLY-REVIEW] {Month} {Year} — {Role} gaps
+```
+Example: `[MONTHLY-REVIEW] March 2026 — SRE gaps`
+
+Tag the issue with `monthly-review` label and link back to this section.
+
+---
+
 ## Vision
 
 The long-term goal is an **Argus-class institutional trading platform** purpose-built for Indian markets (NSE/BSE/MCX/CDS). Not a retail scanner. Not a webhook-based signal copier. A full-stack quantitative research and execution engine where:
