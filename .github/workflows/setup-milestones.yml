@@ -1,0 +1,104 @@
+name: Setup Milestones
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/setup-milestones.yml'
+
+jobs:
+  milestones:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Create milestones and assign issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = 'prvikas';
+            const repo  = 'rvs.AlgoTrader';
+
+            const milestoneMap = [
+              {
+                title: 'v0.1 — Core Architecture Foundation',
+                description: 'Infrastructure, DI registration, IIndicatorLibrary, CandlePatternDetector, shared contracts. Must be complete before any strategy work.',
+                issues: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,66,67,69,70,71,74,75,76]
+              },
+              {
+                title: 'v0.2 — Data Layer & Market Data',
+                description: 'IHistoricalDataManager, option chain service, IEventCalendarService, IMarketBreadthService, data feed health monitor, WebSocket reconnection.',
+                issues: [16,17,18,19,20,90,91,96,99]
+              },
+              {
+                title: 'v0.3 — Options Engine',
+                description: 'IBlackScholesEngine, Greeks calculation, IV Rank/IVP, IOptionLegSelector, multi-leg spread order support (SpreadOrderManager).',
+                issues: [64,65,68,72,73,84]
+              },
+              {
+                title: 'v0.4 — Risk & Execution Engine',
+                description: 'IPortfolioRiskManager, IPositionSizingEngine, slippage/commission model, trailing stop, break-even, paper trading mode, scaling in/out.',
+                issues: [85,86,87,88,92,93,100]
+              },
+              {
+                title: 'v0.5 — Strategy Implementations',
+                description: 'STRAT-001 VCP Swing, STRAT-002 Fib Spread, STRAT-003 Intraday PCR/VWAP, Iron Condor, Short Straddle, Short Strangle, Calendar Spread, Vertical Spreads.',
+                issues: [77,78,79,80,81,82,83]
+              },
+              {
+                title: 'v0.6 — Multi-Timeframe & Advanced Signals',
+                description: 'Multi-timeframe analysis (5m+15m+Daily), candle aggregation, PCR live feed, breadth dashboard widget, MTF strategy filters.',
+                issues: [21,22,23,24,25,26,94,95]
+              },
+              {
+                title: 'v0.7 — Research & Analytics',
+                description: 'Full performance analytics (Sharpe/Sortino/Calmar/VaR), Monte Carlo simulation, strategy correlation heatmap, Markowitz portfolio construction.',
+                issues: [27,28,29,30,89,97]
+              },
+              {
+                title: 'v0.8 — Trade Journal & Production Readiness',
+                description: 'Trade journal, P&L attribution (by strategy/symbol/session), Indian tax export (ITR-3), admin UI polish, alert system, smoke tests, deployment scripts.',
+                issues: [31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,98]
+              }
+            ];
+
+            for (const ms of milestoneMap) {
+              // Create milestone (ignore if already exists)
+              let milestoneNumber;
+              try {
+                const existing = await github.rest.issues.listMilestones({ owner, repo, state: 'open', per_page: 100 });
+                const found = existing.data.find(m => m.title === ms.title);
+                if (found) {
+                  milestoneNumber = found.number;
+                  console.log(`Milestone already exists: ${ms.title} (#${milestoneNumber})`);
+                } else {
+                  const created = await github.rest.issues.createMilestone({
+                    owner, repo,
+                    title: ms.title,
+                    description: ms.description
+                  });
+                  milestoneNumber = created.data.number;
+                  console.log(`Created milestone: ${ms.title} (#${milestoneNumber})`);
+                }
+              } catch(e) {
+                console.error(`Failed to create/find milestone "${ms.title}": ${e.message}`);
+                continue;
+              }
+
+              // Assign issues
+              for (const issue_number of ms.issues) {
+                try {
+                  await github.rest.issues.update({
+                    owner, repo,
+                    issue_number,
+                    milestone: milestoneNumber
+                  });
+                  console.log(`  Assigned #${issue_number} to milestone #${milestoneNumber}`);
+                } catch(e) {
+                  console.warn(`  Failed to assign #${issue_number}: ${e.message}`);
+                }
+              }
+            }
+
+            console.log('\nDone! All milestones created and issues assigned.');
