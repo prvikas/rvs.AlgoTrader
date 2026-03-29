@@ -2,6 +2,7 @@ using MassTransit;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
 
@@ -32,7 +33,7 @@ public class OrderFilledConsumer(
         }
 
         // Update or open position
-        if (evt.Direction == "BUY")
+        if (evt.Direction == OrderDirection.Buy)
         {
             var existing = await positionRepo.GetOpenPositionForSymbolAsync(
                 evt.BrokerName, evt.InternalSymbol, ct);

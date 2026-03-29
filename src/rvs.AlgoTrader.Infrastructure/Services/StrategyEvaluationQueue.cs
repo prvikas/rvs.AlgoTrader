@@ -89,27 +89,28 @@ public class StrategyEvaluationQueue(
             }
 
             // Always journal signal
+            var isActionable = result.Signal is SignalType.Buy or SignalType.Sell;
             await signalJournal.AppendAsync(new SignalJournalEntry(
                 0L,
                 instance.Id,
                 instance.InternalSymbol,
                 clock.NowInstant(),
                 instance.Timeframe,
-                result.Signal,
+                result.Signal.ToString(),
                 result.EntryPrice,
                 result.StopLoss,
                 result.TakeProfit,
                 result.Reason,
                 result.DiagnosticsJson,
-                result.Signal is "BUY" or "SELL",
+                isActionable,
                 result.SkippedReason), ct);
 
             // Only publish and execute on BUY/SELL
-            if (result.Signal is not ("BUY" or "SELL")) return;
+            if (!isActionable) return;
 
             await bus.Publish(new SignalGenerated(
                 instance.Id, instance.StrategyName, instance.InternalSymbol,
-                instance.Timeframe, result.Signal,
+                instance.Timeframe, result.Signal.ToString(),
                 result.EntryPrice, result.StopLoss, result.TakeProfit,
                 result.Reason ?? "", correlationId, clock.NowIst()), ct);
 

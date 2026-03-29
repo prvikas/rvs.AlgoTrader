@@ -22,8 +22,8 @@ public class Order
     public int FilledQuantity { get; private set; }
     public decimal? TrailingSl { get; private set; }
     public decimal? TrailingTp { get; private set; }
-    public string Exchange { get; set; } = "NSE";
-    public string ProductType { get; set; } = "MIS";
+    public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
+    public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
     public string? RejectionReason { get; set; }
     public Instant? PlacedAt { get; private set; }
     public Instant? FilledAt { get; private set; }

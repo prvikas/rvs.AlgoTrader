@@ -71,3 +71,9 @@ public class GetBacktestReportHandler(IBacktestRunRepository repo) : IRequestHan
     public Task<byte[]?> Handle(GetBacktestReportQuery request, CancellationToken ct)
         => repo.GetReportAsync(request.RunId, ct);
 }
+
+public class GetBacktestsByScenarioHandler(IBacktestRunRepository repo) : IRequestHandler<GetBacktestsByScenarioQuery, IReadOnlyList<BacktestResultDto>>
+{
+    public Task<IReadOnlyList<BacktestResultDto>> Handle(GetBacktestsByScenarioQuery request, CancellationToken ct)
+        => repo.GetByScenarioAsync(request.ScenarioId, request.Page, request.PageSize, ct);
+}

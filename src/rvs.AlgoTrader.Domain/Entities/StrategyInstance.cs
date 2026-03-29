@@ -35,8 +35,8 @@ public class StrategyInstance
 
     // Order routing fields (used by LiveExecutionEngine)
     public string? BrokerToken { get; set; }
-    public string Exchange { get; set; } = "NSE";
-    public string ProductType { get; set; } = "MIS";
+    public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
+    public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
     public int LotSize { get; set; } = 1;
 
     /// <summary>Alias for Name; used by domain events and query handlers.</summary>

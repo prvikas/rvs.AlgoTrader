@@ -27,8 +27,10 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.AllocatedCapital).HasColumnName("allocated_capital").HasPrecision(18, 4);
         builder.Property(s => s.TodayRealizedPnl).HasColumnName("today_realized_pnl").HasPrecision(18, 4);
         builder.Property(s => s.TodayUnrealizedPnl).HasColumnName("today_unrealized_pnl").HasPrecision(18, 4);
-        builder.Property(s => s.Exchange).HasColumnName("exchange").HasMaxLength(10);
-        builder.Property(s => s.ProductType).HasColumnName("product_type").HasMaxLength(10);
+        builder.Property(s => s.Exchange).HasColumnName("exchange").HasMaxLength(10).IsRequired()
+            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.Exchange>(v));
+        builder.Property(s => s.ProductType).HasColumnName("product_type").HasMaxLength(10).IsRequired()
+            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.ProductType>(v));
         builder.Property(s => s.LotSize).HasColumnName("lot_size");
         builder.Property(s => s.BrokerToken).HasColumnName("broker_token").HasMaxLength(100);
         builder.Property(s => s.CreatedAt).HasColumnName("created_at")

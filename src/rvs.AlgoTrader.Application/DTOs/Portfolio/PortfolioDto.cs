@@ -1,3 +1,5 @@
+using rvs.AlgoTrader.Domain.Enums;
+
 namespace rvs.AlgoTrader.Application.DTOs.Portfolio;
 
 /// <summary>Per-strategy P&amp;L breakdown row for the portfolio dashboard.</summary>
@@ -13,6 +15,44 @@ public record StrategyPnlRowDto(
     decimal TodayUnrealizedPnl,
     decimal TodayTotalPnl,
     decimal PnlPercent);
+
+/// <summary>Open position row for GET /api/portfolio/positions.</summary>
+public record PositionDto(
+    string Id,
+    string BrokerName,
+    string InternalSymbol,
+    int Quantity,
+    decimal AvgPrice,
+    decimal CurrentPrice,
+    decimal? StopLoss,
+    decimal? TakeProfit,
+    decimal UnrealizedPnl,
+    decimal RealizedPnl,
+    string ProductType,
+    string? StrategyRunId,
+    DateTimeOffset? OpenedAt);
+
+/// <summary>Order row for GET /api/portfolio/orders.</summary>
+public record OrderDto(
+    string Id,
+    string BrokerName,
+    string? BrokerOrderId,
+    string InternalSymbol,
+    OrderType OrderType,
+    OrderDirection Direction,
+    OrderStatus Status,
+    int Quantity,
+    int FilledQuantity,
+    decimal? Price,
+    decimal? FillPrice,
+    decimal? TriggerPrice,
+    Exchange Exchange,
+    ProductType ProductType,
+    string? StrategyRunId,
+    string? RejectionReason,
+    DateTimeOffset? PlacedAt,
+    DateTimeOffset? FilledAt,
+    DateTimeOffset CreatedAt);
 
 /// <summary>
 /// Aggregate portfolio summary across all strategy instances.

@@ -36,6 +36,14 @@ public class AlgoTraderDbContext : DbContext
     // Instrument universe — controls which symbols are downloaded and stored
     public DbSet<InstrumentUniverse> InstrumentUniverse => Set<InstrumentUniverse>();
 
+    // Options engine
+    public DbSet<OptionIvHistory>    OptionIvHistory    => Set<OptionIvHistory>();
+    public DbSet<SpreadPosition>     SpreadPositions    => Set<SpreadPosition>();
+    public DbSet<SpreadPositionLeg>  SpreadPositionLegs => Set<SpreadPositionLeg>();
+
+    // FX rates
+    public DbSet<FxRate>             FxRates            => Set<FxRate>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

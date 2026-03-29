@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.DTOs.Common;
+// DownloadHistoryRequest is defined in Application/DTOs/Backtest/DownloadHistoryRequest.cs
 using rvs.AlgoTrader.Application.Queries.Backtest;
 using rvs.AlgoTrader.Application.Services;
 
@@ -35,17 +36,27 @@ public class BacktestController(
     }
 
     /// <summary>
-    /// Synchronous backtest run (backward compat). Blocks until complete.
-    /// For long-running backtests, prefer POST /backtest/start.
+    /// [DEPRECATED] Synchronous backtest run — blocks until complete (10 s timeout).
+    /// Use POST /backtest/start instead for async execution.
     /// </summary>
     [HttpPost("run")]
+    [Obsolete("Use POST /backtest/start for async execution.")]
     public async Task<ActionResult<ApiResponse<BacktestResultDto>>> Run(
         [FromBody] BacktestRequestDto request, CancellationToken ct)
     {
-        var result = await mediator.Send(new RunBacktestQuery(request), ct);
-        return result.Success
-            ? Ok(ApiResponse<BacktestResultDto>.Ok(result))
-            : BadRequest(ApiResponse<BacktestResultDto>.Fail(result.Error ?? "Backtest failed"));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+        try
+        {
+            var result = await mediator.Send(new RunBacktestQuery(request), linked.Token);
+            return result.Success
+                ? Ok(ApiResponse<BacktestResultDto>.Ok(result))
+                : BadRequest(ApiResponse<BacktestResultDto>.Fail(result.Error ?? "Backtest failed"));
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            return StatusCode(408, ApiResponse.Fail<BacktestResultDto>("Backtest timed out. Use POST /backtest/start for async execution."));
+        }
     }
 
     /// <summary>
@@ -112,17 +123,15 @@ public class BacktestController(
     }
 
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<BacktestResultDto>>>> GetAll(
-        [FromQuery] string? strategyName, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<PagedResult<BacktestResultDto>>>> GetAll(
+        [FromQuery] string? strategyName,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
     {
-        var result = await mediator.Send(new GetBacktestResultsQuery(strategyName), ct);
-        return Ok(ApiResponse<IReadOnlyList<BacktestResultDto>>.Ok(result));
+        var result = await mediator.Send(new GetBacktestRunsQuery(null, page, Math.Clamp(pageSize, 1, 200)), ct);
+        return Ok(ApiResponse<PagedResult<BacktestResultDto>>.Ok(result));
     }
 }
 
-public record DownloadHistoryRequest(
-    string InternalSymbol,
-    string Timeframe,
-    LocalDate FromDate,
-    LocalDate ToDate,
-    string? BrokerName = null);
+// DownloadHistoryRequest moved to Application/DTOs/Backtest/DownloadHistoryRequest.cs

@@ -10,14 +10,16 @@ namespace rvs.AlgoTrader.Application.Commands.Strategy;
 // ── Create ────────────────────────────────────────────────────────────────────
 
 public record CreateScenarioCommand(
-    Guid    StrategyInstanceId,
-    string  Name,
-    string? Description,
-    string? ParametersJsonOverride) : IRequest<Guid>;
+    Guid     StrategyInstanceId,
+    string   Name,
+    string?  Description,
+    string?  ParametersJsonOverride,
+    decimal? AllocatedCapital = null) : IRequest<Guid>;
 
 public class CreateScenarioCommandHandler(
     IStrategyScenarioRepository repo,
     IAuditService audit,
+    ICurrentUser currentUser,
     Domain.Interfaces.IClock clock) : IRequestHandler<CreateScenarioCommand, Guid>
 {
     public async Task<Guid> Handle(CreateScenarioCommand req, CancellationToken ct)
@@ -27,10 +29,11 @@ public class CreateScenarioCommandHandler(
             req.Name,
             req.Description,
             req.ParametersJsonOverride,
-            clock.NowInstant());
+            clock.NowInstant(),
+            req.AllocatedCapital);
 
         await repo.AddAsync(scenario, ct);
-        await audit.LogAsync("SCENARIO_CREATED", "User", "StrategyScenario", scenario.Id.ToString(),
+        await audit.LogAsync("SCENARIO_CREATED", currentUser.Actor, "StrategyScenario", scenario.Id.ToString(),
             new { scenario.Name, scenario.StrategyInstanceId }, scenario.Id.ToString(), ct);
         return scenario.Id;
     }
@@ -39,14 +42,16 @@ public class CreateScenarioCommandHandler(
 // ── Update ────────────────────────────────────────────────────────────────────
 
 public record UpdateScenarioCommand(
-    Guid    Id,
-    string? Name,
-    string? Description,
-    string? ParametersJsonOverride) : IRequest<bool>;
+    Guid     Id,
+    string?  Name,
+    string?  Description,
+    string?  ParametersJsonOverride,
+    decimal? AllocatedCapital = null) : IRequest<bool>;
 
 public class UpdateScenarioCommandHandler(
     IStrategyScenarioRepository repo,
     IAuditService audit,
+    ICurrentUser currentUser,
     Domain.Interfaces.IClock clock) : IRequestHandler<UpdateScenarioCommand, bool>
 {
     public async Task<bool> Handle(UpdateScenarioCommand req, CancellationToken ct)
@@ -66,10 +71,11 @@ public class UpdateScenarioCommandHandler(
             if (scenario.Status == ScenarioStatus.Backtested)
                 scenario.Status = ScenarioStatus.Draft;
         }
+        if (req.AllocatedCapital.HasValue) scenario.AllocatedCapital = req.AllocatedCapital.Value;
         scenario.UpdatedAt = clock.NowInstant();
 
         await repo.UpdateAsync(scenario, ct);
-        await audit.LogAsync("SCENARIO_UPDATED", "User", "StrategyScenario", req.Id.ToString(),
+        await audit.LogAsync("SCENARIO_UPDATED", currentUser.Actor, "StrategyScenario", req.Id.ToString(),
             new { req.Name, req.ParametersJsonOverride }, req.Id.ToString(), ct);
         return true;
     }
@@ -81,7 +87,8 @@ public record DeleteScenarioCommand(Guid Id) : IRequest<bool>;
 
 public class DeleteScenarioCommandHandler(
     IStrategyScenarioRepository repo,
-    IAuditService audit) : IRequestHandler<DeleteScenarioCommand, bool>
+    IAuditService audit,
+    ICurrentUser currentUser) : IRequestHandler<DeleteScenarioCommand, bool>
 {
     public async Task<bool> Handle(DeleteScenarioCommand req, CancellationToken ct)
     {
@@ -92,7 +99,7 @@ public class DeleteScenarioCommandHandler(
             throw new InvalidOperationException("Cannot delete a Live scenario — archive it first.");
 
         await repo.DeleteAsync(req.Id, ct);
-        await audit.LogAsync("SCENARIO_DELETED", "User", "StrategyScenario", req.Id.ToString(),
+        await audit.LogAsync("SCENARIO_DELETED", currentUser.Actor, "StrategyScenario", req.Id.ToString(),
             new { scenario.Name }, req.Id.ToString(), ct);
         return true;
     }
@@ -107,11 +114,12 @@ public class DeleteScenarioCommandHandler(
 /// ForwardTest → Live: allowed.
 /// Any → Archived: always allowed.
 /// </summary>
-public record PromoteScenarioCommand(Guid Id, string TargetStatus) : IRequest<bool>;
+public record PromoteScenarioCommand(Guid Id, ScenarioStatus TargetStatus) : IRequest<bool>;
 
 public class PromoteScenarioCommandHandler(
     IStrategyScenarioRepository repo,
     IAuditService audit,
+    ICurrentUser currentUser,
     Domain.Interfaces.IClock clock) : IRequestHandler<PromoteScenarioCommand, bool>
 {
     public async Task<bool> Handle(PromoteScenarioCommand req, CancellationToken ct)
@@ -119,8 +127,7 @@ public class PromoteScenarioCommandHandler(
         var scenario = await repo.GetByIdAsync(req.Id, ct)
             ?? throw new KeyNotFoundException($"Scenario {req.Id} not found.");
 
-        if (!Enum.TryParse<ScenarioStatus>(req.TargetStatus, true, out var target))
-            throw new ArgumentException($"Invalid target status: {req.TargetStatus}");
+        var target = req.TargetStatus;
 
         // Gate: only Backtested scenarios can go to ForwardTest
         if (target == ScenarioStatus.ForwardTest && scenario.Status != ScenarioStatus.Backtested)
@@ -137,8 +144,8 @@ public class PromoteScenarioCommandHandler(
         scenario.UpdatedAt = clock.NowInstant();
 
         await repo.UpdateAsync(scenario, ct);
-        await audit.LogAsync("SCENARIO_PROMOTED", "User", "StrategyScenario", req.Id.ToString(),
-            new { From = previous, To = req.TargetStatus }, req.Id.ToString(), ct);
+        await audit.LogAsync("SCENARIO_PROMOTED", currentUser.Actor, "StrategyScenario", req.Id.ToString(),
+            new { From = previous, To = target.ToString() }, req.Id.ToString(), ct);
         return true;
     }
 }
@@ -177,7 +184,7 @@ public class RunScenariosCommandHandler(
             throw new InvalidOperationException("No scenarios found for the given strategy instance.");
 
         // Launch all in parallel — each gets an isolated background job
-        var tasks = targets.Select(scenario =>
+        var tasks = targets.Select(async scenario =>
         {
             var effectiveParams = Services.ScenarioParamMerger.Merge(
                 instance.ParametersJson,
@@ -190,12 +197,11 @@ public class RunScenariosCommandHandler(
                 Timeframe:           req.Timeframe,
                 FromDate:            req.FromDate,
                 ToDate:              req.ToDate,
-                InitialCapital:      req.InitialCapital,
+                InitialCapital:      scenario.AllocatedCapital ?? req.InitialCapital,
                 RiskPerTradePercent: req.RiskPerTradePercent);
 
-            return jobManager.EnqueueScenarioAsync(scenario.Id, backtestRequest, ct)
-                .ContinueWith(t => new ScenarioJobResult(scenario.Id, t.Result),
-                    TaskContinuationOptions.OnlyOnRanToCompletion);
+            var jobId = await jobManager.EnqueueScenarioAsync(scenario.Id, backtestRequest, ct);
+            return new ScenarioJobResult(scenario.Id, jobId);
         });
 
         return await Task.WhenAll(tasks);

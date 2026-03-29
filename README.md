@@ -1,5 +1,37 @@
 Production-focused algo trading platform for Indian markets.
 
+## Core concepts
+
+### Strategy
+A reusable trading logic definition built from one or more technical indicators, with explicit rules for entries, exits, and risk management. A strategy defines *what* to trade and *how* — it does not specify which parameter values to use for a given run.
+
+In code: `StrategyInstance` entity (table: `strategy_instances`). Holds the strategy type (e.g. `PriceActionBreakout`), a base `ParametersJson` object with sensible defaults, and execution context (symbol, timeframe, capital).
+
+### Scenario
+A specific, enumerable parameter configuration attached to a strategy. Each scenario stores only the keys that *differ* from the strategy's base parameters (`ParametersJsonOverride`). The engine computes **effective parameters** = `merge(strategy.ParametersJson, scenario.ParametersJsonOverride)` before every run.
+
+Examples for a strategy using EMA + MACD:
+| Scenario | Override |
+|---|---|
+| Default | `{}` (use base) |
+| EMA-200 | `{"EmaLength":200}` |
+| Fast MACD | `{"MacdFast":21,"MacdSlow":55,"MacdSignal":13}` |
+| Conservative | `{"EmaLength":200,"MacdFast":21,"MacdSlow":55,"AtrStopMultiple":3.0}` |
+
+In code: `StrategyScenario` entity (table: `strategy_scenarios`). One strategy → one or many scenarios.
+
+### Relationship
+```
+Strategy (StrategyInstance)
+  └── Scenario A (ParametersJsonOverride: {})
+  └── Scenario B (ParametersJsonOverride: {"EmaLength":200})
+  └── Scenario C (ParametersJsonOverride: {"EmaLength":200,"MacdFast":21})
+        └── BacktestRun  (EffectiveParametersJson: merged snapshot, immutable)
+        └── BacktestRun  ...
+```
+
+Scenarios are the unit of lifecycle promotion: `Draft → Backtested → ForwardTest → Live → Archived`. A scenario cannot go to `ForwardTest` without a completed backtest, and cannot go `Live` without passing `ForwardTest`.
+
 ## Core lifecycle
 research -> backtest -> forward test -> approve -> live deploy -> monitor
 

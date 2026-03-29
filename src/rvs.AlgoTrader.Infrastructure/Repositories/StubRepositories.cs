@@ -148,12 +148,24 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
         return BacktestReportGenerator.Generate(dto);
     }
 
-    public async Task SaveAsync(BacktestResultDto result, CancellationToken ct)
+    public async Task<IReadOnlyList<BacktestResultDto>> GetByScenarioAsync(Guid scenarioId, int page, int pageSize, CancellationToken ct)
     {
-        // Idempotent on DataHash — skip if same run already stored
-        if (result.DataHash != null &&
-            await db.BacktestRuns.AnyAsync(r => r.DataHash == result.DataHash, ct))
-            return;
+        var runs = await db.BacktestRuns
+            .Where(r => r.ScenarioId == scenarioId)
+            .OrderByDescending(r => r.RanAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .ToListAsync(ct);
+        return runs.Select(ToDto).ToList();
+    }
+
+    public async Task<Guid> SaveAsync(BacktestResultDto result, CancellationToken ct)
+    {
+        // Idempotent on DataHash — return existing ID if already stored
+        if (result.DataHash != null)
+        {
+            var existing = await db.BacktestRuns.FirstOrDefaultAsync(r => r.DataHash == result.DataHash, ct);
+            if (existing != null) return existing.Id;
+        }
 
         var tradesJson = result.Trades != null
             ? System.Text.Json.JsonSerializer.Serialize(result.Trades)
@@ -162,6 +174,7 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
         var run = new BacktestRun
         {
             Id = Guid.NewGuid(),
+            ScenarioId = result.ScenarioId,
             StrategyName = result.StrategyName,
             InternalSymbol = result.Symbol,
             Timeframe = result.Timeframe,
@@ -196,6 +209,7 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
 
         await db.BacktestRuns.AddAsync(run, ct);
         await db.SaveChangesAsync(ct);
+        return run.Id;
     }
 
     private static BacktestResultDto ToDto(BacktestRun r)
@@ -265,7 +279,8 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
             StartedAt: r.RanAt.ToDateTimeOffset(),
             Trades: trades,
             MonthlyBreakdown: monthlyBreakdown,
-            YearlyBreakdown: yearlyBreakdown);
+            YearlyBreakdown: yearlyBreakdown,
+            ScenarioId: r.ScenarioId);
     }
 }
 

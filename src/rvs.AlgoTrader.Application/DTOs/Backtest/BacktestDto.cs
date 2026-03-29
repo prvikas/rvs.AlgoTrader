@@ -1,4 +1,5 @@
 using NodaTime;
+using rvs.AlgoTrader.Domain.Enums;
 
 namespace rvs.AlgoTrader.Application.DTOs.Backtest;
 
@@ -76,7 +77,9 @@ public record BacktestResultDto(
     // Downsampled (≤ 2000 bars) candlestick + indicator data for the full replay chart.
     IReadOnlyList<BacktestChartBarDto>? ChartSample = null,
     bool CircuitBreakerHit = false,
-    string? CircuitBreakerReason = null);
+    string? CircuitBreakerReason = null,
+    // Scenario that triggered this run, if any.
+    Guid? ScenarioId = null);
 
 public record BacktestMonthlyBreakdownDto(int Year, int Month, decimal Pnl, int Trades, decimal WinRate);
 public record BacktestYearlyBreakdownDto(int Year, decimal Pnl, decimal Return, int Trades, decimal WinRate);
@@ -116,7 +119,7 @@ public record BacktestTradeDto(
 /// <summary>Status of a running/completed async backtest job.</summary>
 public record BacktestJobStatusDto(
     string JobId,
-    string Status,          // Queued | Running | Completed | Failed | Cancelled
+    BacktestJobStatus Status,
     decimal ProgressPct,    // 0–100
     int CurrentBar,
     int TotalBars,

@@ -47,7 +47,7 @@ public class PriceActionBreakoutStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD"); // Skip returns HOLD with SkippedReason
+        result.Signal.Should().Be(SignalType.Hold); // Skip returns HOLD with SkippedReason
         result.SkippedReason.Should().Be(SkippedReason.InsufficientData.ToString());
     }
 
@@ -65,7 +65,7 @@ public class PriceActionBreakoutStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().BeOneOf("HOLD", "SKIP");
+        result.Signal.Should().BeOneOf(SignalType.Hold);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public class PriceActionBreakoutStrategyTests
         var ctx = MakeContext(candles);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("BUY");
+        result.Signal.Should().Be(SignalType.Buy);
         result.EntryPrice.Should().BeGreaterThan(2525m);
         result.StopLoss.Should().BeLessThan(result.EntryPrice!.Value);
         result.TakeProfit.Should().BeGreaterThan(result.EntryPrice!.Value);
@@ -120,7 +120,7 @@ public class PriceActionBreakoutStrategyTests
         candles.Add(MakeCandle(1016, 1030, 1010, 1025, 180_000, minuteOffset: 20 * 5));
 
         var result = await strategy.EvaluateAsync(MakeContext(candles), CancellationToken.None);
-        if (result.Signal == "BUY")
+        if (result.Signal == SignalType.Buy)
         {
             var stopDistance = result.EntryPrice!.Value - result.StopLoss!.Value;
             var tpDistance = result.TakeProfit!.Value - result.EntryPrice!.Value;
@@ -154,7 +154,7 @@ public class PriceActionBreakoutStrategyTests
                 candles.Add(MakeCandle(mid, mid + 20, mid - 20, mid - 30, minuteOffset: i * 5));
             }
             var result = await strategy.EvaluateAsync(MakeContext(candles), CancellationToken.None);
-            result.Signal.Should().NotBe("SELL", because: "AllowShort=false must suppress SELL signals");
+            result.Signal.Should().NotBe(SignalType.Sell, because: "AllowShort=false must suppress SELL signals");
         }
     }
 
@@ -178,6 +178,6 @@ public class PriceActionBreakoutStrategyTests
         candles.Add(MakeCandle(2521, 2540, 2515, 2535, 120_000, minuteOffset: 25 * 5));
 
         var result = await strategy.EvaluateAsync(MakeContext(candles), CancellationToken.None);
-        result.Signal.Should().BeOneOf("HOLD", "SKIP");
+        result.Signal.Should().BeOneOf(SignalType.Hold);
     }
 }

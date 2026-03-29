@@ -44,6 +44,7 @@ export default function ScenarioEditorDrawer({
 }: Props) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [allocatedCapital, setAllocatedCapital] = useState('')
   // Only the keys the user explicitly wants to override — shown as a partial editor
   const [overrideKeys, setOverrideKeys] = useState<Set<string>>(new Set())
   const [overrideValues, setOverrideValues] = useState<Record<string, unknown>>({})
@@ -71,6 +72,7 @@ export default function ScenarioEditorDrawer({
     if (scenario) {
       setName(scenario.name)
       setDescription(scenario.description ?? '')
+      setAllocatedCapital(scenario.allocatedCapital != null ? String(scenario.allocatedCapital) : '')
       try {
         const override = JSON.parse(scenario.parametersJsonOverride || '{}')
         setOverrideKeys(new Set(Object.keys(override)))
@@ -82,6 +84,7 @@ export default function ScenarioEditorDrawer({
     } else {
       setName('')
       setDescription('')
+      setAllocatedCapital('')
       setOverrideKeys(new Set())
       setOverrideValues({})
     }
@@ -124,17 +127,21 @@ export default function ScenarioEditorDrawer({
           ))
         : undefined
 
+      const capital = allocatedCapital.trim() ? parseFloat(allocatedCapital) : undefined
+
       if (scenario) {
         await scenariosApi.update(instanceId, scenario.id, {
           name: name.trim(),
           description: description.trim() || undefined,
           parametersJsonOverride: overrideJson,
+          allocatedCapital: capital,
         })
       } else {
         await scenariosApi.create(instanceId, {
           name: name.trim(),
           description: description.trim() || undefined,
           parametersJsonOverride: overrideJson,
+          allocatedCapital: capital,
         })
       }
       onSaved()
@@ -202,6 +209,22 @@ export default function ScenarioEditorDrawer({
               placeholder="Optional notes on this parameter set"
               style={{ ...inp, resize: 'vertical' }}
             />
+          </div>
+
+          {/* Allocated Capital */}
+          <div style={{ marginBottom: SP.xl }}>
+            <label style={label12}>ALLOCATED CAPITAL (₹)</label>
+            <input
+              type="number"
+              value={allocatedCapital}
+              onChange={e => setAllocatedCapital(e.target.value)}
+              placeholder="Leave blank to use strategy default"
+              min={0}
+              style={inp}
+            />
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+              Capital this scenario deploys. Overrides the strategy-level capital when set.
+            </div>
           </div>
 
           {/* Parameter Override Section */}

@@ -68,6 +68,24 @@ public interface IInstrumentRepository
         string underlyingSymbol, NodaTime.LocalDate expiry, CancellationToken ct);
 }
 
+public interface ISpreadPositionRepository
+{
+    Task<Domain.Entities.SpreadPosition?> GetByIdAsync(Guid id, CancellationToken ct);
+    Task<IReadOnlyList<Domain.Entities.SpreadPosition>> GetOpenAsync(CancellationToken ct);
+    Task AddAsync(Domain.Entities.SpreadPosition spread, CancellationToken ct);
+    Task UpdateAsync(Domain.Entities.SpreadPosition spread, CancellationToken ct);
+}
+
+public interface IOptionIvHistoryRepository
+{
+    /// <summary>Returns the last N daily ATM IV records for a symbol, ordered by date descending.</summary>
+    Task<IReadOnlyList<Domain.Entities.OptionIvHistory>> GetRecentAsync(
+        string underlyingSymbol, int days, CancellationToken ct);
+
+    /// <summary>Upsert a daily ATM IV snapshot (by underlying + date).</summary>
+    Task UpsertAsync(Domain.Entities.OptionIvHistory record, CancellationToken ct);
+}
+
 public interface IStrategyInstanceRepository
 {
     Task<StrategyInstance?> GetByIdAsync(Guid id, CancellationToken ct);
@@ -179,8 +197,9 @@ public interface IBacktestRunRepository
     Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetAllAsync(string? strategyName, CancellationToken ct);
     Task<(IReadOnlyList<DTOs.Backtest.BacktestResultDto> Items, int Total)> GetPagedAsync(Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct);
     Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct);
-    /// <summary>Persist a completed backtest result. Idempotent on DataHash.</summary>
-    Task SaveAsync(DTOs.Backtest.BacktestResultDto result, CancellationToken ct);
+    Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetByScenarioAsync(Guid scenarioId, int page, int pageSize, CancellationToken ct);
+    /// <summary>Persist a completed backtest result. Idempotent on DataHash. Returns the persisted run ID.</summary>
+    Task<Guid> SaveAsync(DTOs.Backtest.BacktestResultDto result, CancellationToken ct);
 }
 
 public interface IStrategyScenarioRepository

@@ -467,8 +467,12 @@ export interface StrategyScenario {
   strategyInstanceId: string
   name: string
   description?: string
-  /** Partial JSON object — only keys that differ from the instance base, e.g. {"LookbackBars":30} */
+  /** Partial JSON — only keys that differ from the strategy's base params, e.g. {"LookbackBars":30}. Use as a diff label; never pass directly to the engine. */
   parametersJsonOverride?: string
+  /** Fully-merged parameters (base + override applied). This is what the backtest/forward-test engine actually uses. */
+  effectiveParametersJson: string
+  /** Capital allocated to this scenario. If null, the strategy-level capital is used. */
+  allocatedCapital?: number
   status: 'Draft' | 'Backtested' | 'ForwardTest' | 'Live' | 'Archived'
   lastBacktestRunId?: string
   createdAt: string
@@ -478,7 +482,9 @@ export interface StrategyScenario {
 export interface ScenarioComparisonRow {
   scenarioId: string
   scenarioName: string
-  parametersJsonOverride?: string
+  /** Fully-merged parameters this scenario uses (base + override applied). */
+  effectiveParametersJson: string
+  allocatedCapital?: number
   totalReturn?: number
   maxDrawdown?: number
   sharpeRatio?: number
@@ -499,12 +505,14 @@ export interface CreateScenarioRequest {
   name: string
   description?: string
   parametersJsonOverride?: string
+  allocatedCapital?: number
 }
 
 export interface UpdateScenarioRequest {
   name?: string
   description?: string
   parametersJsonOverride?: string
+  allocatedCapital?: number
 }
 
 export interface RunScenariosRequest {

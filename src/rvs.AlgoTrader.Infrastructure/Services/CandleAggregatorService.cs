@@ -16,14 +16,21 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// Publishes CandleClosedEvent (via MassTransit) only for CLOSED bars — never partial/open bars.
 /// Writes closed candles to ICandleCache (Redis sorted set, 500-bar limit) and CandleRepository.
 /// Active broker is read from config (Broker:ActiveBroker), defaulting to MStock.
+/// Reconnection uses exponential backoff (2s → 4s → 8s … capped at 120s) with
+/// <see cref="IDataFeedHealthMonitor"/> instrumentation.
 /// </summary>
 public class CandleAggregatorService(
     IBrokerClientFactory brokerFactory,
     IServiceScopeFactory scopeFactory,
     IConfiguration configuration,
+    IDataFeedHealthMonitor healthMonitor,
     ILogger<CandleAggregatorService> logger) : BackgroundService
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
+
+    // Exponential backoff bounds (seconds)
+    private const int BackoffInitialSeconds = 2;
+    private const int BackoffMaxSeconds     = 120;
 
     // Active partial candles keyed by "SYMBOL:TIMEFRAME"
     private readonly Dictionary<string, PartialCandle> _partials = new();
@@ -40,6 +47,8 @@ public class CandleAggregatorService(
         // Read active broker from config at startup; can be overridden by UpdateSubscriptions()
         _brokerName = configuration["Broker:ActiveBroker"] ?? "MStock";
         logger.LogInformation("[CandleAggregator] Background service started. Active broker: {Broker}. Waiting for symbol subscriptions...", _brokerName);
+
+        var backoffSeconds = BackoffInitialSeconds;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -58,6 +67,10 @@ public class CandleAggregatorService(
                 await foreach (var tick in brokerFactory.GetStreamClient(_brokerName)
                     .StreamAsync(_subscribedSymbols, stoppingToken))
                 {
+                    // Feed is alive — reset backoff and update health monitor
+                    backoffSeconds = BackoffInitialSeconds;
+                    healthMonitor.RecordTick(_brokerName);
+
                     try
                     {
                         await ProcessTickAsync(tick, stoppingToken);
@@ -67,6 +80,10 @@ public class CandleAggregatorService(
                         logger.LogError(ex, "[CandleAggregator] Error processing tick for {Symbol}", tick.Symbol);
                     }
                 }
+
+                // StreamAsync completed without exception — broker closed connection cleanly
+                logger.LogWarning("[CandleAggregator] Broker {Broker} stream ended. Scheduling reconnect.", _brokerName);
+                healthMonitor.RecordDisconnect(_brokerName);
             }
             catch (OperationCanceledException)
             {
@@ -75,9 +92,21 @@ public class CandleAggregatorService(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "[CandleAggregator] Broker stream disconnected. Retrying in 10s...");
-                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ContinueWith(_ => { });
+                healthMonitor.RecordDisconnect(_brokerName);
+                logger.LogWarning(ex,
+                    "[CandleAggregator] Broker {Broker} stream disconnected. Reconnecting in {Backoff}s (attempt #{Attempts})...",
+                    _brokerName, backoffSeconds, healthMonitor.GetStatus(_brokerName)?.ReconnectAttempts + 1);
             }
+
+            // ── Exponential backoff delay before reconnect ────────────────────
+            healthMonitor.RecordReconnectAttempt(_brokerName);
+            await Task.Delay(TimeSpan.FromSeconds(backoffSeconds), stoppingToken).ContinueWith(_ => { });
+
+            // Double backoff, capped at max
+            backoffSeconds = Math.Min(backoffSeconds * 2, BackoffMaxSeconds);
+
+            if (!stoppingToken.IsCancellationRequested)
+                healthMonitor.RecordReconnect(_brokerName);
         }
 
         logger.LogInformation("[CandleAggregator] Background service stopped.");

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
 
@@ -111,7 +112,7 @@ public class ForwardTestEngine(
             return;
         }
 
-        if (signal.Signal is not ("BUY" or "SELL")) return;
+        if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) return;
 
         var fillConfig = new FillSimConfig(SlippagePct: 0.0002m);
         var fillResult = await fillSimulator.SimulateFillAsync(signal, [candle], clock, fillConfig, ct);
@@ -119,7 +120,7 @@ public class ForwardTestEngine(
 
         var entryPrice = fillResult.FillPrice.Value;
         state.OpenTrade = new ForwardTestOpenTrade(
-            signal.Signal, 1, entryPrice,
+            signal.Signal.ToString().ToUpperInvariant(), 1, entryPrice,
             signal.StopLoss ?? entryPrice * 0.99m,
             signal.TakeProfit ?? entryPrice * 1.02m,
             clock.NowInstant());

@@ -30,11 +30,6 @@ public record PriceActionBreakoutConfigDto(
     decimal MinBodyRangePct, decimal SlBufferPct, decimal RiskRewardRatio,
     decimal TrailingSLActivationPct, decimal TrailingTPStep, int EvaluationTimeoutMs);
 
-public record ScheduleConfigDto(
-    string[] Days, TimeOnly SessionStart, TimeOnly SessionStop,
-    string Timezone, bool AutoResumeOnRestart,
-    string MissedSessionBehavior, bool ForceExitOnSessionEnd);
-
 public record FailureBehaviorConfigDto(
     string OnBrokerCircuitOpen, string OnStreamDisconnect, string OnDataStale,
     int DataStalenessThresholdMinutes, string OnRiskLimitBreached,

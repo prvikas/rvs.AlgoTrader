@@ -53,34 +53,81 @@ public record StrategyContext(
     OptionChainSnapshot? OptionChain = null
 );
 
+/// <summary>
+/// One leg of a multi-leg spread signal.
+/// Each leg resolves to a concrete NFO instrument via IOptionLegSelector before order placement.
+/// </summary>
+public record SpreadLeg(
+    Domain.Enums.OptionType     OptionType,
+    Domain.Enums.OrderDirection Direction,      // Buy or Sell
+    Domain.Enums.StrikeSelectionMode SelectionMode,
+    decimal?                    OtmPct        = null,
+    int?                        OtmStrikes    = null,
+    decimal?                    FixedStrike   = null,
+    decimal?                    TargetDelta   = null,
+    bool                        NearestWeekly = true,
+    int                         Quantity      = 1     // in lots
+);
+
+/// <summary>
+/// Signal for a multi-leg spread strategy (Iron Condor, Vertical, Straddle, etc.).
+/// Returned by IStrategy.EvaluateAsync as SpreadSignalResult when all legs should be sent.
+/// ISpreadOrderManager places all legs atomically (best-effort — no true atomic order exists
+/// across broker APIs; partial fill handling is implemented via rollback cancellations).
+/// </summary>
+public record SpreadSignalResult(
+    string                      SpreadType,       // "IronCondor", "Vertical", "Straddle", etc.
+    IReadOnlyList<SpreadLeg>    Legs,
+    string                      Reason,
+    object?                     DiagnosticsJson   = null
+);
+
+/// <summary>
+/// Specifies how to select a concrete option instrument from a signal.
+/// Returned by option strategies in SignalResult.OptionsLeg.
+/// IOptionLegSelector resolves this to a specific NFO symbol + strike before order placement.
+/// </summary>
+public record OptionsLegSpec(
+    Domain.Enums.OptionType OptionType,               // CE or PE
+    Domain.Enums.StrikeSelectionMode SelectionMode,
+    decimal? OtmPct           = null,   // OtmByPct: percent OTM, e.g. 0.02 = 2%
+    int? OtmStrikes           = null,   // OtmByStrike: number of strike intervals OTM
+    decimal? FixedStrike      = null,   // FixedStrike: exact strike
+    decimal? TargetDelta      = null,   // ByDelta: e.g. 0.30 for 30-delta
+    bool NearestWeeklyExpiry  = true    // false = nearest monthly
+);
+
 public record SignalResult(
-    string Signal,                          // BUY, SELL, HOLD
+    SignalType Signal,
     decimal? EntryPrice,
     decimal? StopLoss,
     decimal? TakeProfit,
     string Reason,
     object? DiagnosticsJson,
-    string? SkippedReason,                  // THROTTLED, MARKET_CLOSED, KILL_SWITCH, RISK_LIMIT, INSUFFICIENT_CAPITAL, TIMEOUT, OUTSIDE_SCHEDULE
+    string? SkippedReason,
     // Indicator snapshot for this bar — used by BacktestEngine to stream chart overlays.
     // Keys are human-readable names: "ema5", "ema9", "ema21", "vwap", "bbUpper", "bbMid", "bbLower", "atr", "rangeHigh", "rangeLow".
     // Return null if indicators are not applicable or not yet warmed up.
-    IReadOnlyDictionary<string, decimal>? IndicatorValues = null
+    IReadOnlyDictionary<string, decimal>? IndicatorValues = null,
+    // Optional: populated by options strategies. IOptionLegSelector converts this to a
+    // concrete NFO symbol + BrokerToken before the signal reaches LiveExecutionEngine.
+    OptionsLegSpec? OptionsLeg = null
 )
 {
     public static SignalResult Buy(decimal entryPrice, decimal stopLoss, decimal takeProfit, string reason,
         object? diagnosticsJson = null, ZonedDateTime? candleTimestamp = null,
         IReadOnlyDictionary<string, decimal>? indicatorValues = null)
-        => new("BUY", entryPrice, stopLoss, takeProfit, reason, diagnosticsJson, null, indicatorValues);
+        => new(SignalType.Buy, entryPrice, stopLoss, takeProfit, reason, diagnosticsJson, null, indicatorValues);
 
     public static SignalResult Sell(decimal entryPrice, decimal stopLoss, decimal takeProfit, string reason,
         object? diagnosticsJson = null, ZonedDateTime? candleTimestamp = null,
         IReadOnlyDictionary<string, decimal>? indicatorValues = null)
-        => new("SELL", entryPrice, stopLoss, takeProfit, reason, diagnosticsJson, null, indicatorValues);
+        => new(SignalType.Sell, entryPrice, stopLoss, takeProfit, reason, diagnosticsJson, null, indicatorValues);
 
     public static SignalResult Hold(string reason, object? diagnosticsJson = null,
         IReadOnlyDictionary<string, decimal>? indicatorValues = null)
-        => new("HOLD", null, null, null, reason, diagnosticsJson, null, indicatorValues);
+        => new(SignalType.Hold, null, null, null, reason, diagnosticsJson, null, indicatorValues);
 
     public static SignalResult Skip(SkippedReason skippedReason, string reason = "Signal skipped")
-        => new("HOLD", null, null, null, reason, null, skippedReason.ToString(), null);
+        => new(SignalType.Hold, null, null, null, reason, null, skippedReason.ToString(), null);
 }

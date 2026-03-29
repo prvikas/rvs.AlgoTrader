@@ -50,13 +50,13 @@ public class BacktestJobManager(
         if (_jobs.TryGetValue(jobId, out var job))
         {
             job.Cts.Cancel();
-            job.Status = "Cancelled";
+            job.Status = BacktestJobStatus.Cancelled;
         }
     }
 
     public IReadOnlyList<string> GetActiveJobIds()
         => _jobs.Values
-            .Where(j => j.Status is "Queued" or "Running")
+            .Where(j => j.Status is BacktestJobStatus.Queued or BacktestJobStatus.Running)
             .Select(j => j.JobId)
             .ToList();
 
@@ -83,7 +83,7 @@ public class BacktestJobManager(
         var runRepo   = scope.ServiceProvider.GetRequiredService<IBacktestRunRepository>();
         try
         {
-            job.Status = "Running";
+            job.Status = BacktestJobStatus.Running;
             await pusher.PushProgressAsync(jobId, job.ToDto());
 
             // Build the request
@@ -114,7 +114,7 @@ public class BacktestJobManager(
             if (!result.Success && result.Error != null && result.Error.StartsWith("Insufficient candle data"))
             {
                 logger.LogInformation("[BacktestJob] {JobId} — insufficient data, auto-downloading...", jobId);
-                job.Status = "Downloading";
+                job.Status = BacktestJobStatus.Downloading;
                 await pusher.PushProgressAsync(jobId, job.ToDto());
 
                 var from       = new DateOnly(dto.FromDate.Year, dto.FromDate.Month, dto.FromDate.Day);
@@ -124,13 +124,13 @@ public class BacktestJobManager(
 
                 if (!dl.Success || dl.BarCount == 0)
                 {
-                    job.Status = "Failed";
+                    job.Status = BacktestJobStatus.Failed;
                     job.Error  = $"No data for {dto.InternalSymbol}/{dto.Timeframe}. {dl.Error ?? "0 bars returned."}";
                     await pusher.PushCompletedAsync(jobId, job.ToDto());
                     return;
                 }
 
-                job.Status = "Running";
+                job.Status = BacktestJobStatus.Running;
                 result = await engine.RunAsync(request, ct, progress);
             }
 
@@ -142,17 +142,20 @@ public class BacktestJobManager(
             {
                 try
                 {
-                    await runRepo.SaveAsync(resultDto, CancellationToken.None);
+                    if (job.ScenarioId.HasValue)
+                        resultDto = resultDto with { ScenarioId = job.ScenarioId.Value };
+                    var savedId = await runRepo.SaveAsync(resultDto, CancellationToken.None);
+                    resultDto = resultDto with { Id = savedId.ToString() };
 
                     // Update scenario status → Backtested when this was a scenario-tagged run
-                    if (job.ScenarioId.HasValue && resultDto.Id != null)
+                    if (job.ScenarioId.HasValue)
                     {
                         var scenarioRepo = scope.ServiceProvider.GetRequiredService<IStrategyScenarioRepository>();
                         var scenario = await scenarioRepo.GetByIdAsync(job.ScenarioId.Value, CancellationToken.None);
                         if (scenario != null)
                         {
                             scenario.Status            = ScenarioStatus.Backtested;
-                            scenario.LastBacktestRunId = Guid.Parse(resultDto.Id);
+                            scenario.LastBacktestRunId = savedId;
                             scenario.UpdatedAt         = SystemClock.Instance.GetCurrentInstant();
                             await scenarioRepo.UpdateAsync(scenario, CancellationToken.None);
                             logger.LogInformation("[BacktestJob] {JobId} — scenario {ScenarioId} promoted to Backtested",
@@ -163,7 +166,7 @@ public class BacktestJobManager(
                 catch (Exception ex) { logger.LogWarning(ex, "[BacktestJob] {JobId} — failed to persist result", jobId); }
             }
 
-            job.Status      = result.Success ? "Completed" : "Failed";
+            job.Status      = result.Success ? BacktestJobStatus.Completed : BacktestJobStatus.Failed;
             job.Error       = result.Error;
             job.ProgressPct = 100m;
             job.Result      = resultDto;
@@ -171,13 +174,13 @@ public class BacktestJobManager(
         }
         catch (OperationCanceledException)
         {
-            job.Status = "Cancelled";
+            job.Status = BacktestJobStatus.Cancelled;
             await pusher.PushCompletedAsync(jobId, job.ToDto());
             logger.LogInformation("[BacktestJob] {JobId} cancelled", jobId);
         }
         catch (Exception ex)
         {
-            job.Status = "Failed";
+            job.Status = BacktestJobStatus.Failed;
             job.Error  = ex.Message;
             await pusher.PushCompletedAsync(jobId, job.ToDto());
             logger.LogError(ex, "[BacktestJob] {JobId} failed", jobId);
@@ -269,7 +272,7 @@ internal sealed class BacktestJob(string jobId)
     public string  JobId          { get; } = jobId;
     /// <summary>Set when this job was triggered by EnqueueScenarioAsync.</summary>
     public Guid?   ScenarioId     { get; init; }
-    public string  Status         { get; set; } = "Queued";
+    public BacktestJobStatus Status { get; set; } = BacktestJobStatus.Queued;
     public decimal ProgressPct   { get; set; } = 0m;
     public int CurrentBar        { get; set; } = 0;
     public int TotalBars         { get; set; } = 0;
@@ -288,5 +291,5 @@ internal sealed class BacktestJob(string jobId)
         TradesSoFar: TradesSoFar,
         CurrentEquity: CurrentEquity,
         Error: Error,
-        Result: Status is "Completed" or "Failed" ? Result : null);
+        Result: Status is BacktestJobStatus.Completed or BacktestJobStatus.Failed ? Result : null);
 }

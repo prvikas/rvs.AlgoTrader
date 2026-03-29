@@ -2,13 +2,14 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using NodaTime.Serialization.SystemTextJson;
-using System.Text;
+using rvs.AlgoTrader.API.Services;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Backtesting.Engine;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Repositories;
 using rvs.AlgoTrader.Infrastructure.Services;
 using rvs.AlgoTrader.Strategies;
-using rvs.AlgoTrader.API.Services;
+using System.Text;
 
 namespace rvs.AlgoTrader.API.Extensions;
 
@@ -22,6 +23,7 @@ public static class ServiceCollectionExtensions
                 opts.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
                 opts.JsonSerializerOptions.DefaultIgnoreCondition =
                     System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+                opts.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
                 // NodaTime types (LocalDate, Instant, ZonedDateTime, etc.) used in request/response DTOs
                 opts.JsonSerializerOptions.ConfigureForNodaTime(NodaTime.DateTimeZoneProviders.Tzdb);
             });
@@ -72,6 +74,10 @@ public static class ServiceCollectionExtensions
         // Infrastructure defines IBacktestEngine (Application layer interface) but cannot reference
         // the Backtesting assembly directly (CLAUDE.md Rule #2 — no cross-context direct calls).
         services.AddScoped<IBacktestEngine, BacktestEngine>();
+
+        // ICurrentUser — reads JWT identity from HTTP context; falls back to "System" outside request scope.
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // IBacktestProgressPusher — implemented here (API) because it requires IHubContext<BacktestHub>.
         // BacktestJobManager (Infrastructure) depends on IBacktestProgressPusher (Application interface)

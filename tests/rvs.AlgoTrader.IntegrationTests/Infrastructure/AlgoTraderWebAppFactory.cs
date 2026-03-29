@@ -2,6 +2,7 @@ using MassTransit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using rvs.AlgoTrader.Infrastructure.Persistence;
@@ -37,6 +38,14 @@ public sealed class AlgoTraderWebAppFactory : WebApplicationFactory<Program>, IA
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Provide a fixed 32-byte test key so IFieldEncryptionService resolves in tests.
+        builder.ConfigureAppConfiguration((_, cfg) =>
+            cfg.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                // 32 bytes of 0x41 ('A') — valid 256-bit key for testing only
+                ["FieldEncryption:Key"] = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE="
+            }));
+
         builder.ConfigureServices(services =>
         {
             // Replace DB context with test container connection

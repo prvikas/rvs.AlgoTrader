@@ -7,8 +7,11 @@ using rvs.AlgoTrader.API.Extensions;
 using rvs.AlgoTrader.API.Hubs;
 using rvs.AlgoTrader.API.Messaging;
 using rvs.AlgoTrader.API.Middleware;
+using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Infrastructure.Extensions;
 using rvs.AlgoTrader.Infrastructure.Persistence;
+using rvs.AlgoTrader.Infrastructure.Repositories;
+using rvs.AlgoTrader.Infrastructure.Services;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);

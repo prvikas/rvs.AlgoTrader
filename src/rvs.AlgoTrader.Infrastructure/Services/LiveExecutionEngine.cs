@@ -40,7 +40,7 @@ public class LiveExecutionEngine(
         }
 
         // 2. Idempotency key = hash of instance + signal + candle timestamp
-        var idempotencyKey = $"{instance.Id}:{signal.Signal}:{clock.NowInstant().ToUnixTimeMilliseconds()}";
+        var idempotencyKey = $"{instance.Id}:{signal.Signal.ToString().ToUpperInvariant()}:{clock.NowInstant().ToUnixTimeMilliseconds()}";
         var idempotencyCheck = await idempotency.CheckAsync(idempotencyKey, ct);
         if (idempotencyCheck.IsDuplicate)
         {
@@ -49,7 +49,7 @@ public class LiveExecutionEngine(
         }
 
         // 3. Determine direction and quantity
-        var direction = signal.Signal == "BUY" ? OrderDirection.Buy : OrderDirection.Sell;
+        var direction = signal.Signal == SignalType.Buy ? OrderDirection.Buy : OrderDirection.Sell;
         var quantity = instance.LotSize > 0 ? instance.LotSize : 1;
 
         // 4. Capital reservation
@@ -66,13 +66,13 @@ public class LiveExecutionEngine(
         var orderRequest = new OrderRequest(
             instance.InternalSymbol,
             instance.BrokerToken ?? instance.InternalSymbol,
-            "MARKET",
-            signal.Signal,
+            OrderType.Market.ToString().ToUpperInvariant(),
+            direction.ToString().ToUpperInvariant(),
             quantity,
             signal.EntryPrice,
             null,
-            instance.Exchange,
-            instance.ProductType,
+            instance.Exchange.ToString(),
+            instance.ProductType.ToString(),
             idempotencyKey,
             instance.CurrentRunId,
             correlationId);
@@ -106,12 +106,12 @@ public class LiveExecutionEngine(
             await idempotency.StoreAsync(idempotencyKey, brokerResult, ct);
             await bus.Publish(new OrderPlaced(
                 order.Id, instance.BrokerName ?? "Zerodha", brokerResult.BrokerOrderId!,
-                instance.InternalSymbol, "MARKET", signal.Signal,
+                instance.InternalSymbol, OrderType.Market, direction,
                 quantity, signal.EntryPrice,
                 instance.CurrentRunId, correlationId, clock.NowIst()), ct);
 
             logger.LogInformation("[LiveExecution] Order placed: {OrderId} for {Instance} ({Signal})",
-                brokerResult.BrokerOrderId, instance.Name, signal.Signal);
+                brokerResult.BrokerOrderId, instance.Name, signal.Signal.ToString().ToUpperInvariant());
         }
         else
         {

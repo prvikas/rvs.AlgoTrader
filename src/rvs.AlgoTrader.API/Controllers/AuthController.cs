@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using rvs.AlgoTrader.Application.Commands.Broker;
+using rvs.AlgoTrader.Application.DTOs.Auth;
+using rvs.AlgoTrader.Application.DTOs.Broker;
 using rvs.AlgoTrader.Application.DTOs.Common;
 
 namespace rvs.AlgoTrader.API.Controllers;
@@ -64,7 +66,4 @@ public class AuthController(IMediator mediator, IConfiguration config) : Control
     }
 }
 
-// ── Request/Response DTOs ─────────────────────────────────────────────────────
-// Note: MStockLoginRequest is defined in BrokerController.cs to avoid duplication
-
-public record LoginResultDto(string Token, string BrokerName, DateTimeOffset ExpiresAt);
+// LoginResultDto is defined in Application/DTOs/Auth/AuthDtos.cs

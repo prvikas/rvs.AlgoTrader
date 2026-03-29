@@ -1,6 +1,8 @@
 using MediatR;
+using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Portfolio;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Enums;
 
 namespace rvs.AlgoTrader.Application.Queries.Portfolio;
 
@@ -34,10 +36,75 @@ public class GetPortfolioSummaryHandler(IStrategyInstanceRepository repo)
             TodayTotalUnrealizedPnl: rows.Sum(r => r.TodayUnrealizedPnl),
             TodayTotalPnl: rows.Sum(r => r.TodayTotalPnl),
             TotalAllocatedCapital: rows.Sum(r => r.AllocatedCapital),
-            RunningCount: all.Count(i => string.Equals(i.Status.ToString(), "Running", StringComparison.OrdinalIgnoreCase) && string.Equals(i.Mode.ToString(), "Live", StringComparison.OrdinalIgnoreCase)),
-            PausedCount: all.Count(i => string.Equals(i.Status.ToString(), "Paused", StringComparison.OrdinalIgnoreCase)),
-            StoppedCount: all.Count(i => string.Equals(i.Status.ToString(), "Stopped", StringComparison.OrdinalIgnoreCase)),
-            ForwardTestCount: all.Count(i => string.Equals(i.Mode.ToString(), "Forward", StringComparison.OrdinalIgnoreCase) && string.Equals(i.Status.ToString(), "Running", StringComparison.OrdinalIgnoreCase)),
+            RunningCount: all.Count(i => i.Status == StrategyStatus.Running && i.Mode == StrategyMode.Live),
+            PausedCount: all.Count(i => i.Status == StrategyStatus.Paused),
+            StoppedCount: all.Count(i => i.Status == StrategyStatus.Stopped),
+            ForwardTestCount: all.Count(i => i.Mode == StrategyMode.Forward && i.Status == StrategyStatus.Running),
             ByStrategy: rows);
+    }
+}
+
+public class GetOpenPositionsHandler(IPositionRepository positionRepo)
+    : IRequestHandler<GetOpenPositionsQuery, IReadOnlyList<PositionDto>>
+{
+    public async Task<IReadOnlyList<PositionDto>> Handle(GetOpenPositionsQuery request, CancellationToken ct)
+    {
+        var positions = request.BrokerName != null
+            ? await positionRepo.GetOpenPositionsAsync(request.BrokerName, ct)
+            : await positionRepo.GetOpenAsync(ct);
+
+        if (request.StrategyRunId.HasValue)
+            positions = positions.Where(p => p.StrategyRunId == request.StrategyRunId).ToList();
+
+        return positions.Select(p => new PositionDto(
+            Id: p.Id.ToString(),
+            BrokerName: p.BrokerName,
+            InternalSymbol: p.InternalSymbol,
+            Quantity: p.Quantity,
+            AvgPrice: p.AvgPrice,
+            CurrentPrice: p.CurrentPrice,
+            StopLoss: p.StopLoss,
+            TakeProfit: p.TakeProfit,
+            UnrealizedPnl: p.UnrealizedPnl,
+            RealizedPnl: p.RealizedPnl,
+            ProductType: p.ProductType,
+            StrategyRunId: p.StrategyRunId?.ToString(),
+            OpenedAt: p.OpenedAt?.ToDateTimeOffset())).ToList();
+    }
+}
+
+public class GetRecentOrdersHandler(IOrderRepository orderRepo)
+    : IRequestHandler<GetRecentOrdersQuery, IReadOnlyList<OrderDto>>
+{
+    public async Task<IReadOnlyList<OrderDto>> Handle(GetRecentOrdersQuery request, CancellationToken ct)
+    {
+        var orders = request.StrategyRunId.HasValue
+            ? await orderRepo.GetByStrategyRunAsync(request.StrategyRunId.Value, ct)
+            : await orderRepo.GetRecentAsync(request.Page * request.PageSize, ct);
+
+        return orders
+            .Skip((request.Page - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .Select(o => new OrderDto(
+                Id: o.Id.ToString(),
+                BrokerName: o.BrokerName,
+                BrokerOrderId: o.BrokerOrderId,
+                InternalSymbol: o.InternalSymbol,
+                OrderType: o.OrderType,
+                Direction: o.Direction,
+                Status: o.Status,
+                Quantity: o.Quantity,
+                FilledQuantity: o.FilledQuantity,
+                Price: o.Price,
+                FillPrice: o.FillPrice,
+                TriggerPrice: o.TriggerPrice,
+                Exchange: o.Exchange,
+                ProductType: o.ProductType,
+                StrategyRunId: o.StrategyRunId?.ToString(),
+                RejectionReason: o.RejectionReason,
+                PlacedAt: o.PlacedAt?.ToDateTimeOffset(),
+                FilledAt: o.FilledAt?.ToDateTimeOffset(),
+                CreatedAt: o.CreatedAt.ToDateTimeOffset()))
+            .ToList();
     }
 }

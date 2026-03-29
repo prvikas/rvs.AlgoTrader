@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 import { useAppStore } from './stores/appStore'
+import { C } from './styles/tokens'
 
 // ── Dev-only preview token ────────────────────────────────────────────────────
 // Injected before React mounts so the Zustand store reads it on first init.
@@ -32,13 +33,13 @@ class ErrorBoundary extends React.Component<
       return (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          minHeight: '100vh', background: '#090910', color: '#e2e8f0', fontFamily: "'Inter', system-ui, sans-serif",
+          minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif",
           padding: 32,
         }}>
-          <div style={{ maxWidth: 600, width: '100%', background: '#1e1e2e', border: '1px solid #7f1d1d', borderRadius: 10, padding: 28 }}>
+          <div style={{ maxWidth: 600, width: '100%', background: C.surface, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 28 }}>
             <h2 style={{ color: '#fca5a5', marginTop: 0, fontSize: 18 }}>Something went wrong</h2>
             <pre style={{
-              background: '#0f0f1a', color: '#fca5a5', borderRadius: 6,
+              background: C.surface2, color: '#fca5a5', borderRadius: 6,
               padding: 14, fontSize: 12, overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {this.state.error.message}
@@ -47,7 +48,7 @@ class ErrorBoundary extends React.Component<
             </pre>
             <button
               onClick={() => { this.setState({ error: null }); window.location.reload() }}
-              style={{ marginTop: 16, padding: '8px 20px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
+              style={{ marginTop: 16, padding: '8px 20px', background: C.blue, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
             >
               Reload
             </button>

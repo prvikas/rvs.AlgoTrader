@@ -25,8 +25,10 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Property(o => o.FillPrice).HasColumnName("fill_price").HasPrecision(18, 4);
         builder.Property(o => o.TrailingSl).HasColumnName("trailing_sl").HasPrecision(18, 4);
         builder.Property(o => o.TrailingTp).HasColumnName("trailing_tp").HasPrecision(18, 4);
-        builder.Property(o => o.Exchange).HasColumnName("exchange").HasMaxLength(10).IsRequired();
-        builder.Property(o => o.ProductType).HasColumnName("product_type").HasMaxLength(10).IsRequired();
+        builder.Property(o => o.Exchange).HasColumnName("exchange").HasMaxLength(10).IsRequired()
+            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.Exchange>(v));
+        builder.Property(o => o.ProductType).HasColumnName("product_type").HasMaxLength(10).IsRequired()
+            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.ProductType>(v));
         builder.Property(o => o.IdempotencyKey).HasColumnName("idempotency_key").HasMaxLength(100).IsRequired();
         builder.Property(o => o.StrategyRunId).HasColumnName("strategy_run_id");
         builder.Property(o => o.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);

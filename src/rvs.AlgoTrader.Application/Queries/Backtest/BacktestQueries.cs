@@ -16,3 +16,4 @@ public record GetBacktestRunsQuery(Guid? StrategyInstanceId, int Page = 1, int P
 public record GetBacktestCostProfilesQuery() : IRequest<IReadOnlyList<BacktestCostProfileDto>>;
 public record GetBacktestCostProfileByIdQuery(Guid Id) : IRequest<BacktestCostProfileDto?>;
 public record ReproduceBacktestQuery(Guid RunId) : IRequest<BacktestResultDto?>;
+public record GetBacktestsByScenarioQuery(Guid ScenarioId, int Page = 1, int PageSize = 50) : IRequest<IReadOnlyList<BacktestResultDto>>;

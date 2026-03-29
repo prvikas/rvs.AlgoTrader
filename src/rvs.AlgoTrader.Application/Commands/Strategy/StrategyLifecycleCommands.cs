@@ -1,6 +1,7 @@
 using MediatR;
 using FluentValidation;
 using NodaTime;
+using rvs.AlgoTrader.Application.DTOs.Strategy;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Enums;
 
@@ -82,10 +83,18 @@ public record CreateStrategyInstanceCommand(
     string Actor = "User",
     string CorrelationId = "") : IRequest<Guid>;
 
-public class StartStrategyCommandHandler(IStrategyInstanceManager manager) : IRequestHandler<StartStrategyCommand, Guid>
+public class StartStrategyCommandHandler(
+    IStrategyInstanceManager manager,
+    IStrategyScenarioRepository scenarioRepo) : IRequestHandler<StartStrategyCommand, Guid>
 {
     public async Task<Guid> Handle(StartStrategyCommand request, CancellationToken ct)
-        => await manager.StartAsync(request.InstanceId, ct);
+    {
+        var scenarios = await scenarioRepo.GetByInstanceAsync(request.InstanceId, ct);
+        if (scenarios.Count == 0)
+            throw new InvalidOperationException(
+                "Cannot start a strategy with no scenarios. Create at least one scenario first.");
+        return await manager.StartAsync(request.InstanceId, ct);
+    }
 }
 
 public class PauseStrategyCommandHandler(IStrategyInstanceManager manager) : IRequestHandler<PauseStrategyCommand, bool>
@@ -106,12 +115,12 @@ public class StopStrategyCommandHandler(IStrategyInstanceManager manager) : IReq
     }
 }
 
-public class DeleteStrategyInstanceCommandHandler(IStrategyInstanceRepository repo, IAuditService audit) : IRequestHandler<DeleteStrategyInstanceCommand, bool>
+public class DeleteStrategyInstanceCommandHandler(IStrategyInstanceRepository repo, IAuditService audit, ICurrentUser currentUser) : IRequestHandler<DeleteStrategyInstanceCommand, bool>
 {
     public async Task<bool> Handle(DeleteStrategyInstanceCommand request, CancellationToken ct)
     {
         await repo.DeleteAsync(request.Id, ct);
-        await audit.LogAsync("STRATEGY_DELETED", "User", "StrategyInstance", request.Id.ToString(), null, request.Id.ToString(), ct);
+        await audit.LogAsync("STRATEGY_DELETED", currentUser.Actor, "StrategyInstance", request.Id.ToString(), null, request.Id.ToString(), ct);
         return true;
     }
 }
@@ -125,6 +134,14 @@ public class CreateStrategyInstanceCommandHandler(
     {
         if (!Enum.TryParse<StrategyMode>(request.Mode, true, out var mode))
             throw new ArgumentException($"Invalid strategy mode: {request.Mode}");
+
+        if (request.ScheduleJson is not null)
+        {
+            var schedule = ScheduleConfigDto.Parse(request.ScheduleJson);
+            var errors = schedule?.Validate() ?? [];
+            if (errors.Count > 0)
+                throw new ArgumentException($"Invalid ScheduleJson: {string.Join("; ", errors)}");
+        }
 
         var instance = Domain.Entities.StrategyInstance.Create(
             name: request.Name,
@@ -189,7 +206,14 @@ public class UpdateStrategyInstanceCommandHandler(
         if (request.BrokerName is not null) instance.BrokerName = request.BrokerName;
         if (request.InternalSymbol is not null) instance.InternalSymbol = request.InternalSymbol;
         if (request.Timeframe is not null) instance.Timeframe = request.Timeframe;
-        if (request.ScheduleJson is not null) instance.ScheduleJson = request.ScheduleJson;
+        if (request.ScheduleJson is not null)
+        {
+            var schedule = ScheduleConfigDto.Parse(request.ScheduleJson);
+            var errors = schedule?.Validate() ?? [];
+            if (errors.Count > 0)
+                throw new ArgumentException($"Invalid ScheduleJson: {string.Join("; ", errors)}");
+            instance.ScheduleJson = request.ScheduleJson;
+        }
         if (request.AllocatedCapital.HasValue) instance.AllocatedCapital = request.AllocatedCapital.Value;
         instance.UpdatedAt = clock.NowInstant();
 

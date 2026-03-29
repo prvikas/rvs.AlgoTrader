@@ -24,6 +24,23 @@ public class Instrument
     public string? UpstoxToken { get; set; }
     public string? MStockToken { get; set; }
 
+    /// <summary>
+    /// Currency in which the instrument is quoted.
+    /// INR for NSE/BSE equities and derivatives; USD for MCX commodities (e.g. crude, gold).
+    /// Defaults to "INR" — must be set explicitly for cross-currency instruments.
+    /// Used by BacktestEngine and LiveExecutionEngine to convert P&amp;L to base currency.
+    /// </summary>
+    public string QuoteCurrency      { get; set; } = "INR";
+
+    /// <summary>Currency in which the instrument settles (usually same as QuoteCurrency).</summary>
+    public string SettlementCurrency { get; set; } = "INR";
+
+    /// <summary>
+    /// Multiplier applied to price before P&amp;L calculation.
+    /// 1 for equities. For MCX crude oil (USD-per-barrel × LotSize × Multiplier = INR P&amp;L).
+    /// </summary>
+    public decimal PriceMultiplier   { get; set; } = 1m;
+
     public Instant LastRefreshedAt { get; set; }
 
     // Display helpers

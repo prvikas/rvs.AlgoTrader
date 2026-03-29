@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.Commands.Broker;
 using rvs.AlgoTrader.Application.DTOs.Broker;
+// MStockLoginRequest, ZerodhaCallbackRequest, UpstoxCallbackRequest defined in Application/DTOs/Broker/BrokerRequestDtos.cs
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Queries.Broker;
 
@@ -135,8 +136,4 @@ public class BrokerController(IMediator mediator) : ControllerBase
     }
 }
 
-// ── Request DTOs ─────────────────────────────────────────────────────────────
-
-public record MStockLoginRequest(string ApiKey, string ClientCode, string Password, string Totp);
-public record ZerodhaCallbackRequest(string RequestToken);
-public record UpstoxCallbackRequest(string AuthCode);
+// Request DTOs moved to Application/DTOs/Broker/BrokerRequestDtos.cs

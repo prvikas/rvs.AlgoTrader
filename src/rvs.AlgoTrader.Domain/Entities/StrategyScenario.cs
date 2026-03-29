@@ -22,6 +22,12 @@ public class StrategyScenario
     /// </summary>
     public string? ParametersJsonOverride { get; set; }
 
+    /// <summary>
+    /// Capital allocated to this scenario when running forward or live.
+    /// If null, the strategy-level AllocatedCapital is used.
+    /// </summary>
+    public decimal? AllocatedCapital      { get; set; }
+
     public ScenarioStatus Status         { get; set; } = ScenarioStatus.Draft;
 
     /// <summary>ID of the most recent backtest run produced for this scenario.</summary>
@@ -40,7 +46,8 @@ public class StrategyScenario
         string name,
         string? description,
         string? parametersJsonOverride,
-        Instant now)
+        Instant now,
+        decimal? allocatedCapital = null)
         => new()
         {
             Id                     = Guid.NewGuid(),
@@ -48,6 +55,7 @@ public class StrategyScenario
             Name                   = name,
             Description            = description,
             ParametersJsonOverride = parametersJsonOverride,
+            AllocatedCapital       = allocatedCapital,
             Status                 = ScenarioStatus.Draft,
             CreatedAt              = now,
             UpdatedAt              = now,

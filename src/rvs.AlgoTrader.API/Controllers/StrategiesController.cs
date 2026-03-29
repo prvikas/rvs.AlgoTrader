@@ -4,8 +4,10 @@ using Microsoft.AspNetCore.Mvc;
 using NodaTime;
 using NodaTime.Text;
 using rvs.AlgoTrader.Application.Commands.Strategy;
+using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.DTOs.Strategy;
+using rvs.AlgoTrader.Application.Queries.Backtest;
 using rvs.AlgoTrader.Application.Queries.Strategy;
 using rvs.AlgoTrader.Domain.Interfaces;
 
@@ -148,7 +150,7 @@ public class StrategiesController(IMediator mediator, IStrategyFactory strategyF
         Guid instanceId, [FromBody] CreateScenarioRequest request, CancellationToken ct)
     {
         var id = await mediator.Send(new CreateScenarioCommand(
-            instanceId, request.Name, request.Description, request.ParametersJsonOverride), ct);
+            instanceId, request.Name, request.Description, request.ParametersJsonOverride, request.AllocatedCapital), ct);
         return CreatedAtAction(nameof(GetScenario), new { instanceId, scenarioId = id },
             ApiResponse<Guid>.Ok(id));
     }
@@ -159,7 +161,7 @@ public class StrategiesController(IMediator mediator, IStrategyFactory strategyF
         Guid instanceId, Guid scenarioId, [FromBody] UpdateScenarioRequest request, CancellationToken ct)
     {
         await mediator.Send(new UpdateScenarioCommand(
-            scenarioId, request.Name, request.Description, request.ParametersJsonOverride), ct);
+            scenarioId, request.Name, request.Description, request.ParametersJsonOverride, request.AllocatedCapital), ct);
         return Ok(ApiResponse<bool>.Ok(true));
     }
 
@@ -179,7 +181,20 @@ public class StrategiesController(IMediator mediator, IStrategyFactory strategyF
         [FromBody] PromoteScenarioRequest request, CancellationToken ct)
     {
         await mediator.Send(new PromoteScenarioCommand(scenarioId, request.TargetStatus), ct);
+        // TargetStatus is now ScenarioStatus enum — invalid values return 400 at deserialization
         return Ok(ApiResponse<bool>.Ok(true));
+    }
+
+    /// <summary>List all backtest runs for a specific scenario (paginated).</summary>
+    [HttpGet("{instanceId:guid}/scenarios/{scenarioId:guid}/backtests")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<BacktestResultDto>>>> GetScenarioBacktests(
+        Guid instanceId, Guid scenarioId,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 50,
+        CancellationToken ct = default)
+    {
+        var result = await mediator.Send(
+            new GetBacktestsByScenarioQuery(scenarioId, page, Math.Clamp(pageSize, 1, 200)), ct);
+        return Ok(ApiResponse<IReadOnlyList<BacktestResultDto>>.Ok(result));
     }
 
     /// <summary>
@@ -210,13 +225,5 @@ public class StrategiesController(IMediator mediator, IStrategyFactory strategyF
     }
 }
 
-public record PromoteScenarioRequest(string TargetStatus);
-
-public record RunScenariosApiRequest(
-    string InternalSymbol,
-    string Timeframe,
-    string FromDate,
-    string ToDate,
-    decimal InitialCapital        = 100_000m,
-    decimal RiskPerTradePercent   = 1.0m,
-    IReadOnlyList<Guid>? ScenarioIds = null);
+// PromoteScenarioRequest and RunScenariosApiRequest are defined in
+// rvs.AlgoTrader.Application.DTOs.Strategy.StrategyScenarioDto.cs

@@ -1,4 +1,6 @@
 # CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 <!-- always loaded — keep under 100 lines; full detail lives in docs/ -->
 
 ## Identity
@@ -20,8 +22,14 @@ dotnet run --project src/rvs.AlgoTrader.API
 cd frontend && npm run dev        # :3000, proxies API to :62318
 ./run-tests.sh [unit|arch|integration|e2e|all]
 dotnet test tests/rvs.AlgoTrader.Tests.Unit --filter "FullyQualifiedName~MyTestName"
+dotnet test tests/rvs.AlgoTrader.UnitTests --filter "FullyQualifiedName~MyTestName"  # legacy unit tests project
 docker compose up -d              # TimescaleDB, Redis, RabbitMQ, Vault, Prometheus, Grafana
 ```
+
+## Project assemblies
+Domain | Application | Infrastructure | API | Backtesting | Strategies
+Brokers.Abstractions | Brokers.MStock | Brokers.Zerodha | Brokers.Upstox
+Tests: Tests.Unit | UnitTests | Tests.Architecture | IntegrationTests | Tests.UI
 
 ## Git workflow
 - **never create feature branches** — all edits go directly to master
@@ -51,6 +59,7 @@ spec: docs/UI_DESIGN_SPEC.md — read before any frontend change
 - standard API envelope on all endpoints; no DB schema changes unless asked (AP-013)
 - DB migrations: `*.sql` in `src/.../Persistence/Migrations/` auto-discovered in numeric order by `DatabaseMigrationRunner`; never modify an applied migration — add a new numbered file
 - broker HTTP must use Polly (AP-010); timeseries queries must bound timestamps (AP-014)
+- validate market calendar before placing any order (AP-011); all logs must carry correlation ID via Serilog enrichment (AP-008)
 - frontend order submit: crypto.randomUUID() per submit (AP-012)
 - no naked short options in any strategy; no business config in appsettings
 see full list: docs/ANTI_PATTERNS.md
@@ -60,6 +69,7 @@ layers: Domain <- Application <- Infrastructure <- API
 contexts: TradingExecution | DataIngestion | Backtesting
 engines: BacktestExecutionEngine (historical) | SimulatedExecutionEngine (fwd, no real orders) | LiveExecutionEngine (broker)
 rule: same IStrategy + IIndicatorService across all 3 modes; only IExecutionEngine differs
+shared concerns: IClock (time) | ICandleCache (market data) | ICapitalAllocator (capital reservation) | IStrategyScheduler (session) | ISecretsProvider (secrets)
 see: docs/ARCHITECTURE.md
 
 ## Strategy targets
@@ -74,7 +84,7 @@ see: docs/WORKFLOW.md | docs/APPROVAL_CRITERIA.md | docs/DATA_SOURCES.md
 ## Docs map
 docs/PLAN.md | docs/ARCHITECTURE.md | docs/WORKFLOW.md | docs/IMPLEMENTATION_STATUS.md
 docs/REQUIREMENTS_DELTA.md | docs/STRATEGY_SPECS.md | docs/DATA_SOURCES.md
-docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md | docs/UI_DESIGN_SPEC.md | docs/ANTI_PATTERNS.md | SELF_LEARNING.md
+docs/APPROVAL_CRITERIA.md | docs/REFERENCES.md | docs/UI_DESIGN_SPEC.md | docs/ANTI_PATTERNS.md | docs/BACKTEST_WORKFLOW.md | SELF_LEARNING.md
 - keep docs/IMPLEMENTATION_STATUS.md under 50 lines
 - docs/STRATEGY.md is legacy — never use for implementation decisions
 

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.DTOs.Common;
+using rvs.AlgoTrader.Application.DTOs.Settings;
 using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.API.Controllers;
@@ -79,16 +80,4 @@ public class SettingsController(IAppConfigService configService) : ControllerBas
     }
 }
 
-/// <summary>Read-only view of notification settings. Bot token is masked for security.</summary>
-public record NotificationSettingsDto(
-    string? TelegramBotTokenMasked,
-    string? TelegramChatId,
-    decimal MaxDailyDrawdownPct,
-    bool? AlertsEnabled);
-
-/// <summary>Mutable notification settings. Null values leave the existing setting unchanged.</summary>
-public record UpdateNotificationSettingsDto(
-    string? TelegramBotToken,
-    string? TelegramChatId,
-    decimal? MaxDailyDrawdownPct,
-    bool? AlertsEnabled);
+// NotificationSettingsDto and UpdateNotificationSettingsDto moved to Application/DTOs/Settings/NotificationSettingsDtos.cs

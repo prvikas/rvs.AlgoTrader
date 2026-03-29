@@ -79,7 +79,16 @@ public static class ServiceCollectionExtensions
         }
         else
         {
-            // In-memory fallbacks when Redis is not running
+            // In-memory fallbacks when Redis is not running.
+            // WARN: state is lost on restart — kill switch and idempotency are non-persistent.
+            var env = config["ASPNETCORE_ENVIRONMENT"] ?? config["Environment"] ?? "Development";
+            if (env is "Production" or "Staging")
+            {
+                throw new InvalidOperationException(
+                    "Redis is required in Production/Staging. In-memory fallbacks must not run in production " +
+                    "— they lose kill-switch state and idempotency keys on restart. " +
+                    "Set the Redis connection string in ConnectionStrings:Redis.");
+            }
             services.AddSingleton<IIdempotencyService, InMemoryIdempotencyService>();
             services.AddSingleton<IKillSwitchService, InMemoryKillSwitchService>();
             services.AddSingleton<ICapitalAllocator, InMemoryCapitalAllocator>();
@@ -106,6 +115,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPositionReconciliationService, PositionReconciliationService>();
         services.AddSingleton<ISymbolDataPreferencesService, SymbolDataPreferencesService>();
         services.AddScoped<IMarketCalendarService, MarketCalendarService>();
+        services.AddScoped<IMarketBreadthService, MarketBreadthService>();
+        services.AddScoped<IEventCalendarService, EventCalendarService>();
+        services.AddScoped<IHistoricalDataManager, HistoricalDataManager>();
+        services.AddSingleton<IDataFeedHealthMonitor, DataFeedHealthMonitor>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IIndicatorService, IndicatorService>();
 
@@ -139,21 +152,36 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IStrategyRunRepository, StrategyRunRepository>();
         services.AddScoped<ICandleRepository, CandleRepository>();
 
-        // Stub implementations (replace with EF Core implementations as needed)
-        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
-        services.AddScoped<IAlertLogRepository, AlertLogRepository>();
-        services.AddScoped<IDownloadJobRepository, DownloadJobRepository>();
-        services.AddScoped<ISignalJournalRepository, SignalJournalRepository>();
-        services.AddScoped<ICapitalAllocationRepository, CapitalAllocationRepository>();
-        services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository>();
+        // EF Core implementations (backed by migration 010_StubRepositoriesSchema.sql)
+        services.AddScoped<IAuditLogRepository, EfAuditLogRepository>();
+        services.AddScoped<IAlertLogRepository, EfAlertLogRepository>();
+        services.AddScoped<IDownloadJobRepository, EfDownloadJobRepository>();
+        services.AddScoped<ISignalJournalRepository, EfSignalJournalRepository>();
+        services.AddScoped<ICapitalAllocationRepository, EfCapitalAllocationRepository>();
+        services.AddScoped<IUserPreferencesRepository, EfUserPreferencesRepository>();
+        services.AddScoped<IWatchlistRepository, EfWatchlistRepository>();
+
+        // Remaining in-memory implementations (no DB table required)
         services.AddSingleton<IAppConfigRepository, AppConfigRepository>();
         services.AddScoped<IBrokerLatencyRepository, BrokerLatencyRepository>();
-        services.AddScoped<IBacktestRunRepository, BacktestRunRepository>();
         services.AddScoped<IBacktestCostProfileRepository, BacktestCostProfileRepository>();
+
+        services.AddScoped<IBacktestRunRepository, BacktestRunRepository>();
         services.AddScoped<IForwardTestSessionRepository, ForwardTestSessionRepository>();
         services.AddScoped<IForwardTestTradeRepository, ForwardTestTradeRepository>();
-        services.AddScoped<IWatchlistRepository, WatchlistRepository>();
         services.AddScoped<IStrategyScenarioRepository, StrategyScenarioRepository>();
+
+        // ── Options engine (#68, #65, #72, #73, #84) ────────────────────────
+        services.AddSingleton<IBlackScholesEngine, BlackScholesEngine>();
+        services.AddScoped<IOptionLegSelector, OptionLegSelector>();
+        services.AddScoped<IOptionIvRankService, OptionIvRankService>();
+        services.AddScoped<IOptionIvHistoryRepository, EfOptionIvHistoryRepository>();
+        services.AddSingleton<IOrderManager, OrderManager>();
+        services.AddScoped<ISpreadOrderManager, SpreadOrderManager>();
+        services.AddScoped<ISpreadPositionRepository, EfSpreadPositionRepository>();
+
+        // ── FX rates (#64) ───────────────────────────────────────────────────
+        services.AddScoped<IFxRateProvider, EfFxRateProvider>();
 
         // Broker HTTP clients (typed clients via IHttpClientFactory)
         services.AddHttpClient<MStockAuth>();

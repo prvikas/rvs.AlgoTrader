@@ -87,7 +87,7 @@ export function Dashboard() {
   ]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', minWidth: 1280, backgroundColor: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Top Navigation Bar */}
       <header style={{
         height: NAV_HEIGHT, flexShrink: 0, background: C.navBg,
@@ -233,11 +233,22 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
   const [pendingCmd, setPendingCmd] = useState<CreateStrategyCommand | null>(null)
 
+  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
+
   const { data: strategies } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => strategiesApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
     refetchInterval: 10_000,
   })
+
+  // Auto-select first strategy when list loads
+  useEffect(() => {
+    if (!selectedInstanceId && strategies && strategies.length > 0) {
+      setSelectedInstanceId(strategies[0].id)
+    }
+  }, [strategies, selectedInstanceId])
+
+  const selectedInstance = strategies?.find(s => s.id === selectedInstanceId) ?? null
 
   const createMutation = useMutation({
     mutationFn: (cmd: CreateStrategyCommand) => strategiesApi.create(cmd),
@@ -315,7 +326,7 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 6, borderBottom: `1px solid ${C.border}` }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Strategy Instances
+          Strategies
         </span>
         <button
           onClick={() => setShowForm(!showForm)}
@@ -581,15 +592,80 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
         </div>
       )}
 
-      {/* Strategies Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '20px' }}>
-        {strategies && strategies.length > 0 ? (
-          strategies.map(strat => (
-              <StrategyCard key={strat.id} instance={strat} onRunBacktest={onRunBacktest} onPromoteToForward={onPromoteToForward} />
-            ))
-        ) : (
-          <p style={{ color: '#8b8b9f', fontSize: '14px' }}>No strategies yet. Create one to get started.</p>
-        )}
+      {/* Master-detail: left list + right detail */}
+      <div style={{ display: 'flex', gap: 0, marginTop: 8 }}>
+
+        {/* Left: compact strategy list */}
+        <div style={{
+          width: 260, flexShrink: 0,
+          borderRight: `1px solid ${C.border}`,
+          position: 'sticky', top: 0, alignSelf: 'flex-start',
+          maxHeight: 'calc(100vh - 80px)', overflowY: 'auto',
+        }}>
+          {!strategies || strategies.length === 0 ? (
+            <div style={{ padding: '20px 14px', color: C.textMuted, fontSize: 13 }}>
+              No strategies yet. Click <strong style={{ color: C.text }}>+ New</strong> to create one.
+            </div>
+          ) : (
+            strategies.map(strat => {
+              const isSelected = strat.id === selectedInstanceId
+              const statusColor: Record<string, { bg: string; text: string; dot: string }> = {
+                Draft:     { bg: '#1e293b', text: '#94a3b8', dot: '#94a3b8' },
+                Running:   { bg: '#14532d', text: '#86efac', dot: '#16a34a' },
+                Paused:    { bg: '#422006', text: '#fde68a', dot: '#f59e0b' },
+                Stopped:   { bg: '#1c1c1c', text: '#6b7280', dot: '#6b7280' },
+                Scheduled: { bg: '#1e3a5f', text: '#93c5fd', dot: '#3b82f6' },
+                Error:     { bg: '#450a0a', text: '#fca5a5', dot: '#dc2626' },
+              }
+              const sc = statusColor[strat.status] ?? statusColor.Stopped
+              return (
+                <div
+                  key={strat.id}
+                  onClick={() => setSelectedInstanceId(strat.id)}
+                  style={{
+                    padding: '11px 14px',
+                    cursor: 'pointer',
+                    borderBottom: `1px solid ${C.border2}`,
+                    borderLeft: `3px solid ${isSelected ? C.blue : 'transparent'}`,
+                    background: isSelected ? C.surface2 : 'transparent',
+                    transition: 'background 0.12s',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13, color: C.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {strat.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {strat.strategyType} · {strat.internalSymbol} · {strat.timeframe}
+                  </div>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                    background: sc.bg, color: sc.text,
+                  }}>
+                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: sc.dot, flexShrink: 0 }} />
+                    {strat.status}
+                  </span>
+                </div>
+              )
+            })
+          )}
+        </div>
+
+        {/* Right: selected strategy — card + scenarios stacked */}
+        <div style={{ flex: 1, minWidth: 0, paddingLeft: 20 }}>
+          {selectedInstance ? (
+            <StrategyCard
+              key={selectedInstance.id}
+              instance={selectedInstance}
+              onRunBacktest={onRunBacktest}
+              onPromoteToForward={onPromoteToForward}
+            />
+          ) : strategies && strategies.length > 0 ? (
+            <div style={{ color: C.textMuted, fontSize: 13, padding: 24 }}>
+              Select a strategy to view its details and scenarios.
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )
@@ -1191,11 +1267,11 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed }: {
             </div>
           </div>
           {/* Progress bar */}
-          <div style={{ height: 6, background: '#1e3a5f', borderRadius: 3, overflow: 'hidden' }}>
+          <div style={{ height: 6, background: C.blueBg, borderRadius: 3, overflow: 'hidden' }}>
             <div style={{
               height: '100%',
               width: `${jobStatus.progressPct}%`,
-              background: 'linear-gradient(90deg, #2563eb, #3b82f6)',
+              background: `linear-gradient(90deg, ${C.blue}99, ${C.blue})`,
               borderRadius: 3,
               transition: 'width 0.4s ease',
             }} />

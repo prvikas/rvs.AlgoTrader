@@ -7,6 +7,7 @@ import {
   ScenarioComparisonRow,
 } from '../../api/client'
 import { C, SP, TABLE_CELL, TABLE_HEADER_CELL } from '../../styles/tokens'
+import { formatInr } from '../../utils/datetime'
 import ScenarioEditorDrawer from './ScenarioEditorDrawer'
 
 interface Props {
@@ -205,7 +206,7 @@ export default function ScenariosPanel({
           </label>
         ))}
         <label style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ fontSize: 11, color: C.textMuted }}>Capital</span>
+          <span style={{ fontSize: 11, color: C.textMuted }} title="Used when a scenario has no capital set">Default Capital</span>
           <input
             type="number"
             value={runConfig.capital}
@@ -270,17 +271,30 @@ export default function ScenariosPanel({
                   </div>
                 )}
                 {s.parametersJsonOverride && s.parametersJsonOverride !== '{}' && (
-                  <div style={{
-                    marginTop: 4, fontSize: 11, color: C.textSub,
-                    fontFamily: 'monospace', background: C.surface2,
-                    padding: '2px 6px', borderRadius: 4, display: 'inline-block',
-                    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}>
+                  <div
+                    title={`Effective params: ${s.effectiveParametersJson}`}
+                    style={{
+                      marginTop: 4, fontSize: 11, color: C.textSub,
+                      fontFamily: 'monospace', background: C.surface2,
+                      padding: '2px 6px', borderRadius: 4, display: 'inline-block',
+                      maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap', cursor: 'help',
+                    }}
+                  >
                     {s.parametersJsonOverride}
                   </div>
                 )}
               </div>
+
+              {/* Allocated capital badge */}
+              {s.allocatedCapital != null && (
+                <span style={{
+                  fontSize: 11, color: C.textSub, whiteSpace: 'nowrap',
+                  background: C.surface2, padding: '2px 7px', borderRadius: 4,
+                }}>
+                  {formatInr(s.allocatedCapital)}
+                </span>
+              )}
 
               {/* Backtest result link */}
               {s.lastBacktestRunId && (
@@ -392,12 +406,12 @@ export default function ScenariosPanel({
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: C.surface2 }}>
-                  {['Scenario', 'Status', 'Return', 'Drawdown', 'Sharpe', 'Win%', 'Trades', 'PF', 'Expectancy'].map(h => (
+                  {['Scenario', 'Status', 'Capital', 'Params', 'Return', 'Drawdown', 'Sharpe', 'Win%', 'Trades', 'PF', 'Expectancy'].map(h => (
                     <th key={h} style={{
                       padding: TABLE_HEADER_CELL, textAlign: 'right',
                       color: C.textMuted, fontWeight: 600, whiteSpace: 'nowrap',
                       borderBottom: `1px solid ${C.border}`,
-                      ...(h === 'Scenario' || h === 'Status' ? { textAlign: 'left' } : {}),
+                      ...(h === 'Scenario' || h === 'Status' || h === 'Params' ? { textAlign: 'left' } : {}),
                     }}>
                       {h}
                     </th>
@@ -417,6 +431,23 @@ export default function ScenariosPanel({
                         background: STATUS_BG[r.status] ?? C.surface2,
                       }}>
                         {r.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: TABLE_CELL, textAlign: 'right', color: C.textSub, fontFamily: 'monospace' }}>
+                      {r.allocatedCapital != null ? formatInr(r.allocatedCapital) : <span style={{ color: C.textMuted }}>—</span>}
+                    </td>
+                    <td style={{ padding: TABLE_CELL }}>
+                      <span
+                        title={r.effectiveParametersJson}
+                        style={{
+                          fontSize: 11, color: C.textSub, fontFamily: 'monospace',
+                          background: C.surface2, padding: '1px 5px', borderRadius: 3,
+                          display: 'inline-block', maxWidth: 200,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          cursor: 'help',
+                        }}
+                      >
+                        {r.effectiveParametersJson}
                       </span>
                     </td>
                     <td style={{

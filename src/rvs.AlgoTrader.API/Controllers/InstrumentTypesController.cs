@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Application.DTOs.Common;
+using rvs.AlgoTrader.Application.DTOs.Settings;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -104,5 +105,4 @@ public class InstrumentTypesController(IAppConfigService config) : ControllerBas
             .OrderBy(t => t));
 }
 
-/// <summary>Request body for updating instrument type lists.</summary>
-public record UpdateInstrumentTypesRequest(string Types);
+// UpdateInstrumentTypesRequest moved to Application/DTOs/Settings/InstrumentTypesDtos.cs

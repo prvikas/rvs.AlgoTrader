@@ -188,7 +188,7 @@ public class BacktestEngine(
             }
 
             // Chart: bar with indicators and optional signal
-            string? chartSig = signal.Signal is "BUY" or "SELL" ? signal.Signal : null;
+            string? chartSig = signal.Signal is SignalType.Buy or SignalType.Sell ? signal.Signal.ToString().ToUpperInvariant() : null;
             AddChartBar(new BacktestChartBar(
                 TimeMs: current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
                 Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
@@ -213,7 +213,7 @@ public class BacktestEngine(
                     ChartBatch: SnapshotRollingWindow()));
             }
 
-            if (signal.Signal is not ("BUY" or "SELL")) continue;
+            if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) continue;
 
             var positionSize = CalculatePositionSize(equity, signal, request);
             if (positionSize <= 0) continue;
@@ -236,7 +236,7 @@ public class BacktestEngine(
                 if (request.FillModel == FillModel.NextBarOpenPlusSlippage && request.SlippageBasisPoints > 0)
                 {
                     var slipFraction = request.SlippageBasisPoints / 10_000m;
-                    entryPrice = signal.Signal == "BUY"
+                    entryPrice = signal.Signal == SignalType.Buy
                         ? entryPrice * (1m + slipFraction)
                         : entryPrice * (1m - slipFraction);
                 }
@@ -246,7 +246,7 @@ public class BacktestEngine(
             openTrade = new BacktestTrade(
                 Id: Guid.NewGuid(),
                 Symbol: request.InternalSymbol,
-                Direction: signal.Signal,
+                Direction: signal.Signal.ToString().ToUpperInvariant(),
                 Quantity: positionSize,
                 EntryPrice: entryPrice,
                 ExitPrice: 0,
