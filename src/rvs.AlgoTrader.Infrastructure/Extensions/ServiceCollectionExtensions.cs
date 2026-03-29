@@ -176,7 +176,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IOptionLegSelector, OptionLegSelector>();
         services.AddScoped<IOptionIvRankService, OptionIvRankService>();
         services.AddScoped<IOptionIvHistoryRepository, EfOptionIvHistoryRepository>();
-        services.AddSingleton<IOrderManager, OrderManager>();
+        // IOrderManager is Scoped (not Singleton) because OrderManager depends on
+        // IOrderRepository which is Scoped (EF Core-backed). A Singleton cannot
+        // consume a Scoped service — doing so causes AggregateException at startup.
+        services.AddScoped<IOrderManager, OrderManager>();
         services.AddScoped<ISpreadOrderManager, SpreadOrderManager>();
         services.AddScoped<ISpreadPositionRepository, EfSpreadPositionRepository>();
 
