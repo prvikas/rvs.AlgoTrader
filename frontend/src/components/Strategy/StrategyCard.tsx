@@ -575,6 +575,10 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward }: Pr
             strategyType={instance.strategyType}
             instanceName={instance.name}
             baseParametersJson={instance.parametersJson ?? '{}'}
+            defaultSymbol={instance.internalSymbol}
+            defaultTimeframe={instance.timeframe || '1d'}
+            defaultFromDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}
+            defaultToDate={new Date().toISOString().slice(0, 10)}
           />
         </div>
       </article>

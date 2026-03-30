@@ -33,6 +33,8 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
             .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.ProductType>(v));
         builder.Property(s => s.LotSize).HasColumnName("lot_size");
         builder.Property(s => s.BrokerToken).HasColumnName("broker_token").HasMaxLength(100);
+        builder.Property(s => s.ExecutionMode).HasColumnName("execution_mode").HasMaxLength(20).IsRequired()
+            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.ExecutionMode>(v));
         builder.Property(s => s.CreatedAt).HasColumnName("created_at")
             .HasConversion(
                 v => v.ToDateTimeUtc(),

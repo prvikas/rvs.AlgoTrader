@@ -186,6 +186,15 @@ public static class ServiceCollectionExtensions
         // ── FX rates (#64) ───────────────────────────────────────────────────
         services.AddScoped<IFxRateProvider, EfFxRateProvider>();
 
+        // ── Risk & Execution Engine (#85, #86, #87, #88, #92, #93, #100) ──
+        services.AddSingleton<IPositionSizingEngine, PositionSizingEngine>();
+        services.AddSingleton<ISlippageModel, SlippageModel>();
+        services.AddSingleton<ICommissionModel, IndianMarketCommissionModel>();
+        services.AddScoped<IPortfolioRiskManager, PortfolioRiskManager>();
+        services.AddScoped<IPaperOrderSimulator, PaperOrderSimulator>();
+        services.AddSingleton<ITrailingStopManager, TrailingStopManager>();
+        services.AddSingleton<IScalingManager, ScalingManager>();
+
         // Broker HTTP clients (typed clients via IHttpClientFactory)
         services.AddHttpClient<MStockAuth>();
         services.AddHttpClient<MStockClient>();

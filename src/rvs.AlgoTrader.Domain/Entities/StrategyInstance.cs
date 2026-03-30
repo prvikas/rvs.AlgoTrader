@@ -39,6 +39,14 @@ public class StrategyInstance
     public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
     public int LotSize { get; set; } = 1;
 
+    /// <summary>
+    /// Controls whether this strategy instance places real orders (Live),
+    /// simulates fills on live data without real orders (Paper),
+    /// or runs historical simulation (Backtest).
+    /// Defaults to Live to preserve existing behaviour for current instances.
+    /// </summary>
+    public ExecutionMode ExecutionMode { get; set; } = ExecutionMode.Live;
+
     /// <summary>Alias for Name; used by domain events and query handlers.</summary>
     public string StrategyName => Name;
 

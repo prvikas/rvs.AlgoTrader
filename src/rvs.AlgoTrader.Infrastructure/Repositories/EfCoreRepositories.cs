@@ -22,10 +22,11 @@ public class EfAuditLogRepository(AlgoTraderDbContext db) : IAuditLogRepository
     public async Task AppendAsync(string action, string actor, string entityType, string entityId,
         object? details, string correlationId, Instant occurredAt, CancellationToken ct)
     {
+        // DB schema from InitialMigration.sql uses event_type + details (JSONB) column names
         var detailsJson = details is null ? null : JsonSerializer.Serialize(details);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO audit_log (action, actor, entity_type, entity_id, details_json, correlation_id, occurred_at)
-            VALUES ({action}, {actor}, {entityType}, {entityId}, {detailsJson}, {correlationId}, {occurredAt.ToDateTimeOffset()})
+            INSERT INTO audit_log (event_type, actor, entity_type, entity_id, details, correlation_id, occurred_at)
+            VALUES ({action}, {actor}, {entityType}, {entityId}, {detailsJson}::jsonb, {correlationId}, {occurredAt.ToDateTimeOffset()})
             """, ct);
     }
 
@@ -40,7 +41,7 @@ public class EfAuditLogRepository(AlgoTraderDbContext db) : IAuditLogRepository
 
         var rows = await db.Database
             .SqlQueryRaw<AuditLogRow>(
-                $"SELECT id, action, actor, entity_type, entity_id, details_json, correlation_id, occurred_at " +
+                $"SELECT id, event_type AS action, actor, entity_type, entity_id, details::text AS details_json, correlation_id, occurred_at " +
                 $"FROM audit_log {conditions} ORDER BY occurred_at DESC LIMIT {pageSize} OFFSET {offset}")
             .ToListAsync(ct);
 
