@@ -76,13 +76,14 @@ export default function ScenariosPanel({
   })
   const scenarios: StrategyScenario[] = listResp?.data?.data ?? []
 
-  // Compare
+  // Compare — always fetched so metrics appear in list view too
   const { data: compareResp, isLoading: compareLoading } = useQuery({
     queryKey: ['scenarios-compare', instanceId],
     queryFn: () => scenariosApi.compare(instanceId),
-    enabled: view === 'compare',
+    enabled: true,
   })
   const compareRows: ScenarioComparisonRow[] = compareResp?.data?.data ?? []
+  const compareById = Object.fromEntries(compareRows.map(r => [r.scenarioId, r]))
 
   // Delete
   const deleteMut = useMutation({
@@ -296,12 +297,46 @@ export default function ScenariosPanel({
                 </span>
               )}
 
-              {/* Backtest result link */}
-              {s.lastBacktestRunId && (
-                <span style={{ fontSize: 11, color: C.blue, whiteSpace: 'nowrap' }}>
-                  has result
-                </span>
-              )}
+              {/* Backtest result metrics */}
+              {(() => {
+                const m = compareById[s.id]
+                if (!m || m.totalReturn == null) return null
+                return (
+                  <button
+                    onClick={() => setView('compare')}
+                    title="Click to see full comparison"
+                    style={{
+                      display: 'flex', gap: 6, alignItems: 'center', background: 'none',
+                      border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0,
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
+                      background: m.totalReturn >= 0 ? C.greenBg : C.redBg,
+                      color: m.totalReturn >= 0 ? C.green : C.red,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {pct(m.totalReturn)}
+                    </span>
+                    {m.sharpeRatio != null && (
+                      <span style={{
+                        fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
+                        background: C.surface2, color: C.textSub, whiteSpace: 'nowrap',
+                      }}>
+                        S:{fmt2(m.sharpeRatio)}
+                      </span>
+                    )}
+                    {m.maxDrawdown != null && (
+                      <span style={{
+                        fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
+                        background: C.redBg, color: C.red, whiteSpace: 'nowrap',
+                      }}>
+                        DD:{pct(m.maxDrawdown)}
+                      </span>
+                    )}
+                  </button>
+                )
+              })()}
 
               {/* Actions */}
               <div style={{ display: 'flex', gap: SP.sm, flexShrink: 0 }}>

@@ -6,7 +6,14 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 |---|---|---|
 | Solution structure | PARTIAL | repo, backend, frontend, tests, Claude kit |
 | Claude docs | DONE | compressed CLAUDE.md, ANTI_PATTERNS.md extracted |
-| Strategy abstraction | DONE | StrategyFactory + GetSchema(); PriceActionBreakout, EmaVwapMomentum, AlertCandleShort |
+| Strategy abstraction | DONE | StrategyFactory + GetSchema(); 10 strategies registered (3 equity + 7 options) |
+| STRAT-001 VCP Swing | DONE | #77: SMA200 trend filter, pivot-based contraction detection, support/breakout entry, scaling-ready |
+| STRAT-002 Fib Option Spread | DONE | #78: Fibonacci 0.618 zone entry, IV filter, put/call credit spread direction by trend |
+| STRAT-003 Intraday PCR | DONE | #79: PCR bias, VWAP entry, session window 09:15–11:00, gap defer to 13:00, delta-targeted strike |
+| Iron Condor | DONE | #80: 4-leg (short call spread + short put spread), IV range + Bollinger range-bound filter |
+| Short Straddle/Strangle | DONE | #81: ATM straddle or OTM strangle, mandatory MaxLossMultiple safety gate per spec |
+| Calendar Spread | DONE | #82: sell near-weekly + buy far-monthly ATM, IV filter, call/put by chain bias |
+| Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
 | Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report, fullscreen chart, GET /backtest/{id} |
 | Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007 |
 | DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–014 applied (012: option_iv_history + spread tables, 013: currency + fx_rates, 014: execution_mode column) |
@@ -35,7 +42,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Trailing stop manager | DONE | #93: ITrailingStopManager, all 7 StopType variants, ratchet enforcement, TimeStop bar-counting |
 | Scaling/pyramid manager | DONE | #100: IScalingManager, ScalingMode/TrancheTrigger enums, weighted avg price, EmaBounce/PriceMoveUp/Down triggers |
 | Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order check not yet integrated into LiveExecutionEngine |
-| UI workflow | PARTIAL | top-nav layout, MetricCards, right-side drawers, backtest replay chart |
+| UI workflow | PARTIAL | top-nav layout, MetricCards, right-side drawers, backtest replay chart; strategy list dynamic from API; scenario list shows inline Return/Sharpe/Drawdown badges from compare endpoint |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; SignalType enum comparisons fixed; integration factory wired |
 

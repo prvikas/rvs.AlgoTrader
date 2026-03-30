@@ -81,7 +81,18 @@
       "Bash(curl -sk \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/milestones\")",
       "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(f''''number={m[\"\"number\"\"]} title={m[\"\"title\"\"]}''''\\) for m in data]\")",
       "Bash(node -e \"let d=''''''''; process.stdin.on\\(''''data'''',c=>d+=c\\); process.stdin.on\\(''''end'''',\\(\\)=>{ const ms=JSON.parse\\(d\\); ms.forEach\\(m=>console.log\\(''''number=''''+m.number+'''' title=''''+m.title\\)\\); }\\)\")",
-      "Bash(curl -sk \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/issues?milestone=4&state=open&per_page=100\")"
+      "Bash(curl -sk \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/issues?milestone=4&state=open&per_page=100\")",
+      "Read(//c/Program Files/GitHub CLI/**)",
+      "Read(//c/Users/prvik/Downloads/algotrader-claude-kit/$LOCALAPPDATA/Programs/GitHub CLI/**)",
+      "Bash(cmd.exe /c \"where gh\")",
+      "Bash(cmd.exe /c \"gh --version\")",
+      "Bash(export PATH=\"$PATH:/c/Program Files/GitHub CLI:/c/Users/prvik/AppData/Local/Programs/GitHub CLI\")",
+      "Bash(gh --version)",
+      "Bash(curl -v \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/milestones\")",
+      "Bash(curl -s --ssl-no-revoke \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/milestones\")",
+      "Bash(curl -s --ssl-no-revoke \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/issues?milestone=5&state=all&per_page=50&page=1\")",
+      "Bash(for n:*)",
+      "Bash(do echo:*)"
     ]
   }
 }

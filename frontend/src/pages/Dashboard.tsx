@@ -30,13 +30,19 @@ import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../st
 
 type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings'
 
-const ALL_STRATEGIES = [
-  { name: 'PriceActionBreakout', desc: 'Consolidation range breakout with volume confirmation', comingSoon: false },
-  { name: 'EmaVwapMomentum', desc: 'EMA golden/death cross + VWAP + Bollinger Bands + volume + optional option chain PCR filter', comingSoon: false },
-  { name: 'AlertCandleShort', desc: 'BankNifty/Nifty short: Alert Candle (low > 5-EMA) breakout · 1:3 RRR · one trade/day', comingSoon: false },
-  { name: 'VWAPStrategy', desc: 'VWAP-based intraday strategy', comingSoon: true },
-  { name: 'ORBStrategy', desc: 'Opening Range Breakout', comingSoon: true },
-]
+// Descriptions for known strategies; unknown ones registered on backend show name only.
+const STRATEGY_DESCS: Record<string, string> = {
+  PriceActionBreakout:   'Consolidation range breakout with ATR/volume confirmation',
+  EmaVwapMomentum:       'EMA golden/death cross + VWAP + Bollinger Bands + volume',
+  AlertCandleShort:      'BankNifty/Nifty short: Alert Candle (low > 5-EMA) · 1:3 RRR',
+  VcpSwing:              'STRAT-001: VCP swing — SMA200 + contractions + support/breakout entry',
+  FibOptionSpread:       'STRAT-002: Fibonacci 0.618 hedged option credit spread',
+  IntradayPcrOptions:    'STRAT-003: Intraday PCR/OI/VWAP options — delta-targeted strike',
+  IronCondor:            'Short OTM call spread + short OTM put spread (4 legs, range-bound)',
+  ShortStraddleStrangle: 'Short ATM straddle or OTM strangle — theta decay play',
+  CalendarSpread:        'Sell near-expiry + buy far-expiry ATM — theta + vega play',
+  VerticalSpread:        'Bull/Bear call or put spread — directional defined-risk (4 types)',
+}
 
 export function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('portfolio')
@@ -44,6 +50,12 @@ export function Dashboard() {
   const activeBrokerName = localStorage.getItem('active_broker') || 'MStock'
 
   // ── Data Queries ──────────────────────────────────────────────────────────
+  const { data: registeredStrategies } = useQuery({
+    queryKey: ['registered-strategies'],
+    queryFn: () => strategiesApi.getRegisteredNames().then(r => r.data.data ?? []),
+    staleTime: 5 * 60 * 1000, // rarely changes — cache for 5 min
+  })
+
   const { data: brokerStatus } = useQuery({
     queryKey: ['broker-status'],
     queryFn: () => brokerApi.status().then(r => Array.isArray(r.data.data) ? r.data.data : []),
@@ -385,36 +397,31 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Strategy Type</label>
               <div style={{ display: 'grid', gap: 6, maxHeight: '180px', overflowY: 'auto' }}>
-                {ALL_STRATEGIES.map(strat => (
+                {(registeredStrategies ?? []).map(name => (
                   <button
-                    key={strat.name}
-                    onClick={() => !strat.comingSoon && handleSelectStrategy(strat.name)}
-                    disabled={strat.comingSoon}
-                    title={strat.comingSoon ? 'Coming soon — not yet available' : undefined}
+                    key={name}
+                    onClick={() => handleSelectStrategy(name)}
                     style={{
                       padding: '10px 12px',
-                      backgroundColor: selectedStrategy === strat.name ? C.blue : C.surface2,
-                      color: strat.comingSoon ? C.textMuted : C.text,
-                      border: selectedStrategy === strat.name ? `1px solid ${C.blue}` : `1px solid ${C.border}`,
+                      backgroundColor: selectedStrategy === name ? C.blue : C.surface2,
+                      color: C.text,
+                      border: selectedStrategy === name ? `1px solid ${C.blue}` : `1px solid ${C.border}`,
                       borderRadius: 4,
-                      cursor: strat.comingSoon ? 'not-allowed' : 'pointer',
+                      cursor: 'pointer',
                       textAlign: 'left',
                       fontSize: 12,
                       transition: 'all 0.15s',
-                      opacity: strat.comingSoon ? 0.5 : 1,
                     }}
                   >
-                    <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {strat.name}
-                      {strat.comingSoon && (
-                        <span style={{ fontSize: 9, background: C.surface3, color: C.textMuted, borderRadius: 2, padding: '2px 4px', fontWeight: 500 }}>
-                          Soon
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 11, color: C.textSub, marginTop: 3 }}>{strat.desc}</div>
+                    <div style={{ fontWeight: 600 }}>{name}</div>
+                    {STRATEGY_DESCS[name] && (
+                      <div style={{ fontSize: 11, color: C.textSub, marginTop: 3 }}>{STRATEGY_DESCS[name]}</div>
+                    )}
                   </button>
                 ))}
+                {!registeredStrategies && (
+                  <div style={{ fontSize: 12, color: C.textMuted, padding: '8px 0' }}>Loading strategies…</div>
+                )}
               </div>
             </div>
 
@@ -738,6 +745,11 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed }: {
   onPresetConsumed?: () => void
 }) {
   const qc = useQueryClient()
+  const { data: registeredStrategies } = useQuery({
+    queryKey: ['registered-strategies'],
+    queryFn: () => strategiesApi.getRegisteredNames().then(r => r.data.data ?? []),
+    staleTime: 5 * 60 * 1000,
+  })
   const [selectedStrategy, setSelectedStrategy] = useState('AlertCandleShort')
   const [formData, setFormData] = useState({
     internalSymbol: '',
@@ -997,35 +1009,30 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed }: {
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Strategy</label>
               <div style={{ display: 'grid', gap: 6, maxHeight: '140px', overflowY: 'auto' }}>
-                {ALL_STRATEGIES.map(strat => (
+                {(registeredStrategies ?? []).map(name => (
                   <button
-                    key={strat.name}
-                    disabled={strat.comingSoon}
-                    onClick={() => {
-                      if (!strat.comingSoon) {
-                        setSelectedStrategy(strat.name)
-                        setStrategyParams({})
-                      }
-                    }}
-                    title={strat.comingSoon ? 'Coming soon — not yet available' : undefined}
+                    key={name}
+                    onClick={() => { setSelectedStrategy(name); setStrategyParams({}) }}
                     style={{
                       padding: '10px 12px',
-                      backgroundColor: selectedStrategy === strat.name ? C.blue : C.surface2,
-                      color: strat.comingSoon ? C.textMuted : C.text,
-                      border: selectedStrategy === strat.name ? `1px solid ${C.blue}` : `1px solid ${C.border}`,
+                      backgroundColor: selectedStrategy === name ? C.blue : C.surface2,
+                      color: C.text,
+                      border: selectedStrategy === name ? `1px solid ${C.blue}` : `1px solid ${C.border}`,
                       borderRadius: 4,
-                      cursor: strat.comingSoon ? 'not-allowed' : 'pointer',
+                      cursor: 'pointer',
                       textAlign: 'left',
                       fontSize: 12,
-                      opacity: strat.comingSoon ? 0.5 : 1,
                     }}
                   >
-                    <div style={{ fontWeight: 600 }}>{strat.name}</div>
-                    {strat.comingSoon && (
-                      <span style={{ fontSize: 9, background: C.surface3, color: C.textMuted, borderRadius: 2, padding: '2px 4px' }}>Soon</span>
+                    <div style={{ fontWeight: 600 }}>{name}</div>
+                    {STRATEGY_DESCS[name] && (
+                      <div style={{ fontSize: 10, color: C.textSub, marginTop: 2 }}>{STRATEGY_DESCS[name]}</div>
                     )}
                   </button>
                 ))}
+                {!registeredStrategies && (
+                  <div style={{ fontSize: 12, color: C.textMuted, padding: '8px 0' }}>Loading…</div>
+                )}
               </div>
             </div>
 

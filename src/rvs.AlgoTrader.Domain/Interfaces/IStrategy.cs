@@ -111,7 +111,10 @@ public record SignalResult(
     IReadOnlyDictionary<string, decimal>? IndicatorValues = null,
     // Optional: populated by options strategies. IOptionLegSelector converts this to a
     // concrete NFO symbol + BrokerToken before the signal reaches LiveExecutionEngine.
-    OptionsLegSpec? OptionsLeg = null
+    OptionsLegSpec? OptionsLeg = null,
+    // Optional: populated by multi-leg spread strategies (Iron Condor, Vertical, Straddle, etc.).
+    // When non-null, ISpreadOrderManager handles atomic leg placement instead of LiveExecutionEngine.
+    SpreadSignalResult? Spread = null
 )
 {
     public static SignalResult Buy(decimal entryPrice, decimal stopLoss, decimal takeProfit, string reason,
@@ -130,4 +133,8 @@ public record SignalResult(
 
     public static SignalResult Skip(SkippedReason skippedReason, string reason = "Signal skipped")
         => new(SignalType.Hold, null, null, null, reason, null, skippedReason.ToString(), null);
+
+    /// <summary>Entry signal for a multi-leg spread. ISpreadOrderManager places all legs atomically.</summary>
+    public static SignalResult SpreadEntry(SpreadSignalResult spread)
+        => new(SignalType.Buy, null, null, null, spread.Reason, spread.DiagnosticsJson, null, null, null, spread);
 }

@@ -1,0 +1,171 @@
+using System.Text.Json;
+using rvs.AlgoTrader.Domain.Enums;
+using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Domain.ValueObjects;
+
+namespace rvs.AlgoTrader.Strategies.FibOptionSpread;
+
+/// <summary>
+/// STRAT-002: Fibonacci Hedged Option Spread.
+/// Spec: docs/STRATEGY_SPECS.md § STRAT-002
+///
+/// Filter:  ATM IV ≥ MinAtmIv (from OptionChain), no naked selling.
+/// Setup:   swing high/low → Fib retracement levels.
+/// Entry:   price in Fib 1.618 extension zone (or 0.618 deep retracement for reversal).
+/// Direction: uptrend (close &gt; SMA50) → put credit spread; downtrend → call credit spread.
+/// Stop:    underlying breaches 0.786 level.
+/// Structure: sell closer OTM strike + buy further OTM strike (defined-risk spread).
+/// </summary>
+public class FibOptionSpreadStrategy(FibOptionSpreadConfig config) : IStrategy
+{
+    public string Name => "FibOptionSpread";
+
+    private static readonly decimal[] FibLevels = [0.236m, 0.382m, 0.500m, 0.618m, 0.786m, 1.000m, 1.618m];
+
+    public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
+    {
+        var candles = context.Candles;
+        int required = config.SwingLookback + config.Sma50Period + 5;
+        if (candles.Count < required)
+            return Task.FromResult(SignalResult.Skip(SkippedReason.InsufficientData,
+                $"Need {required} candles, have {candles.Count}"));
+
+        var current = candles[^1];
+
+        // ── IV filter ─────────────────────────────────────────────────────
+        if (context.OptionChain is not null)
+        {
+            if (context.OptionChain.AtmIv < config.MinAtmIv)
+                return Task.FromResult(SignalResult.Hold(
+                    $"ATM IV {context.OptionChain.AtmIv:F1}% below minimum {config.MinAtmIv}% — spread premium insufficient"));
+        }
+
+        // ── SMA50 trend ───────────────────────────────────────────────────
+        decimal sma50 = candles.TakeLast(config.Sma50Period).Average(c => c.Close);
+        bool isUptrend = current.Close > sma50;
+
+        // ── Swing high/low detection ───────────────────────────────────────
+        int swingEnd   = candles.Count - 1;
+        int swingStart = Math.Max(0, swingEnd - config.SwingLookback);
+        decimal swingHigh = decimal.MinValue;
+        decimal swingLow  = decimal.MaxValue;
+        for (int i = swingStart; i <= swingEnd; i++)
+        {
+            if (candles[i].High > swingHigh) swingHigh = candles[i].High;
+            if (candles[i].Low  < swingLow)  swingLow  = candles[i].Low;
+        }
+        decimal range = swingHigh - swingLow;
+        if (range <= 0)
+            return Task.FromResult(SignalResult.Hold("Swing range is zero"));
+
+        // ── Fib levels ────────────────────────────────────────────────────
+        // For uptrend: retracement is measured down from swing high
+        // Entry zone: price near 1.618 extension above swing high, or deep retracement 0.618
+        // For downtrend: retracement is measured up from swing low
+        decimal fib618;
+        decimal fib786;
+        decimal fib1618;
+        string direction;
+
+        if (isUptrend)
+        {
+            fib618  = swingHigh - range * 0.618m;   // 61.8% retracement = support
+            fib786  = swingHigh - range * 0.786m;   // 78.6% = deep support / invalidation
+            fib1618 = swingLow  - range * 0.618m;   // 1.618 extension below (put spread entry zone)
+            direction = "put-credit-spread";
+        }
+        else
+        {
+            fib618  = swingLow  + range * 0.618m;   // 61.8% retracement from low = resistance
+            fib786  = swingLow  + range * 0.786m;   // 78.6% = deep resistance / invalidation
+            fib1618 = swingHigh + range * 0.618m;   // 1.618 extension above (call spread entry zone)
+            direction = "call-credit-spread";
+        }
+
+        decimal entryZoneBuffer = range * config.EntryZonePct / 100m;
+        bool inEntryZone = isUptrend
+            ? current.Close >= fib618 - entryZoneBuffer && current.Close <= fib618 + entryZoneBuffer
+            : current.Close >= fib618 - entryZoneBuffer && current.Close <= fib618 + entryZoneBuffer;
+
+        if (!inEntryZone)
+            return Task.FromResult(SignalResult.Hold(
+                $"Price {current.Close:F2} not in Fib 0.618 zone ({fib618 - entryZoneBuffer:F2}–{fib618 + entryZoneBuffer:F2})"));
+
+        var indicators = new Dictionary<string, decimal>
+        {
+            ["swingHigh"] = swingHigh,
+            ["swingLow"]  = swingLow,
+            ["fib618"]    = fib618,
+            ["fib786"]    = fib786,
+            ["fib1618"]   = fib1618,
+            ["sma50"]     = sma50,
+        };
+
+        // ── Build spread legs ──────────────────────────────────────────────
+        SpreadLeg shortLeg, longLeg;
+        if (isUptrend)
+        {
+            // Put credit spread: sell closer put, buy further OTM put (wing)
+            shortLeg = new SpreadLeg(
+                OptionType:    OptionType.Put,
+                Direction:     OrderDirection.Sell,
+                SelectionMode: StrikeSelectionMode.ByDelta,
+                TargetDelta:   config.ShortLegDelta,
+                Quantity:      1);
+            longLeg = new SpreadLeg(
+                OptionType:    OptionType.Put,
+                Direction:     OrderDirection.Buy,
+                SelectionMode: StrikeSelectionMode.OtmByStrike,
+                OtmStrikes:    config.WingWidthStrikes,
+                Quantity:      1);
+        }
+        else
+        {
+            // Call credit spread: sell closer call, buy further OTM call (wing)
+            shortLeg = new SpreadLeg(
+                OptionType:    OptionType.Call,
+                Direction:     OrderDirection.Sell,
+                SelectionMode: StrikeSelectionMode.ByDelta,
+                TargetDelta:   config.ShortLegDelta,
+                Quantity:      1);
+            longLeg = new SpreadLeg(
+                OptionType:    OptionType.Call,
+                Direction:     OrderDirection.Buy,
+                SelectionMode: StrikeSelectionMode.OtmByStrike,
+                OtmStrikes:    config.WingWidthStrikes,
+                Quantity:      1);
+        }
+
+        var spread = new SpreadSignalResult(
+            SpreadType:    direction,
+            Legs:          [shortLeg, longLeg],
+            Reason:        $"Fib 0.618 entry: price={current.Close:F2}, zone={fib618:F2}, " +
+                           $"{direction}, wing={config.WingWidthStrikes} strikes",
+            DiagnosticsJson: indicators);
+
+        return Task.FromResult(SignalResult.SpreadEntry(spread));
+    }
+}
+
+public class FibOptionSpreadConfig
+{
+    public int     SwingLookback    { get; set; } = 50;
+    public int     Sma50Period      { get; set; } = 50;
+    public decimal MinAtmIv         { get; set; } = 12m;    // minimum ATM IV % to trade
+    public decimal EntryZonePct     { get; set; } = 2.0m;   // % buffer around Fib 0.618
+    public decimal ShortLegDelta    { get; set; } = 0.25m;  // sell ~25-delta option
+    public int     WingWidthStrikes { get; set; } = 2;       // strike intervals for hedge leg
+
+    public static FibOptionSpreadConfig FromJson(string json)
+        => JsonSerializer.Deserialize<FibOptionSpreadConfig>(json) ?? new();
+
+    public static IReadOnlyList<StrategyParamDef> GetSchema() =>
+    [
+        new("SwingLookback",    "Swing Lookback Bars",    "int",     50,    Min: 20,   Max: 200),
+        new("Sma50Period",      "SMA 50 Period",          "int",     50,    Min: 20,   Max: 200),
+        new("MinAtmIv",         "Min ATM IV %",           "decimal", 12m,   Min: 5m,   Max: 50m,  Step: 1m,  Hint: "Minimum ATM implied volatility to enter spread"),
+        new("EntryZonePct",     "Entry Zone Buffer %",    "decimal", 2.0m,  Min: 0.5m, Max: 10m,  Step: 0.5m),
+        new("ShortLegDelta",    "Short Leg Delta",        "decimal", 0.25m, Min: 0.1m, Max: 0.5m, Step: 0.05m, Hint: "Delta of the short option leg (~0.25 = 25-delta)"),
+        new("WingWidthStrikes", "Wing Width (Strikes)",   "int",     2,     Min: 1,    Max: 10,   Hint: "Number of strike intervals between short and long leg"),
+    ];
+}
