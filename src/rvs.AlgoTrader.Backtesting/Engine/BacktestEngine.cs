@@ -59,8 +59,9 @@ public class BacktestEngine(
         logger.LogInformation("[Backtest] Loaded {Count} candles for {Symbol}/{Tf}",
             allCandles.Count, request.InternalSymbol, request.Timeframe);
 
-        if (allCandles.Count < 50)
-            return BacktestResult.Failed("Insufficient candle data (< 50 bars)");
+        var warmupBars = request.WarmupBars;
+        if (allCandles.Count < warmupBars + 1)
+            return BacktestResult.Failed($"Insufficient candle data (need > {warmupBars} bars, got {allCandles.Count})");
 
         var dataHash = ComputeReproducibilityHash(allCandles, request);
         var strategy = strategyFactory.Create(request.StrategyName, request.ParametersJson);
@@ -70,7 +71,6 @@ public class BacktestEngine(
         var peakEquity = equity;
         var maxDrawdown = 0m;
         BacktestTrade? openTrade = null;
-        var warmupBars = 50;
         var totalBars  = allCandles.Count;
         var circuitBreakerHit = false;
         string? circuitBreakerReason = null;
@@ -243,10 +243,6 @@ public class BacktestEngine(
                 }
             }
 
-            // Deduct entry transaction costs from equity immediately on fill
-            var entryCost = costCalc.Calculate(entryPrice * positionSize, signal.Signal == SignalType.Buy, costProfile);
-            equity -= entryCost.Total;
-
             var initialSl = signal.StopLoss ?? entryPrice * 0.99m;
             openTrade = new BacktestTrade(
                 Id: Guid.NewGuid(),
@@ -270,20 +266,22 @@ public class BacktestEngine(
 
         if (openTrade != null && allCandles.Count > 0)
         {
-            var lastCandle = allCandles[^1];
-            var exitPrice  = lastCandle.Close;
-            var grossPnl   = openTrade.Direction == "BUY"
+            var lastCandle    = allCandles[^1];
+            var exitPrice     = lastCandle.Close;
+            var grossPnl      = openTrade.Direction == "BUY"
                 ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
-            var entryCostsEod = costCalc.Calculate(openTrade.EntryPrice * openTrade.Quantity, openTrade.Direction == "BUY", costProfile);
-            var exitCostsEod  = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
+            var entryCostsEod = costCalc.Calculate(openTrade.EntryPrice * openTrade.Quantity, openTrade.Direction == "BUY",  costProfile);
+            var exitCostsEod  = costCalc.Calculate(exitPrice             * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
+            var netPnlEod     = grossPnl - entryCostsEod.Total - exitCostsEod.Total;
+            equity += netPnlEod;
             trades.Add(openTrade with
             {
-                ExitPrice   = exitPrice,
-                ExitTime    = lastCandle.CloseTime,
-                GrossPnl    = grossPnl,
-                NetPnl      = grossPnl - entryCostsEod.Total - exitCostsEod.Total,
-                ExitReason  = "END_OF_DATA"
+                ExitPrice  = exitPrice,
+                ExitTime   = lastCandle.CloseTime,
+                GrossPnl   = grossPnl,
+                NetPnl     = netPnlEod,
+                ExitReason = "END_OF_DATA"
             });
         }
 
@@ -382,7 +380,23 @@ public class BacktestEngine(
 
         if (trade.Direction == "BUY")
         {
-            if (candle.Low <= trade.StopLoss)
+            // Gap-fill: candle opened below SL — fill at open, not at SL
+            if (candle.Open <= trade.StopLoss)
+            {
+                exitPrice  = candle.Open;
+                exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
+            }
+            else if (candle.Low <= trade.StopLoss && candle.High >= trade.TakeProfit)
+            {
+                // Both SL and TP touched: use candle midpoint heuristic to decide which hit first.
+                // If mid > TP, assume TP was hit from below early in the bar; otherwise SL.
+                var mid = (candle.High + candle.Low) / 2m;
+                if (mid >= trade.TakeProfit)
+                { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
+                else
+                { exitPrice = trade.StopLoss; exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS"; }
+            }
+            else if (candle.Low <= trade.StopLoss)
             {
                 exitPrice  = trade.StopLoss;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
@@ -390,9 +404,23 @@ public class BacktestEngine(
             else if (candle.High >= trade.TakeProfit)
             { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
         }
-        else
+        else // SELL / short
         {
-            if (candle.High >= trade.StopLoss)
+            // Gap-fill: candle opened above SL — fill at open
+            if (candle.Open >= trade.StopLoss)
+            {
+                exitPrice  = candle.Open;
+                exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
+            }
+            else if (candle.High >= trade.StopLoss && candle.Low <= trade.TakeProfit)
+            {
+                var mid = (candle.High + candle.Low) / 2m;
+                if (mid <= trade.TakeProfit)
+                { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
+                else
+                { exitPrice = trade.StopLoss; exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS"; }
+            }
+            else if (candle.High >= trade.StopLoss)
             {
                 exitPrice  = trade.StopLoss;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
@@ -418,6 +446,7 @@ public class BacktestEngine(
 
     private static int CalculatePositionSize(decimal equity, SignalResult signal, BacktestRequest request)
     {
+        if (equity <= 0) return 0;
         if (signal.EntryPrice == null || signal.StopLoss == null) return 0;
         var entryPrice   = signal.EntryPrice.Value;
         if (entryPrice <= 0) return 0;
@@ -430,7 +459,7 @@ public class BacktestEngine(
 
         // Cap position to 25% of equity to prevent over-leverage on tight stops
         var maxByCapital = (int)(equity * 0.25m / entryPrice);
-        return Math.Min(sizeByRisk, Math.Max(1, maxByCapital));
+        return Math.Min(sizeByRisk, maxByCapital);
     }
 
     private static BacktestResult ComputeMetrics(
@@ -466,14 +495,15 @@ public class BacktestEngine(
         var returns   = trades.Select(t => (double)(t.NetPnl / request.InitialCapital)).ToArray();
         var avgReturn = returns.Average();
         var stdDev    = Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Average());
-        var sharpe    = stdDev == 0 ? 0 : (decimal)(avgReturn / stdDev * Math.Sqrt(252));
+        // Per-trade Sharpe: no √252 annualization (that factor applies to daily/weekly series only)
+        var sharpe    = stdDev == 0 ? 0 : (decimal)(avgReturn / stdDev);
 
         // Sortino: downside deviation (negative returns only)
         var negReturns  = returns.Where(r => r < 0).ToArray();
         var downDev     = negReturns.Length > 0
             ? Math.Sqrt(negReturns.Select(r => r * r).Average())
             : stdDev;
-        var sortino     = downDev == 0 ? 0m : (decimal)(avgReturn / downDev * Math.Sqrt(252));
+        var sortino     = downDev == 0 ? 0m : (decimal)(avgReturn / downDev);
 
         var totalReturn = (finalEquity - request.InitialCapital) / request.InitialCapital;
         var calmar      = maxDrawdown == 0 ? 0 : totalReturn / maxDrawdown;
@@ -727,13 +757,33 @@ public class BacktestEngine(
 
     private static string ComputeReproducibilityHash(IReadOnlyList<ClosedCandle> candles, BacktestRequest request)
     {
-        var sb = new StringBuilder();
-        sb.Append($"strategy={request.StrategyName};params={request.ParametersJson};");
-        sb.Append($"symbol={request.InternalSymbol};tf={request.Timeframe};");
-        sb.Append($"from={request.FromDate};to={request.ToDate};capital={request.InitialCapital};");
+        // Stream directly into SHA256 — avoids allocating a large string for 200k+ candle runs.
+        using var sha = SHA256.Create();
+        using var cs  = new System.Security.Cryptography.CryptoStream(
+            System.IO.Stream.Null, sha, System.Security.Cryptography.CryptoStreamMode.Write);
+
+        void Write(string s)
+        {
+            var bytes = Encoding.UTF8.GetBytes(s);
+            cs.Write(bytes, 0, bytes.Length);
+        }
+
+        Write($"strategy={request.StrategyName};params={request.ParametersJson};");
+        Write($"symbol={request.InternalSymbol};tf={request.Timeframe};");
+        Write($"from={request.FromDate};to={request.ToDate};capital={request.InitialCapital};");
+
+        // Write an 8-byte little-endian long for each OHLCV field to avoid string overhead.
+        Span<byte> buf = stackalloc byte[8];
         foreach (var c in candles)
-            sb.Append($"{c.OpenTime.ToInstant().ToUnixTimeMilliseconds()},{c.Open},{c.High},{c.Low},{c.Close},{c.Volume};");
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(buf,
+                c.OpenTime.ToInstant().ToUnixTimeMilliseconds());
+            cs.Write(buf);
+            Write($"{c.Open},{c.High},{c.Low},{c.Close},{c.Volume};");
+        }
+
+        cs.FlushFinalBlock();
+        return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
     }
 
     /// <summary>

@@ -88,7 +88,11 @@ public record BacktestRequest(
     // ── Circuit breaker ───────────────────────────────────────────────────
     // Stop the backtest early if equity falls below this fraction of InitialCapital.
     // Default 0.5 = 50%.  Set to 0 to disable.
-    decimal CircuitBreakerPct = 0.5m);
+    decimal CircuitBreakerPct = 0.5m,
+    // ── Warmup period ─────────────────────────────────────────────────────
+    // Bars skipped at the start so indicators have enough history before trading.
+    // Default 50. Strategy should set this to its longest lookback period.
+    int WarmupBars = 50);
 
 public record BacktestResult(
     bool Success,
