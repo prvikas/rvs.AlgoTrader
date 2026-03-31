@@ -44,6 +44,9 @@ public class AlgoTraderDbContext : DbContext
     // FX rates
     public DbSet<FxRate>             FxRates            => Set<FxRate>();
 
+    // Trade journal
+    public DbSet<TradeJournalEntry> TradeJournalEntries => Set<TradeJournalEntry>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

@@ -305,6 +305,17 @@ public class DatabaseMigrationRunner(
                 """,
                 "broker_sessions table"
             ),
+
+            // ── 016_TradeJournal ───────────────────────────────────────────────
+            (
+                "016_TradeJournal.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name   = 'trade_journal_entries';
+                """,
+                "trade_journal_entries table"
+            ),
         };
 
         var toDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

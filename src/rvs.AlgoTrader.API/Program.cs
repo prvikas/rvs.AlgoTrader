@@ -44,6 +44,12 @@ builder.Services.AddInfrastructureServices(builder.Configuration, cfg =>
     cfg.AddConsumer<SignalRHubConsumer>();
 });
 
+// Health checks — DB and Redis liveness/readiness probes
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(), tags: ["live"])
+    .AddCheck<rvs.AlgoTrader.API.HealthChecks.DbHealthCheck>("postgres", tags: ["db", "ready"])
+    .AddCheck<rvs.AlgoTrader.API.HealthChecks.RedisHealthCheck>("redis", tags: ["cache", "ready"]);
+
 // API services (controllers, SignalR, JWT, CORS, rate limiting)
 builder.Services.AddApiServices(builder.Configuration);
 
@@ -103,6 +109,22 @@ using (var scope = app.Services.CreateScope())
         .GetRequiredService<rvs.AlgoTrader.Application.Services.IStartupOrchestrator>();
     await orchestrator.RunAsync(app.Lifetime.ApplicationStopping);
 }
+
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    ResponseWriter = async (ctx, report) =>
+    {
+        ctx.Response.ContentType = "application/json";
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status  = report.Status.ToString(),
+            checks  = report.Entries.Select(e => new { name = e.Key, status = e.Value.Status.ToString(), description = e.Value.Description }),
+            elapsed = report.TotalDuration.TotalMilliseconds
+        });
+        await ctx.Response.WriteAsync(result);
+    }
+});
+app.MapHealthChecks("/healthz", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = _ => false });
 
 app.Run();
 

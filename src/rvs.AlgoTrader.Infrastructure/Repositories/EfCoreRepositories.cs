@@ -4,6 +4,7 @@ using System.Text.Json;
 using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.DTOs.Strategy;
+using rvs.AlgoTrader.Application.DTOs.TradeJournal;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Infrastructure.Persistence;
@@ -440,5 +441,115 @@ public class EfFxRateProvider(AlgoTraderDbContext db) : IFxRateProvider
             db.FxRates.Add(record);
         }
         await db.SaveChangesAsync(ct);
+    }
+}
+
+// ── Trade Journal ─────────────────────────────────────────────────────────────
+
+public class EfTradeJournalRepository(AlgoTraderDbContext db) : ITradeJournalRepository
+{
+    public async Task AddAsync(TradeJournalEntry entry, CancellationToken ct)
+    {
+        db.TradeJournalEntries.Add(entry);
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<(IReadOnlyList<TradeJournalEntryDto> Items, int Total)> GetPagedAsync(
+        Guid? strategyInstanceId, string? symbol, string? exitReason, string? source,
+        int page, int pageSize, CancellationToken ct)
+    {
+        var q = db.TradeJournalEntries.AsQueryable();
+        if (strategyInstanceId.HasValue) q = q.Where(e => e.StrategyInstanceId == strategyInstanceId.Value);
+        if (!string.IsNullOrEmpty(symbol))     q = q.Where(e => e.InternalSymbol == symbol);
+        if (!string.IsNullOrEmpty(exitReason)) q = q.Where(e => e.ExitReason == exitReason);
+        if (!string.IsNullOrEmpty(source))     q = q.Where(e => e.Source == source);
+
+        var total = await q.CountAsync(ct);
+        var items = await q.OrderByDescending(e => e.ExitTime)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(e => new TradeJournalEntryDto(
+                e.Id, e.StrategyInstanceId, e.InternalSymbol, e.Direction, e.Quantity,
+                e.EntryPrice, e.ExitPrice, e.StopLoss, e.TakeProfit,
+                e.EntryTime.ToDateTimeOffset(), e.ExitTime.ToDateTimeOffset(),
+                e.GrossPnl, e.NetPnl, e.Commission, e.Stt,
+                e.RMultiple, e.InitialRisk, e.Mae, e.Mfe,
+                e.ExitReason, e.EntryReason, e.Notes, e.Tags,
+                e.TaxClassification, e.HoldingDays, e.Source, e.SourceTradeId,
+                e.CreatedAt.ToDateTimeOffset()))
+            .ToListAsync(ct);
+        return (items, total);
+    }
+
+    public async Task<TradeJournalEntryDto?> GetByIdAsync(Guid id, CancellationToken ct)
+    {
+        var e = await db.TradeJournalEntries.FindAsync([id], ct);
+        if (e == null) return null;
+        return new TradeJournalEntryDto(
+            e.Id, e.StrategyInstanceId, e.InternalSymbol, e.Direction, e.Quantity,
+            e.EntryPrice, e.ExitPrice, e.StopLoss, e.TakeProfit,
+            e.EntryTime.ToDateTimeOffset(), e.ExitTime.ToDateTimeOffset(),
+            e.GrossPnl, e.NetPnl, e.Commission, e.Stt,
+            e.RMultiple, e.InitialRisk, e.Mae, e.Mfe,
+            e.ExitReason, e.EntryReason, e.Notes, e.Tags,
+            e.TaxClassification, e.HoldingDays, e.Source, e.SourceTradeId,
+            e.CreatedAt.ToDateTimeOffset());
+    }
+
+    public async Task UpdateNotesAndTagsAsync(Guid id, string? notes, string[] tags, CancellationToken ct)
+    {
+        var e = await db.TradeJournalEntries.FindAsync([id], ct)
+            ?? throw new KeyNotFoundException($"TradeJournalEntry {id} not found");
+        e.Notes = notes;
+        e.Tags  = tags;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<PnlAttributionDto> GetAttributionAsync(
+        Guid? strategyInstanceId, string? symbol, DateOnly? fromDate, DateOnly? toDate, CancellationToken ct)
+    {
+        var q = db.TradeJournalEntries.AsQueryable();
+        if (strategyInstanceId.HasValue) q = q.Where(e => e.StrategyInstanceId == strategyInstanceId.Value);
+        if (!string.IsNullOrEmpty(symbol))  q = q.Where(e => e.InternalSymbol == symbol);
+        if (fromDate.HasValue) q = q.Where(e => e.ExitTime >= Instant.FromDateTimeOffset(fromDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc)));
+        if (toDate.HasValue)   q = q.Where(e => e.ExitTime <= Instant.FromDateTimeOffset(toDate.Value.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc)));
+
+        var rows = await q.Select(e => new {
+            e.InternalSymbol, e.NetPnl, e.ExitReason, e.RMultiple,
+            ExitDt = e.ExitTime.ToDateTimeOffset()
+        }).ToListAsync(ct);
+
+        static PnlByDimension Agg(string label, IEnumerable<dynamic> group)
+        {
+            var list = group.ToList();
+            var wins  = list.Where(r => r.NetPnl > 0).ToList();
+            var losses = list.Where(r => r.NetPnl <= 0).ToList();
+            return new PnlByDimension(
+                label,
+                list.Sum(r => (decimal)r.NetPnl),
+                wins.Sum(r => (decimal)r.NetPnl),
+                losses.Sum(r => (decimal)r.NetPnl),
+                list.Count, wins.Count,
+                list.Count > 0 ? (decimal)wins.Count / list.Count : 0,
+                list.Any(r => r.RMultiple != null)
+                    ? list.Where(r => r.RMultiple != null).Average(r => (decimal)r.RMultiple!) : 0);
+        }
+
+        var bySymbol = rows.GroupBy(r => r.InternalSymbol)
+            .Select(g => Agg(g.Key, g.Cast<dynamic>())).ToList();
+
+        var byMonth = rows.GroupBy(r => r.ExitDt.ToString("yyyy-MM"))
+            .OrderBy(g => g.Key)
+            .Select(g => Agg(g.Key, g.Cast<dynamic>())).ToList();
+
+        var byDow = rows.GroupBy(r => r.ExitDt.DayOfWeek.ToString())
+            .Select(g => Agg(g.Key, g.Cast<dynamic>())).ToList();
+
+        var byExit = rows.GroupBy(r => r.ExitReason)
+            .Select(g => Agg(g.Key, g.Cast<dynamic>())).ToList();
+
+        var bySession = rows.GroupBy(r => r.ExitDt.TimeOfDay.Hours < 12 ? "Morning" : "Afternoon")
+            .Select(g => Agg(g.Key, g.Cast<dynamic>())).ToList();
+
+        return new PnlAttributionDto(bySymbol, byMonth, byDow, byExit, bySession);
     }
 }

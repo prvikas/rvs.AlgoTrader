@@ -251,3 +251,17 @@ public interface IInstrumentUniverseRepository
     Task<HashSet<string>> GetExistingKeysAsync(CancellationToken ct);
     Task AddRangeAsync(IReadOnlyList<Domain.Entities.InstrumentUniverse> entries, CancellationToken ct);
 }
+
+// ── Trade Journal ─────────────────────────────────────────────────────────────
+
+public interface ITradeJournalRepository
+{
+    Task AddAsync(Domain.Entities.TradeJournalEntry entry, CancellationToken ct);
+    Task<(IReadOnlyList<DTOs.TradeJournal.TradeJournalEntryDto> Items, int Total)> GetPagedAsync(
+        Guid? strategyInstanceId, string? symbol, string? exitReason, string? source,
+        int page, int pageSize, CancellationToken ct);
+    Task<DTOs.TradeJournal.TradeJournalEntryDto?> GetByIdAsync(Guid id, CancellationToken ct);
+    Task UpdateNotesAndTagsAsync(Guid id, string? notes, string[] tags, CancellationToken ct);
+    Task<DTOs.TradeJournal.PnlAttributionDto> GetAttributionAsync(
+        Guid? strategyInstanceId, string? symbol, DateOnly? fromDate, DateOnly? toDate, CancellationToken ct);
+}
