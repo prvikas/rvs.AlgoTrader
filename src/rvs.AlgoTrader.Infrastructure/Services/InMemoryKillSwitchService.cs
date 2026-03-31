@@ -9,31 +9,47 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// </summary>
 public sealed class InMemoryKillSwitchService(ILogger<InMemoryKillSwitchService> logger) : IKillSwitchService
 {
-    private volatile bool _isActive;
+    // All 4 fields are written together — a lock ensures an atomic snapshot on read.
+    // volatile alone would only guarantee visibility of _isActive but not the other fields.
+    private readonly object _statusLock = new();
+    private bool _isActive;
     private string? _activatedBy;
     private string? _reason;
     private DateTimeOffset? _activatedAt;
 
     public Task<bool> IsActiveAsync(CancellationToken ct)
-        => Task.FromResult(_isActive);
+    {
+        lock (_statusLock) { return Task.FromResult(_isActive); }
+    }
 
     public Task ActivateAsync(string actor, string reason, string correlationId, CancellationToken ct)
     {
-        _isActive = true;
-        _activatedBy = actor;
-        _reason = reason;
-        _activatedAt = DateTimeOffset.UtcNow;
+        lock (_statusLock)
+        {
+            _isActive = true;
+            _activatedBy = actor;
+            _reason = reason;
+            _activatedAt = DateTimeOffset.UtcNow;
+        }
         logger.LogWarning("Kill switch ACTIVATED by {Actor}: {Reason} [{CorrelationId}]", actor, reason, correlationId);
         return Task.CompletedTask;
     }
 
     public Task DeactivateAsync(string actor, string correlationId, CancellationToken ct)
     {
-        _isActive = false;
+        lock (_statusLock)
+        {
+            _isActive = false;
+            _activatedBy = null;
+            _reason = null;
+            _activatedAt = null;
+        }
         logger.LogInformation("Kill switch DEACTIVATED by {Actor} [{CorrelationId}]", actor, correlationId);
         return Task.CompletedTask;
     }
 
     public Task<KillSwitchStatus> GetStatusAsync(CancellationToken ct)
-        => Task.FromResult(new KillSwitchStatus(_isActive, _activatedBy, _reason, _activatedAt));
+    {
+        lock (_statusLock) { return Task.FromResult(new KillSwitchStatus(_isActive, _activatedBy, _reason, _activatedAt)); }
+    }
 }

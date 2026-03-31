@@ -4,6 +4,7 @@ using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -52,10 +53,10 @@ public class HistoricalDownloadService(
 
         var brokerToken = brokerName switch
         {
-            "Zerodha" => instrument.ZerodhaToken,
-            "Upstox" => instrument.UpstoxToken,
-            "MStock" => instrument.MStockToken,
-            _ => instrument.ZerodhaToken
+            BrokerNames.Zerodha => instrument.ZerodhaToken,
+            BrokerNames.Upstox  => instrument.UpstoxToken,
+            BrokerNames.MStock  => instrument.MStockToken,
+            _                   => instrument.ZerodhaToken
         };
 
         if (string.IsNullOrEmpty(brokerToken))

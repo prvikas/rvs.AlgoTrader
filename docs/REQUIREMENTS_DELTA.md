@@ -1,12 +1,35 @@
-\## Rule
+## Rule
 
 Record only changed or new requirements.
 
 Do not restate stable architecture.
 
 
+## 2026-03-30
 
-\## 2026-03-25
+### Critical Bugs Found
+
+**Negative Returns in All Strategies**
+- Position sizing ignores entry price scale (tight-stop strategies over-leveraged 10–100×)
+- Transaction costs applied only on exit, not entry (₹20 actual, ₹10 deducted → equity inflation)
+- No parameter validation after deserialization (e.g., SMA200Period=0 on empty `{}`)
+
+**Strategy Creation UX Broken for Novices**
+- Parameter editor blank after strategy selection (no schema fetch, no defaults shown)
+- User must guess parameter meanings with zero guidance
+- Empty `strategyParams = {}` passes validation but strategy behaves with unintended defaults
+
+### Frontend Changes Needed
+1. Fetch schema on strategy type change
+2. Populate editor with defaults + descriptions
+3. Validate before submit
+
+### Backtest Engine Fixes Needed
+1. Position size = risk / (stop distance × entry price) [or ATR-based]
+2. Deduct entry costs on trade open, exit costs on close
+3. Strategy config validation in FromJson() — no zero parameters
+
+## 2026-03-25
 
 
 

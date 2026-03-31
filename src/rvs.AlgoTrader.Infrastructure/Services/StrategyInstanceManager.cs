@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
@@ -22,7 +24,8 @@ public class StrategyInstanceManager(
     IClock clock,
     ILogger<StrategyInstanceManager> logger) : IStrategyInstanceManager
 {
-    private readonly Dictionary<Guid, Guid> _activeRuns = new(); // instanceId → runId
+    // ConcurrentDictionary — safe for concurrent StartAsync/StopAsync calls (#23)
+    private readonly ConcurrentDictionary<Guid, Guid> _activeRuns = new(); // instanceId → runId
 
     public async Task<Guid> StartAsync(Guid instanceId, CancellationToken ct)
     {
@@ -50,12 +53,14 @@ public class StrategyInstanceManager(
         instance.CurrentRunId = run.Id;
         instance.UpdatedAt = nowInstant;
         await instanceRepo.UpdateAsync(instance, ct);
-        _activeRuns[instanceId] = run.Id;
+        _activeRuns.TryAdd(instanceId, run.Id);
 
         // For Forward mode: initialise the ForwardTestEngine session so candle ticks are processed
         if (instance.Mode == StrategyMode.Forward)
         {
-            var capital = instance.AllocatedCapital > 0 ? instance.AllocatedCapital : 100_000m;
+            var capital = instance.AllocatedCapital > 0
+                ? instance.AllocatedCapital
+                : TradingDefaults.DefaultCapital;
             var sessionId = await forwardTestEngine.StartSessionAsync(instance, capital, ct);
             logger.LogInformation("[StrategyManager] ForwardTest session {SessionId} started for '{Name}'",
                 sessionId, instance.Name);
@@ -93,7 +98,7 @@ public class StrategyInstanceManager(
 
         var nowInstant = clock.NowInstant();
 
-        if (_activeRuns.TryGetValue(instanceId, out var runId))
+        if (_activeRuns.TryRemove(instanceId, out var runId))
         {
             var run = await runRepo.GetByIdAsync(runId, ct);
             if (run != null)
@@ -102,7 +107,6 @@ public class StrategyInstanceManager(
                 run.EndedAt = nowInstant;
                 await runRepo.UpdateAsync(run, ct);
             }
-            _activeRuns.Remove(instanceId);
         }
 
         // For Forward mode: finalise the session (compute WinRate, FinalPnl, mark Stopped)

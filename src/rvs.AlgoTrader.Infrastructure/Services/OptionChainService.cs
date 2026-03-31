@@ -5,6 +5,7 @@ using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -68,7 +69,7 @@ public sealed class OptionChainService(
 
         try
         {
-            var brokerName = await appConfig.GetAsync<string>("ActiveBroker", ct) ?? "Zerodha";
+            var brokerName = await appConfig.GetAsync<string>("ActiveBroker", ct) ?? BrokerNames.Default;
             var snapshot = await FetchFromBrokerAsync(underlyingSymbol, expiry, brokerName, ct);
 
             if (snapshot != null)
@@ -188,10 +189,10 @@ public sealed class OptionChainService(
     private static string? GetTokenForBroker(Instrument instrument, string brokerName) =>
         brokerName switch
         {
-            "Zerodha" => instrument.ZerodhaToken,
-            "Upstox"  => instrument.UpstoxToken,
-            "MStock"  => instrument.MStockToken,
-            _         => instrument.ZerodhaToken ?? instrument.UpstoxToken ?? instrument.MStockToken
+            BrokerNames.Zerodha => instrument.ZerodhaToken,
+            BrokerNames.Upstox  => instrument.UpstoxToken,
+            BrokerNames.MStock  => instrument.MStockToken,
+            _                   => instrument.ZerodhaToken ?? instrument.UpstoxToken ?? instrument.MStockToken
         };
 
     /// <summary>

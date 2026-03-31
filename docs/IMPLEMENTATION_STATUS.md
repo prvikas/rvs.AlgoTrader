@@ -14,9 +14,9 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Short Straddle/Strangle | DONE | #81: ATM straddle or OTM strangle, mandatory MaxLossMultiple safety gate per spec |
 | Calendar Spread | DONE | #82: sell near-weekly + buy far-monthly ATM, IV filter, call/put by chain bias |
 | Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
-| Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report, fullscreen chart, GET /backtest/{id} |
-| Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007 |
-| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–014 applied (012: option_iv_history + spread tables, 013: currency + fx_rates, 014: execution_mode column) |
+| Backtest engine | PARTIAL | async jobs, SignalR streaming, extended stats, chart markers, PDF report, fullscreen chart; **BUGS**: position sizing ignores entry price scale (over-leverage on tight stops); entry costs not deducted from equity; trailing stop can activate on bar 1; see REQUIREMENTS_DELTA |
+| Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007; Version field (migration 015) auto-increments on param change |
+| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–015 applied (012: option_iv_history + spread tables, 013: currency + fx_rates, 014: execution_mode column, 015: scenario version) |
 | FluentValidation | DONE | #17: ScenarioCommandValidators — Create/Update/Promote with JSON, capital, length rules |
 | DTOs in controllers | DONE | #16: inline DTOs moved to Application/DTOs/{Auth,Broker,Settings,HistoricalData,MarketData} |
 | Stub repositories | DONE | #18: 7 real EF Core repos; stubs removed from production DI; field-encryption service wired |
@@ -30,6 +30,11 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | IV Rank service | DONE | #72: IOptionIvRankService, OptionIvHistory entity, IvRankSnapshot value object, IvRegime enum, migration 012 |
 | Currency on instrument | DONE | #64: QuoteCurrency/SettlementCurrency/PriceMultiplier on Instrument, IFxRateProvider, FxRate entity, migration 013 |
 | Multi-leg spreads | DONE | #84: SpreadLeg/SpreadSignalResult types, ISpreadOrderManager, SpreadOrderManager, SpreadPosition entities, migration 012 |
+| Standards cleanup | DONE | #21-#26 (prev); #27 BrokerNames.cs constants — 11 infra/API files updated; #28 TradingDefaults.EmptyJson; #29 EmaSmoothing const; #30 InMemoryKillSwitchService lock(_statusLock) thread safety |
+| Performance analytics | DONE | #89: VaR95, CVaR95, OmegaRatio, Skewness, Kurtosis, DeploymentRating/Rationale in BacktestResult/Dto; MAE/MFE in BacktestTradeDto; persisted in ExtendedStatsJson; restored in ToDto; BacktestService.MapToDto synced (ChartSample, CircuitBreaker, all analytics) |
+| Monte Carlo simulation | DONE | #97: IMonteCarloSimulator interface + MonteCarloSimulator (bootstrap resample, P5/P50/P95 drawdown+equity, ProbabilityOfRuin); POST /api/backtest/{id}/montecarlo endpoint |
+| Multi-timeframe | DONE | #94: StrategyContext gains Candles15Min/Candles1Hour/CandlesDaily; StrategyEvaluationQueue pre-fetches higher-TF from ICandleCache; IsFinerThan guard |
+| Strategy correlation | DONE | #95: IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser (Pearson + Monte Carlo 10K), CorrelationController with /matrix /portfolio /check endpoints |
 | Forward test engine | NOT_REVIEWED | |
 | Live execution engine | NOT_REVIEWED | |
 | Broker integrations | NOT_REVIEWED | |
@@ -42,7 +47,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Trailing stop manager | DONE | #93: ITrailingStopManager, all 7 StopType variants, ratchet enforcement, TimeStop bar-counting |
 | Scaling/pyramid manager | DONE | #100: IScalingManager, ScalingMode/TrancheTrigger enums, weighted avg price, EmaBounce/PriceMoveUp/Down triggers |
 | Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order check not yet integrated into LiveExecutionEngine |
-| UI workflow | PARTIAL | top-nav layout, MetricCards, right-side drawers, backtest replay chart; strategy list dynamic from API; scenario list shows inline Return/Sharpe/Drawdown badges from compare endpoint |
+| UI workflow | PARTIAL | top-nav layout, MetricCards, right-side drawers, backtest replay chart; strategy list dynamic from API; scenario list shows inline Return/Sharpe/Drawdown badges from compare endpoint; strategy creation form missing parameter schema fetch + default population |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; SignalType enum comparisons fixed; integration factory wired |
 

@@ -1,5 +1,6 @@
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Enums;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -51,7 +52,7 @@ public sealed class IndianMarketCommissionModel : ICommissionModel
 
         // ── Brokerage ────────────────────────────────────────────────────────
         decimal brokerage;
-        if (isDelivery && isEquity && _brokerName is "Zerodha" or "Upstox")
+        if (isDelivery && isEquity && _brokerName is BrokerNames.Zerodha or BrokerNames.Upstox)
             brokerage = 0m;  // free delivery
         else
             brokerage = Math.Min(20m, tradeValue * 0.025m);  // ₹20 flat, capped at 2.5%

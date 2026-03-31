@@ -30,6 +30,12 @@ public class StrategyScenario
 
     public ScenarioStatus Status         { get; set; } = ScenarioStatus.Draft;
 
+    /// <summary>
+    /// Monotonically incremented each time ParametersJsonOverride is changed.
+    /// Allows consumers to detect whether a stored backtest result is still current.
+    /// </summary>
+    public int Version                   { get; set; } = 1;
+
     /// <summary>ID of the most recent backtest run produced for this scenario.</summary>
     public Guid? LastBacktestRunId       { get; set; }
 

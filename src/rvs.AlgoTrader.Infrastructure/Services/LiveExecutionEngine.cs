@@ -7,6 +7,7 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -62,7 +63,7 @@ public class LiveExecutionEngine(
         }
 
         // 5. Place order
-        var brokerClient = brokerFactory.GetOrderClient(instance.BrokerName ?? "Zerodha");
+        var brokerClient = brokerFactory.GetOrderClient(instance.BrokerName ?? BrokerNames.Zerodha);
         var orderRequest = new OrderRequest(
             instance.InternalSymbol,
             instance.BrokerToken ?? instance.InternalSymbol,
@@ -82,7 +83,7 @@ public class LiveExecutionEngine(
 
         // 6. Save order record using the entity factory method
         var order = Order.Create(
-            instance.BrokerName ?? "Zerodha",
+            instance.BrokerName ?? BrokerNames.Zerodha,
             instance.InternalSymbol,
             OrderType.Market,
             direction,
@@ -105,7 +106,7 @@ public class LiveExecutionEngine(
         {
             await idempotency.StoreAsync(idempotencyKey, brokerResult, ct);
             await bus.Publish(new OrderPlaced(
-                order.Id, instance.BrokerName ?? "Zerodha", brokerResult.BrokerOrderId!,
+                order.Id, instance.BrokerName ?? BrokerNames.Zerodha, brokerResult.BrokerOrderId!,
                 instance.InternalSymbol, OrderType.Market, direction,
                 quantity, signal.EntryPrice,
                 instance.CurrentRunId, correlationId, clock.NowIst()), ct);

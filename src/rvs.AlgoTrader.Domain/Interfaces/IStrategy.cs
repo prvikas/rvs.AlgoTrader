@@ -50,7 +50,15 @@ public record StrategyContext(
     // Use this for: PCR-based sentiment filter, max-pain level, OI support/resistance.
     // IOptionChainService is called by StrategyEvaluationQueue BEFORE building this context,
     // so strategies can read OptionChain directly without any I/O inside EvaluateAsync (Rule #18).
-    OptionChainSnapshot? OptionChain = null
+    OptionChainSnapshot? OptionChain = null,
+
+    // ── Multi-timeframe candle arrays (#94) ──────────────────────────────────
+    // Higher-TF candles pre-fetched by StrategyEvaluationQueue before EvaluateAsync.
+    // Null when Timeframe is already >= that granularity (e.g. Candles15Min is null for "15m"/"1d").
+    // Strategies use these for higher-TF trend confirmation only — no I/O inside EvaluateAsync.
+    IReadOnlyList<ClosedCandle>? Candles15Min = null,
+    IReadOnlyList<ClosedCandle>? Candles1Hour = null,
+    IReadOnlyList<ClosedCandle>? CandlesDaily = null
 );
 
 /// <summary>

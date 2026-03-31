@@ -194,6 +194,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IPaperOrderSimulator, PaperOrderSimulator>();
         services.AddSingleton<ITrailingStopManager, TrailingStopManager>();
         services.AddSingleton<IScalingManager, ScalingManager>();
+        services.AddSingleton<IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser>();
 
         // Broker HTTP clients (typed clients via IHttpClientFactory)
         services.AddHttpClient<MStockAuth>();

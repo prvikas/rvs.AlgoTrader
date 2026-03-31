@@ -1,4 +1,5 @@
 using NodaTime;
+using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Domain.Enums;
 
 namespace rvs.AlgoTrader.Domain.Entities;
@@ -13,7 +14,7 @@ public class StrategyInstance
     public string? BrokerName { get; set; }
     public bool IsActive { get; set; }
     public StrategyStatus Status { get; set; }
-    public string ConfigJson { get; set; } = "{}";
+    public string ConfigJson { get; set; } = TradingDefaults.EmptyJson;
     public string? FailureBehaviorJson { get; set; }
     public Guid? RiskProfileId { get; set; }
     public string? ScheduleJson { get; set; }
@@ -24,20 +25,20 @@ public class StrategyInstance
     // Operational fields used by Infrastructure services
     public string InternalSymbol { get; set; } = string.Empty;
     public string Timeframe { get; set; } = string.Empty;
-    public bool AutoResumeOnRestart { get; set; }
+    public bool AutoResumeOnRestart { get; private set; }
     public Guid? CurrentRunId { get; set; }
     public decimal AllocatedCapital { get; set; }
     public string? ParametersJson { get; set; }
 
-    // Intraday P&L — updated by the execution engine on each trade/tick
-    public decimal TodayRealizedPnl { get; set; }
-    public decimal TodayUnrealizedPnl { get; set; }
+    // Intraday P&L — mutated only via UpdatePnl() / ResetDailyPnl() domain methods
+    public decimal TodayRealizedPnl { get; private set; }
+    public decimal TodayUnrealizedPnl { get; private set; }
 
-    // Order routing fields (used by LiveExecutionEngine)
+    // Order routing fields — mutated only via UpdateOrderRouting() domain method
     public string? BrokerToken { get; set; }
-    public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
-    public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
-    public int LotSize { get; set; } = 1;
+    public Exchange Exchange { get; private set; } = Enums.Exchange.NSE;
+    public ProductType ProductType { get; private set; } = Enums.ProductType.MIS;
+    public int LotSize { get; private set; } = 1;
 
     /// <summary>
     /// Controls whether this strategy instance places real orders (Live),
@@ -89,5 +90,35 @@ public class StrategyInstance
     {
         Status = newStatus;
         UpdatedAt = now;
+    }
+
+    // ── Domain methods for operational fields (#25) ───────────────────────────
+
+    /// <summary>Records intraday P and L from the execution engine after a fill or mark-to-market tick.</summary>
+    public void UpdatePnl(decimal realizedPnl, decimal unrealizedPnl)
+    {
+        TodayRealizedPnl   = realizedPnl;
+        TodayUnrealizedPnl = unrealizedPnl;
+    }
+
+    /// <summary>Resets intraday P and L counters at the start of each trading day.</summary>
+    public void ResetDailyPnl()
+    {
+        TodayRealizedPnl   = 0m;
+        TodayUnrealizedPnl = 0m;
+    }
+
+    /// <summary>Controls whether this instance auto-resumes after a server restart.</summary>
+    public void SetAutoResume(bool value) => AutoResumeOnRestart = value;
+
+    /// <summary>
+    /// Updates order-routing configuration.
+    /// Called from command handlers when the user edits the instance, not from the execution engine.
+    /// </summary>
+    public void UpdateOrderRouting(Exchange exchange, ProductType productType, int lotSize)
+    {
+        Exchange    = exchange;
+        ProductType = productType;
+        LotSize     = lotSize > 0 ? lotSize : 1;
     }
 }

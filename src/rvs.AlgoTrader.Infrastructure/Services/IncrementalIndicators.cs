@@ -4,12 +4,14 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// <summary>O(1) EMA: maintains running state, no full array recalculation.</summary>
 public sealed class IncrementalEma : IIncrementalIndicator<decimal?>
 {
+    private const decimal EmaSmoothing = 2m;
+
     private readonly int _period;
     private readonly decimal _k;
     private decimal? _current;
     private int _count;
 
-    public IncrementalEma(int period) { _period = period; _k = 2m / (period + 1); }
+    public IncrementalEma(int period) { _period = period; _k = EmaSmoothing / (period + 1); }
 
     public decimal? Update(decimal close, long? volume = null)
     {

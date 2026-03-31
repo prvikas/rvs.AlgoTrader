@@ -1,5 +1,6 @@
 using Hangfire;
 using Microsoft.Extensions.Logging;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Hangfire;
 
@@ -28,7 +29,7 @@ public static class HangfireJobRegistry
 
         // Reconciliation: every 15 minutes during market hours
         RecurringJob.AddOrUpdate<ReconciliationJob>(
-            "reconciliation-zerodha", j => j.ExecuteAsync("Zerodha", CancellationToken.None),
+            "reconciliation-zerodha", j => j.ExecuteAsync(BrokerNames.Zerodha, CancellationToken.None),
             "*/15 3-10 * * 1-5");
 
         // Monitoring alerts: every 5 minutes

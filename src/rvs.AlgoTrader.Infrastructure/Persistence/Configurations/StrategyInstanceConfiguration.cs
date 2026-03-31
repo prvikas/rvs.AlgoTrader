@@ -44,13 +44,14 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
                 v => v.ToDateTimeUtc(),
                 v => Instant.FromDateTimeUtc(v));
 
-        // Ignore computed/legacy properties not persisted in strategy_instances table
+        builder.Property(s => s.IsActive).HasColumnName("IsActive");
+        builder.Property(s => s.ConfigJson).HasColumnName("ConfigJson").HasColumnType("jsonb");
+        builder.Property(s => s.CreatedBy).HasColumnName("CreatedBy").HasMaxLength(200);
+        builder.Property(s => s.WatchlistId).HasColumnName("WatchlistId");
+        builder.Property(s => s.CurrentRunId).HasColumnName("CurrentRunId");
+
+        // Ignore computed/derived properties with no DB column
         builder.Ignore(s => s.StrategyName);
-        builder.Ignore(s => s.WatchlistId);
-        builder.Ignore(s => s.IsActive);
-        builder.Ignore(s => s.ConfigJson);
-        builder.Ignore(s => s.CreatedBy);
-        builder.Ignore(s => s.CurrentRunId);
 
         builder.HasIndex(s => s.Status);
         builder.HasIndex(s => new { s.InternalSymbol, s.Status });

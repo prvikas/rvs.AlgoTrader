@@ -7,6 +7,7 @@ using rvs.AlgoTrader.Application.DTOs.Common;
 // DownloadHistoryRequest is defined in Application/DTOs/Backtest/DownloadHistoryRequest.cs
 using rvs.AlgoTrader.Application.Queries.Backtest;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -16,7 +17,8 @@ namespace rvs.AlgoTrader.API.Controllers;
 public class BacktestController(
     IMediator mediator,
     IHistoricalDownloadService downloadService,
-    IBacktestJobManager jobManager) : ControllerBase
+    IBacktestJobManager jobManager,
+    IMonteCarloSimulator monteCarlo) : ControllerBase
 {
     [HttpPost("download-history")]
     public async Task<ActionResult<ApiResponse<object>>> DownloadHistory(
@@ -24,7 +26,7 @@ public class BacktestController(
     {
         var result = await downloadService.DownloadAsync(
             request.InternalSymbol,
-            request.BrokerName ?? "MStock",
+            request.BrokerName ?? BrokerNames.Default,
             request.Timeframe,
             new DateOnly(request.FromDate.Year, request.FromDate.Month, request.FromDate.Day),
             new DateOnly(request.ToDate.Year, request.ToDate.Month, request.ToDate.Day),
@@ -122,6 +124,29 @@ public class BacktestController(
             : Ok(ApiResponse<BacktestResultDto>.Ok(result));
     }
 
+    /// <summary>
+    /// Runs a Monte Carlo simulation on a completed backtest's trade sequence.
+    /// Shuffles trade order N times to compute confidence intervals for drawdown and final equity.
+    /// </summary>
+    [HttpPost("{id:guid}/montecarlo")]
+    public async Task<ActionResult<ApiResponse<MonteCarloSimulationDto>>> RunMonteCarlo(
+        Guid id, [FromBody] MonteCarloRequestDto? request, CancellationToken ct)
+    {
+        var result = await mediator.Send(new GetBacktestResultQuery(id), ct);
+        if (result == null)
+            return NotFound(ApiResponse.Fail<MonteCarloSimulationDto>($"Backtest run '{id}' not found"));
+        if (result.Trades == null || result.Trades.Count == 0)
+            return BadRequest(ApiResponse.Fail<MonteCarloSimulationDto>("No trades available for simulation"));
+
+        var netPnls = result.Trades.Select(t => t.NetPnl).ToList();
+        var simResult = monteCarlo.Run(netPnls, result.InitialCapital,
+            request?.Simulations ?? 1000, request?.Seed);
+        return Ok(ApiResponse<MonteCarloSimulationDto>.Ok(new MonteCarloSimulationDto(
+            simResult.DrawdownP5, simResult.DrawdownP50, simResult.DrawdownP95,
+            simResult.EquityP5, simResult.EquityP50, simResult.EquityP95,
+            simResult.ProbabilityOfRuin)));
+    }
+
     [HttpGet]
     public async Task<ActionResult<ApiResponse<PagedResult<BacktestResultDto>>>> GetAll(
         [FromQuery] string? strategyName,
@@ -129,7 +154,7 @@ public class BacktestController(
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
     {
-        var result = await mediator.Send(new GetBacktestRunsQuery(null, page, Math.Clamp(pageSize, 1, 200)), ct);
+        var result = await mediator.Send(new GetBacktestRunsQuery(null, page, Math.Clamp(pageSize, 1, 200), strategyName), ct);
         return Ok(ApiResponse<PagedResult<BacktestResultDto>>.Ok(result));
     }
 }

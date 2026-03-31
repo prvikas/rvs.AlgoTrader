@@ -16,6 +16,7 @@ public record StrategyScenarioDto(
     string   EffectiveParametersJson,
     decimal? AllocatedCapital,
     string   Status,
+    int      Version,
     Guid?    LastBacktestRunId,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

@@ -223,8 +223,9 @@ export const backtestApi = {
   /** List all active (Queued/Running) job IDs. */
   activeJobs: () =>
     apiClient.get<ApiResponse<string[]>>('/backtest/active'),
-  list: (strategyName?: string) =>
-    apiClient.get<ApiResponse<BacktestResult[]>>('/backtest', { params: { strategyName } }),
+  /** List saved backtest runs from DB (paged). Primary source for the Previous Runs panel. */
+  list: (strategyName?: string, page = 1, pageSize = 50) =>
+    apiClient.get<ApiResponse<PagedResult<BacktestResult>>>('/backtest', { params: { strategyName, page, pageSize } }),
   /** Fetch a single saved result by ID (includes chartSample). */
   get: (id: string) =>
     apiClient.get<ApiResponse<BacktestResult>>(`/backtest/${id}`),

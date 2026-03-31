@@ -195,7 +195,7 @@ public interface IBacktestRunRepository
 {
     Task<DTOs.Backtest.BacktestResultDto?> GetByIdAsync(Guid id, CancellationToken ct);
     Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetAllAsync(string? strategyName, CancellationToken ct);
-    Task<(IReadOnlyList<DTOs.Backtest.BacktestResultDto> Items, int Total)> GetPagedAsync(Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct);
+    Task<(IReadOnlyList<DTOs.Backtest.BacktestResultDto> Items, int Total)> GetPagedAsync(Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct, string? strategyName = null);
     Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct);
     Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetByScenarioAsync(Guid scenarioId, int page, int pageSize, CancellationToken ct);
     /// <summary>Persist a completed backtest result. Idempotent on DataHash. Returns the persisted run ID.</summary>

@@ -19,6 +19,7 @@ public class StrategyScenarioConfiguration : IEntityTypeConfiguration<StrategySc
         b.Property(x => x.ParametersJsonOverride).HasColumnName("parameters_json_override").HasColumnType("text");
         b.Property(x => x.AllocatedCapital).HasColumnName("allocated_capital").HasColumnType("numeric(18,4)");
         b.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(30).IsRequired();
+        b.Property(x => x.Version).HasColumnName("version").HasDefaultValue(1).IsRequired();
         b.Property(x => x.LastBacktestRunId).HasColumnName("last_backtest_run_id");
 
         b.Property(x => x.CreatedAt).HasColumnName("created_at")

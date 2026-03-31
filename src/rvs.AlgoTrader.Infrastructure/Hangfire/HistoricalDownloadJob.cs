@@ -1,4 +1,5 @@
 using Hangfire;
+using rvs.AlgoTrader.Infrastructure.Constants;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
@@ -30,7 +31,7 @@ public class HistoricalDownloadJob(
                 var from = today.Minus(Period.FromDays(5));
                 var fromDate = new DateOnly(from.Year, from.Month, from.Day);
                 var toDate = new DateOnly(today.Year, today.Month, today.Day);
-                var result = await downloadService.DownloadAsync(symbol, broker ?? "Zerodha", timeframe, fromDate, toDate, ct);
+                var result = await downloadService.DownloadAsync(symbol, broker ?? BrokerNames.Default, timeframe, fromDate, toDate, ct);
                 logger.LogInformation("[HistoricalDownload] {Symbol}/{Tf}: {Count} bars, hash={Hash}",
                     symbol, timeframe, result.BarCount, result.DataHash?[..12]);
             }

@@ -276,7 +276,7 @@ export function StrategyLabPage() {
 
   const { data: backtests = [] } = useQuery({
     queryKey: ['backtest-results'],
-    queryFn: () => backtestApi.list().then(r => r.data.data ?? []),
+    queryFn: () => backtestApi.list().then(r => r.data.data?.items ?? []),
     refetchInterval: 30_000,
   })
 

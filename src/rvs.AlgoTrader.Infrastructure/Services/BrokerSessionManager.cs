@@ -4,6 +4,7 @@ using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Constants;
 using StackExchange.Redis;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
@@ -111,13 +112,13 @@ public class BrokerSessionManager(
             return;
         }
 
-        var client = factory.GetClient("Upstox");
-        var creds = new BrokerCredentials("Upstox", "", null, null, refreshToken.ToString(), null, null, null);
+        var client = factory.GetClient(BrokerNames.Upstox);
+        var creds = new BrokerCredentials(BrokerNames.Upstox, "", null, null, refreshToken.ToString(), null, null, null);
         var result = await client.AuthenticateAsync(creds, ct);
 
         if (result.Success)
         {
-            await StoreSessionAsync("Upstox", result, ct);
+            await StoreSessionAsync(BrokerNames.Upstox, result, ct);
             logger.LogInformation("[Upstox] Session refreshed successfully");
         }
         else
@@ -131,14 +132,14 @@ public class BrokerSessionManager(
     private async Task RefreshMStockSessionAsync(CancellationToken ct)
     {
         // mStock Type B: re-run full session exchange; no refresh_token concept
-        var client = factory.GetClient("MStock");
+        var client = factory.GetClient(BrokerNames.MStock);
         var apiKey = (await _redis.StringGetAsync("broker:config:mstock:api_key")).ToString();
-        var creds = new BrokerCredentials("MStock", apiKey, null, null, null, null, null, null);
+        var creds = new BrokerCredentials(BrokerNames.MStock, apiKey, null, null, null, null, null, null);
         var result = await client.AuthenticateAsync(creds, ct);
 
         if (result.Success)
         {
-            await StoreSessionAsync("MStock", result, ct);
+            await StoreSessionAsync(BrokerNames.MStock, result, ct);
             logger.LogInformation("[mStock] Session re-exchanged successfully");
         }
         else

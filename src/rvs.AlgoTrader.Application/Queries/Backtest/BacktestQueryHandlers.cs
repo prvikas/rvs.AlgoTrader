@@ -17,7 +17,7 @@ public class GetBacktestRunsHandler(IBacktestRunRepository repo) : IRequestHandl
 {
     public async Task<PagedResult<BacktestResultDto>> Handle(GetBacktestRunsQuery request, CancellationToken ct)
     {
-        var (items, total) = await repo.GetPagedAsync(request.StrategyInstanceId, request.Page, request.PageSize, ct);
+        var (items, total) = await repo.GetPagedAsync(request.StrategyInstanceId, request.Page, request.PageSize, ct, request.StrategyName);
         return new PagedResult<BacktestResultDto>(items, total, request.Page, request.PageSize);
     }
 }

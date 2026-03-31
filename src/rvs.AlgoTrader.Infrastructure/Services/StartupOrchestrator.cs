@@ -8,6 +8,7 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Constants;
 using rvs.AlgoTrader.Infrastructure.Hangfire;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
@@ -207,7 +208,7 @@ public class StartupOrchestrator(
                 inMemorySessions.RestoreFromDb(stored);
         }
 
-        var brokers = new[] { "Zerodha", "Upstox", "MStock" };
+        var brokers = new[] { BrokerNames.Zerodha, BrokerNames.Upstox, BrokerNames.MStock };
         var restored = 0;
         var skipped = 0;
 

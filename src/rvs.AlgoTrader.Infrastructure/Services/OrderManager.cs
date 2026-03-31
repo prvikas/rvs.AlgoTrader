@@ -7,6 +7,7 @@ using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -39,7 +40,7 @@ public sealed class OrderManager(
         var entry = new TrackedOrder(
             orderId:       order.Id,
             brokerOrderId: order.BrokerOrderId,
-            brokerName:    instance.BrokerName ?? "MStock",
+            brokerName:    instance.BrokerName ?? BrokerNames.Default,
             state:         order.BrokerOrderId != null ? OrderManagerState.Submitted : OrderManagerState.Pending,
             correlationId: correlationId,
             strategyRunId: instance.CurrentRunId,
@@ -48,7 +49,7 @@ public sealed class OrderManager(
         _entries[order.Id] = entry;
 
         // Fire-and-forget polling loop — does not block the caller
-        _ = Task.Run(() => PollUntilTerminalAsync(entry, instance.BrokerName ?? "MStock", ct), CancellationToken.None);
+        _ = Task.Run(() => PollUntilTerminalAsync(entry, instance.BrokerName ?? BrokerNames.Default, ct), CancellationToken.None);
 
         return order.Id;
     }

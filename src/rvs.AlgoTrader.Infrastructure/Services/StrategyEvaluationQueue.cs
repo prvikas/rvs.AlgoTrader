@@ -3,6 +3,7 @@ using MassTransit;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
@@ -15,12 +16,18 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// Each instance evaluated sequentially within its own worker channel.
 ///
 /// Routing:
-///   StrategyMode.Live        → LiveExecutionEngine (real orders)
+///   StrategyMode.Live    → LiveExecutionEngine (real orders)
 ///   StrategyMode.Forward → ForwardTestEngine (paper trading, no real orders)
-///   Other modes              → skipped
+///   Other modes          → skipped
 ///
 /// HOLD and SKIPPED signals → signal_journal only, no domain event.
 /// BUY/SELL signals → SignalGenerated event + execution engine.
+///
+/// Multi-timeframe (#94):
+///   Before calling EvaluateAsync, higher-TF candles (15m, 60m, 1d) are pre-fetched from
+///   ICandleCache and attached to StrategyContext when the instance's primary TF is finer-grained.
+///   Strategies access these via context.Candles15Min / Candles1Hour / CandlesDaily — no I/O
+///   inside EvaluateAsync.
 /// </summary>
 public class StrategyEvaluationQueue(
     IStrategyInstanceRepository instanceRepo,
@@ -35,6 +42,9 @@ public class StrategyEvaluationQueue(
 {
     // Per-instance channels to ensure sequential evaluation
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _semaphores = new();
+
+    // Higher-TF bars to fetch — enough for most indicators (200-bar SMA needs 200 daily bars)
+    private const int HigherTfBarCount = 200;
 
     public async Task Consume(ConsumeContext<CandleClosedEvent> context)
     {
@@ -58,8 +68,9 @@ public class StrategyEvaluationQueue(
         await sem.WaitAsync(ct);
         try
         {
-            // Get candle history from cache (already ClosedCandle value objects)
-            var candles = await candleCache.GetAsync(instance.InternalSymbol, instance.Timeframe, 500, ct);
+            // Get primary candle history from cache
+            var candles = await candleCache.GetAsync(
+                instance.InternalSymbol, instance.Timeframe, TradingDefaults.CandleCacheSize, ct);
             if (candles.Count < 2)
             {
                 logger.LogDebug("[EvalQueue] Insufficient candle history for {Instance}", instance.Name);
@@ -68,6 +79,20 @@ public class StrategyEvaluationQueue(
 
             var correlationId = evt.CorrelationId;
 
+            // ── Pre-fetch higher-TF candles for multi-timeframe strategies (#94) ──
+            // Only fetch a higher TF when the primary TF is finer-grained.
+            var candles15Min = IsFinerThan(instance.Timeframe, Timeframes.FifteenMinute)
+                ? await candleCache.GetAsync(instance.InternalSymbol, Timeframes.FifteenMinute, HigherTfBarCount, ct)
+                : null;
+
+            var candles1Hour = IsFinerThan(instance.Timeframe, Timeframes.SixtyMinute)
+                ? await candleCache.GetAsync(instance.InternalSymbol, Timeframes.SixtyMinute, HigherTfBarCount, ct)
+                : null;
+
+            var candlesDaily = IsFinerThan(instance.Timeframe, Timeframes.Daily)
+                ? await candleCache.GetAsync(instance.InternalSymbol, Timeframes.Daily, HigherTfBarCount, ct)
+                : null;
+
             var strategy = strategyFactory.Create(instance.StrategyName, instance.ParametersJson);
             var strategyContext = new StrategyContext(
                 instance.Id,
@@ -75,7 +100,11 @@ public class StrategyEvaluationQueue(
                 instance.Timeframe,
                 candles,
                 instance.ParametersJson ?? "{}",
-                correlationId);
+                correlationId,
+                OptionChain:  null,          // populated by IOptionChainService when wired
+                Candles15Min: candles15Min,
+                Candles1Hour: candles1Hour,
+                CandlesDaily: candlesDaily);
 
             SignalResult result;
             try
@@ -129,5 +158,25 @@ public class StrategyEvaluationQueue(
         {
             sem.Release();
         }
+    }
+
+    /// <summary>
+    /// Returns true when <paramref name="instanceTf"/> is finer-grained than <paramref name="higherTf"/>,
+    /// meaning the higher-TF candles provide genuinely additional context.
+    /// </summary>
+    private static bool IsFinerThan(string instanceTf, string higherTf)
+    {
+        // Use the Timeframes.All ordering: lower index = finer granularity
+        var all = Timeframes.All;
+        var instanceIdx = IndexOf(all, instanceTf);
+        var higherIdx   = IndexOf(all, higherTf);
+        return instanceIdx >= 0 && higherIdx >= 0 && instanceIdx < higherIdx;
+    }
+
+    private static int IndexOf(IReadOnlyList<string> list, string value)
+    {
+        for (var i = 0; i < list.Count; i++)
+            if (list[i] == value) return i;
+        return -1;
     }
 }

@@ -67,6 +67,7 @@ public class UpdateScenarioCommandHandler(
         if (req.ParametersJsonOverride is not null)
         {
             scenario.ParametersJsonOverride = req.ParametersJsonOverride;
+            scenario.Version++;
             // Reset to Draft when override changes — existing backtest no longer reflects params
             if (scenario.Status == ScenarioStatus.Backtested)
                 scenario.Status = ScenarioStatus.Draft;

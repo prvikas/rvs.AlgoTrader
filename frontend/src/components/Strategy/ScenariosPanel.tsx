@@ -21,6 +21,10 @@ interface Props {
   defaultFromDate?: string
   defaultToDate?: string
   defaultCapital?: number
+  /** Called when a single-scenario run is enqueued — parent can navigate to the backtest page */
+  onJobStarted?: (jobId: string) => void
+  /** Called when user clicks "Chart" on a compare row — parent navigates to backtest page for that run */
+  onOpenBacktestResult?: (runId: string) => void
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -53,6 +57,8 @@ export default function ScenariosPanel({
   instanceId, strategyType, instanceName, baseParametersJson,
   defaultSymbol = '', defaultTimeframe = '1d',
   defaultFromDate = '', defaultToDate = '', defaultCapital = 100_000,
+  onJobStarted,
+  onOpenBacktestResult,
 }: Props) {
   const qc = useQueryClient()
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -102,13 +108,17 @@ export default function ScenariosPanel({
         initialCapital:    runConfig.capital,
         scenarioIds:       ids,
       }),
-    onSuccess: resp => {
+    onSuccess: (resp, ids) => {
       const jobs: Record<string, string> = {}
       const results = resp.data?.data ?? []
       results.forEach(r => { jobs[r.scenarioId] = r.jobId })
       setRunningJobs(jobs)
       setRunError(null)
-      // Poll jobs until done
+      // Single-scenario run: navigate to backtest page to show live progress + chart
+      if (results.length === 1 && onJobStarted) {
+        onJobStarted(results[0].jobId)
+      }
+      // Poll jobs until done (also refreshes compare data when running multiple)
       pollJobs(jobs)
     },
     onError: (e: Error) => setRunError(e.message),
@@ -441,12 +451,12 @@ export default function ScenariosPanel({
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: C.surface2 }}>
-                  {['Scenario', 'Status', 'Capital', 'Params', 'Return', 'Drawdown', 'Sharpe', 'Win%', 'Trades', 'PF', 'Expectancy'].map(h => (
+                  {['Scenario', 'Status', 'Capital', 'Params', 'Return', 'Drawdown', 'Sharpe', 'Win%', 'Trades', 'PF', 'Expectancy', ''].map(h => (
                     <th key={h} style={{
                       padding: TABLE_HEADER_CELL, textAlign: 'right',
                       color: C.textMuted, fontWeight: 600, whiteSpace: 'nowrap',
                       borderBottom: `1px solid ${C.border}`,
-                      ...(h === 'Scenario' || h === 'Status' || h === 'Params' ? { textAlign: 'left' } : {}),
+                      ...(h === 'Scenario' || h === 'Status' || h === 'Params' || h === '' ? { textAlign: 'left' } : {}),
                     }}>
                       {h}
                     </th>
@@ -513,6 +523,22 @@ export default function ScenariosPanel({
                     </td>
                     <td style={{ padding: TABLE_CELL, textAlign: 'right', color: C.text, fontFamily: 'monospace' }}>
                       {fmt2(r.expectancyPerTrade)}
+                    </td>
+                    <td style={{ padding: TABLE_CELL }}>
+                      {r.lastBacktestRunId && onOpenBacktestResult && (
+                        <button
+                          onClick={() => onOpenBacktestResult(r.lastBacktestRunId!)}
+                          title="View chart and trades for this scenario's last backtest"
+                          style={{
+                            padding: '3px 8px', background: C.blueBg,
+                            border: `1px solid ${C.blue}44`, borderRadius: 3,
+                            color: C.blue, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          Chart
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

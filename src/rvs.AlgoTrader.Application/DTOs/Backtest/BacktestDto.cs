@@ -29,7 +29,9 @@ public record BacktestRequestDto(
     bool BreakEvenAt1R = false,
     // Circuit breaker: stop early when equity < InitialCapital × CircuitBreakerPct.
     // Default 0.5 = stop at 50% drawdown. Set to 0 to disable.
-    decimal CircuitBreakerPct = 0.5m);
+    decimal CircuitBreakerPct = 0.5m,
+    // Optional: tag this standalone run to a scenario for grouping in Previous Runs.
+    Guid? ScenarioId = null);
 
 public record WalkForwardConfigDto(int InSampleDays, int OutOfSampleDays, int StepDays);
 
@@ -79,7 +81,16 @@ public record BacktestResultDto(
     bool CircuitBreakerHit = false,
     string? CircuitBreakerReason = null,
     // Scenario that triggered this run, if any.
-    Guid? ScenarioId = null);
+    Guid? ScenarioId = null,
+    // ── Advanced risk analytics (#89) ─────────────────────────────────────────
+    decimal VaR95 = 0m,
+    decimal CVaR95 = 0m,
+    decimal OmegaRatio = 0m,
+    decimal Skewness = 0m,
+    decimal Kurtosis = 0m,
+    // Deployment readiness: "Green" | "Amber" | "Red"
+    string DeploymentRating = "",
+    string? DeploymentRationale = null);
 
 public record BacktestMonthlyBreakdownDto(int Year, int Month, decimal Pnl, int Trades, decimal WinRate);
 public record BacktestYearlyBreakdownDto(int Year, decimal Pnl, decimal Return, int Trades, decimal WinRate);
@@ -114,7 +125,10 @@ public record BacktestTradeDto(
     decimal GrossPnl,
     decimal NetPnl,
     string EntryTime,   // ISO UTC string
-    string ExitTime);   // ISO UTC string
+    string ExitTime,    // ISO UTC string
+    // Maximum adverse/favorable excursion from entry price (price units)
+    decimal Mae = 0m,
+    decimal Mfe = 0m);
 
 /// <summary>Status of a running/completed async backtest job.</summary>
 public record BacktestJobStatusDto(
@@ -126,7 +140,8 @@ public record BacktestJobStatusDto(
     int TradesSoFar,
     decimal CurrentEquity,
     string? Error,
-    BacktestResultDto? Result);
+    BacktestResultDto? Result,
+    DateTimeOffset StartedAt = default);
 
 public record BacktestCostProfileDto(
     Guid Id, string Name, decimal BrokeragePct, decimal SttPct, decimal GstPct,
@@ -136,3 +151,16 @@ public record BacktestCostProfileDto(
 public record CreateBacktestCostProfileDto(
     string Name, decimal BrokeragePct, decimal SttPct, decimal GstPct,
     decimal SebiChargesPct, decimal StampDutyPct, decimal SlippagePct, string Description);
+
+// ── Monte Carlo DTOs ───────────────────────────────────────────────────────────
+
+public record MonteCarloRequestDto(int Simulations = 1000, int? Seed = null);
+
+public record MonteCarloSimulationDto(
+    decimal DrawdownP5,
+    decimal DrawdownP50,
+    decimal DrawdownP95,
+    decimal EquityP5,
+    decimal EquityP50,
+    decimal EquityP95,
+    decimal ProbabilityOfRuin);

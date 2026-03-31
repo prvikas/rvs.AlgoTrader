@@ -92,7 +92,8 @@
       "Bash(curl -s --ssl-no-revoke \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/milestones\")",
       "Bash(curl -s --ssl-no-revoke \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/issues?milestone=5&state=all&per_page=50&page=1\")",
       "Bash(for n:*)",
-      "Bash(do echo:*)"
+      "Bash(do echo:*)",
+      "Bash(grep -r \"monte.*carlo\\\\|overfitting\\\\|permutation\\\\|robustness\" /c/Users/prvik/Downloads/algotrader-claude-kit/src --include=*.cs)"
     ]
   }
 }

@@ -5,6 +5,7 @@ using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -37,7 +38,7 @@ public class SpreadOrderManager(
             return null;
         }
 
-        var brokerName  = instance.BrokerName ?? "MStock";
+        var brokerName  = instance.BrokerName ?? BrokerNames.Default;
         var brokerClient = brokerFactory.GetOrderClient(brokerName);
         var now          = clock.NowInstant();
 

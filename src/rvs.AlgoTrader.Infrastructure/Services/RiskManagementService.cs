@@ -2,6 +2,8 @@ using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Commands.Orders;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Constants;
+using rvs.AlgoTrader.Infrastructure.Cache;
 using StackExchange.Redis;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
@@ -29,7 +31,6 @@ end
 return 0
 ";
 
-
     public async Task<RiskCheckResult> CheckAsync(Guid strategyRunId, object orderRequest, CancellationToken ct)
     {
         if (strategyRunId == Guid.Empty)
@@ -41,7 +42,7 @@ return 0
             return new RiskCheckResult(false, $"Strategy run {strategyRunId} not found");
 
         // 2. Capital check via Redis Lua (atomic compare-and-swap)
-        var capitalKey = $"algotrader:capital:{instance.Id}";
+        var capitalKey = RedisKeys.Capital(instance.Id);
         var command = orderRequest as PlaceOrderCommand;
         var estimatedCost = command is not null ? EstimateOrderCost(command) : 0m;
         var db = redis.GetDatabase();
@@ -55,15 +56,15 @@ return 0
             if (!exists)
             {
                 await db.HashSetAsync(capitalKey, [
-                    new StackExchange.Redis.HashEntry("available", alloc.AvailableCapital.ToString("F2")),
-                    new StackExchange.Redis.HashEntry("reserved", alloc.ReservedCapital.ToString("F2")),
-                    new StackExchange.Redis.HashEntry("allocated", alloc.AllocatedCapital.ToString("F2"))
+                    new HashEntry("available", alloc.AvailableCapital.ToString("F2")),
+                    new HashEntry("reserved",  alloc.ReservedCapital.ToString("F2")),
+                    new HashEntry("allocated",  alloc.AllocatedCapital.ToString("F2"))
                 ]);
-                await db.KeyExpireAsync(capitalKey, TimeSpan.FromHours(12)); // IST trading session
+                await db.KeyExpireAsync(capitalKey, TimeSpan.FromHours(TradingDefaults.CapitalTtlHours));
             }
 
             var result = await db.ScriptEvaluateAsync(ReserveCapitalLua,
-                keys: [new RedisKey(capitalKey)],
+                keys:   [new RedisKey(capitalKey)],
                 values: [new RedisValue(estimatedCost.ToString("F2"))]);
 
             if ((int)result == 0)

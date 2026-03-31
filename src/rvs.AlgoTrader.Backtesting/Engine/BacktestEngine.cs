@@ -126,8 +126,9 @@ public class BacktestEngine(
                 var closed = TryClosePosition(openTrade, current, request);
                 if (closed != null)
                 {
-                    var costs  = costCalc.Calculate(closed.ExitPrice * closed.Quantity, closed.Direction == "BUY", costProfile);
-                    closed     = closed with { NetPnl = closed.GrossPnl - costs.Total };
+                    var entryCosts = costCalc.Calculate(closed.EntryPrice * closed.Quantity, closed.Direction == "BUY", costProfile);
+                    var exitCosts  = costCalc.Calculate(closed.ExitPrice  * closed.Quantity, closed.Direction != "BUY", costProfile);
+                    closed     = closed with { NetPnl = closed.GrossPnl - entryCosts.Total - exitCosts.Total };
                     equity    += closed.NetPnl;
                     trades.Add(closed);
                     openTrade  = null;
@@ -242,6 +243,10 @@ public class BacktestEngine(
                 }
             }
 
+            // Deduct entry transaction costs from equity immediately on fill
+            var entryCost = costCalc.Calculate(entryPrice * positionSize, signal.Signal == SignalType.Buy, costProfile);
+            equity -= entryCost.Total;
+
             var initialSl = signal.StopLoss ?? entryPrice * 0.99m;
             openTrade = new BacktestTrade(
                 Id: Guid.NewGuid(),
@@ -259,6 +264,7 @@ public class BacktestEngine(
                 ExitReason: "",
                 InitialStopLoss: initialSl,
                 BestPrice:       entryPrice,   // will track high (longs) or low (shorts) from entry
+                WorstPrice:      entryPrice,   // will track low (longs) or high (shorts) from entry
                 TrailActive:     false);
         }
 
@@ -269,13 +275,14 @@ public class BacktestEngine(
             var grossPnl   = openTrade.Direction == "BUY"
                 ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
-            var costs = costCalc.Calculate(exitPrice * openTrade.Quantity, false, costProfile);
+            var entryCostsEod = costCalc.Calculate(openTrade.EntryPrice * openTrade.Quantity, openTrade.Direction == "BUY", costProfile);
+            var exitCostsEod  = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
             trades.Add(openTrade with
             {
                 ExitPrice   = exitPrice,
                 ExitTime    = lastCandle.CloseTime,
                 GrossPnl    = grossPnl,
-                NetPnl      = grossPnl - costs.Total,
+                NetPnl      = grossPnl - entryCostsEod.Total - exitCostsEod.Total,
                 ExitReason  = "END_OF_DATA"
             });
         }
@@ -314,12 +321,19 @@ public class BacktestEngine(
     /// </summary>
     private static BacktestTrade ApplyTrailingStop(BacktestTrade trade, ClosedCandle candle, BacktestRequest req)
     {
-        // Nothing to do if both features are disabled
+        // Always update WorstPrice (MAE tracking) regardless of trailing stop settings
+        var worstPrice = trade.Direction == "BUY"
+            ? Math.Min(trade.WorstPrice, candle.Low)
+            : Math.Max(trade.WorstPrice, candle.High);
+
+        // Nothing to do for trailing stop if both features are disabled
         if (req.TrailActivationR <= 0 && !req.BreakEvenAt1R)
-            return trade;
+        {
+            return worstPrice == trade.WorstPrice ? trade : trade with { WorstPrice = worstPrice };
+        }
 
         var initialR = Math.Abs(trade.EntryPrice - trade.InitialStopLoss);
-        if (initialR == 0) return trade;
+        if (initialR == 0) return worstPrice == trade.WorstPrice ? trade : trade with { WorstPrice = worstPrice };
 
         // Update the running best price (ratchet — only ever improves)
         var bestPrice = trade.Direction == "BUY"
@@ -358,7 +372,7 @@ public class BacktestEngine(
                 : Math.Min(newSl, trailSl);
         }
 
-        return trade with { BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive };
+        return trade with { BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive, WorstPrice = worstPrice };
     }
 
     private static BacktestTrade? TryClosePosition(BacktestTrade trade, ClosedCandle candle, BacktestRequest request)
@@ -405,10 +419,18 @@ public class BacktestEngine(
     private static int CalculatePositionSize(decimal equity, SignalResult signal, BacktestRequest request)
     {
         if (signal.EntryPrice == null || signal.StopLoss == null) return 0;
+        var entryPrice   = signal.EntryPrice.Value;
+        if (entryPrice <= 0) return 0;
+
         var riskAmount   = equity * request.RiskPerTradePercent / 100m;
-        var stopDistance = Math.Abs(signal.EntryPrice.Value - signal.StopLoss.Value);
+        var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
         if (stopDistance == 0) return 0;
-        return (int)(riskAmount / stopDistance);
+
+        var sizeByRisk = (int)(riskAmount / stopDistance);
+
+        // Cap position to 25% of equity to prevent over-leverage on tight stops
+        var maxByCapital = (int)(equity * 0.25m / entryPrice);
+        return Math.Min(sizeByRisk, Math.Max(1, maxByCapital));
     }
 
     private static BacktestResult ComputeMetrics(
@@ -510,6 +532,35 @@ public class BacktestEngine(
         // Drawdown recovery bars: number of bars from trough of max drawdown to next peak
         var ddRecoveryBars = ComputeDrawdownRecovery(trades, request.InitialCapital);
 
+        // ── Advanced risk analytics (#89) ───────────────────────────────────────
+        var sortedReturns = returns.OrderBy(r => r).ToArray();
+        var returnCount   = sortedReturns.Length;
+
+        // VaR95: 5th-percentile of per-trade returns (the worst 5%)
+        var var95Idx = Math.Max(0, (int)Math.Floor(returnCount * 0.05) - 1);
+        var var95    = returnCount > 0 ? (decimal)sortedReturns[var95Idx] : 0m;
+
+        // CVaR95 (expected shortfall): average of returns below VaR95
+        var tailCount = Math.Max(1, (int)Math.Floor(returnCount * 0.05));
+        var cvar95    = returnCount > 0 ? (decimal)sortedReturns.Take(tailCount).Average() : 0m;
+
+        // Omega ratio: sum of positive returns / |sum of negative returns| (threshold = 0)
+        var positiveSum = returns.Where(r => r > 0).Sum();
+        var negativeSum = Math.Abs(returns.Where(r => r < 0).Sum());
+        var omega       = negativeSum < 1e-12 ? 0m : (decimal)(positiveSum / negativeSum);
+
+        // Skewness: third standardized moment
+        var m3       = returnCount > 0 ? returns.Select(r => Math.Pow(r - avgReturn, 3)).Average() : 0;
+        var skewness = stdDev < 1e-12 ? 0m : (decimal)(m3 / Math.Pow(stdDev, 3));
+
+        // Excess kurtosis: fourth standardized moment minus 3
+        var m4       = returnCount > 0 ? returns.Select(r => Math.Pow(r - avgReturn, 4)).Average() : 0;
+        var kurtosis = stdDev < 1e-12 ? 0m : (decimal)(m4 / Math.Pow(stdDev, 4)) - 3m;
+
+        // Deployment readiness rating
+        var (deployRating, deployRationale) = ComputeDeploymentRating(
+            sharpe, maxDrawdown, winRate, trades.Count, sortino);
+
         return new BacktestResult(
             Success: true,
             StrategyName: request.StrategyName,
@@ -544,7 +595,55 @@ public class BacktestEngine(
             Trades: trades,
             DataHash: dataHash,
             Error: null,
-            ChartSample: chartSample);
+            ChartSample: chartSample,
+            VaR95: var95,
+            CVaR95: cvar95,
+            OmegaRatio: omega,
+            Skewness: skewness,
+            Kurtosis: kurtosis,
+            DeploymentRating: deployRating,
+            DeploymentRationale: deployRationale);
+    }
+
+    private static (string Rating, string Rationale) ComputeDeploymentRating(
+        decimal sharpe, decimal maxDrawdown, decimal winRate, int tradeCount, decimal sortino)
+    {
+        var issues = new List<string>();
+        var passes = new List<string>();
+
+        if (tradeCount < 30)
+            issues.Add($"< 30 trades (only {tradeCount}; low statistical confidence)");
+        else
+            passes.Add($"{tradeCount} trades");
+
+        if (maxDrawdown > 0.30m)
+            issues.Add($"Max drawdown {maxDrawdown:P1} exceeds 30%");
+        else
+            passes.Add($"Max drawdown {maxDrawdown:P1}");
+
+        if (sharpe < 0.5m)
+            issues.Add($"Sharpe {sharpe:F2} < 0.5");
+        else
+            passes.Add($"Sharpe {sharpe:F2}");
+
+        if (winRate < 0.35m)
+            issues.Add($"Win rate {winRate:P1} < 35%");
+        else
+            passes.Add($"Win rate {winRate:P1}");
+
+        string rating;
+        if (issues.Count == 0 && sharpe >= 1.0m && maxDrawdown <= 0.20m)
+            rating = "Green";
+        else if (issues.Count <= 1 && sharpe >= 0.5m && maxDrawdown <= 0.30m)
+            rating = "Amber";
+        else
+            rating = "Red";
+
+        var rationale = issues.Count > 0
+            ? $"Issues: {string.Join("; ", issues)}. Passes: {string.Join("; ", passes)}."
+            : $"All checks passed: {string.Join("; ", passes)}.";
+
+        return (rating, rationale);
     }
 
     private static decimal ComputeGroupedSharpe(List<BacktestTrade> trades, Func<BacktestTrade, string> keySelector)

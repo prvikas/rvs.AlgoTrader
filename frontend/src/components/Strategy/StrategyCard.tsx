@@ -20,6 +20,10 @@ interface Props {
   onRunBacktest?: (instance: StrategyInstance) => void
   /** Called when user clicks "Forward Test" on a Backtest-mode instance */
   onPromoteToForward?: (instance: StrategyInstance) => void
+  /** Called when a scenario run is enqueued — parent navigates to backtest tab to show live result */
+  onScenarioJobStarted?: (jobId: string) => void
+  /** Called when user clicks "Chart" in compare view — parent navigates to backtest tab for that run */
+  onOpenBacktestResult?: (runId: string) => void
 }
 
 function PnlBadge({ value, label }: { value: number; label: string }) {
@@ -326,7 +330,7 @@ function LiveConfirmModal({
 // StrategyCard
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function StrategyCard({ instance, onRunBacktest, onPromoteToForward }: Props) {
+export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: Props) {
   const qc = useQueryClient()
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
   const [positionsExpanded, setPositionsExpanded] = useState(false)
@@ -579,6 +583,8 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward }: Pr
             defaultTimeframe={instance.timeframe || '1d'}
             defaultFromDate={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)}
             defaultToDate={new Date().toISOString().slice(0, 10)}
+            onJobStarted={onScenarioJobStarted}
+            onOpenBacktestResult={onOpenBacktestResult}
           />
         </div>
       </article>

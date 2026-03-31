@@ -47,6 +47,8 @@ const STRATEGY_DESCS: Record<string, string> = {
 export function Dashboard() {
   const [activePage, setActivePage] = useState<Page>('portfolio')
   const [backtestPreset, setBacktestPreset] = useState<StrategyInstance | null>(null)
+  const [scenarioJobId, setScenarioJobId] = useState<string | null>(null)
+  const [openResultId, setOpenResultId] = useState<string | null>(null)
   const activeBrokerName = localStorage.getItem('active_broker') || 'MStock'
 
   // ── Data Queries ──────────────────────────────────────────────────────────
@@ -77,7 +79,7 @@ export function Dashboard() {
 
   const { data: backtestResults } = useQuery({
     queryKey: ['backtest-results'],
-    queryFn: () => backtestApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
+    queryFn: () => backtestApi.list().then(r => r.data.data?.items ?? []),
     enabled: activePage === 'backtest' || activePage === 'lab',
     refetchInterval: 30_000,
   })
@@ -180,9 +182,15 @@ export function Dashboard() {
               setActivePage('backtest')
             }}
             onPromoteToForward={(instance) => {
-              // Navigate to Backtest tab pre-filled with strategy params.
-              // User runs the backtest there, then uses "Promote to Forward Test" on the result.
               setBacktestPreset(instance)
+              setActivePage('backtest')
+            }}
+            onScenarioJobStarted={(jobId) => {
+              setScenarioJobId(jobId)
+              setActivePage('backtest')
+            }}
+            onOpenBacktestResult={(runId) => {
+              setOpenResultId(runId)
               setActivePage('backtest')
             }}
           />
@@ -194,6 +202,10 @@ export function Dashboard() {
             backtestResults={backtestResults ?? []}
             preset={backtestPreset}
             onPresetConsumed={() => setBacktestPreset(null)}
+            initialJobId={scenarioJobId}
+            onInitialJobConsumed={() => setScenarioJobId(null)}
+            openResultId={openResultId}
+            onOpenResultConsumed={() => setOpenResultId(null)}
           />
         )}
         {activePage === 'forwardtest' && <ForwardTestPage />}
@@ -220,11 +232,13 @@ export function Dashboard() {
 // STRATEGIES PAGE
 // ──────────────────────────────────────────────────────────────────────────────
 
-function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteToForward }: {
+function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: {
   activeBroker: string
   brokerStatus: BrokerStatus[]
   onRunBacktest?: (instance: StrategyInstance) => void
   onPromoteToForward?: (instance: StrategyInstance) => void
+  onScenarioJobStarted?: (jobId: string) => void
+  onOpenBacktestResult?: (runId: string) => void
 }) {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
@@ -251,6 +265,12 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
     queryKey: ['strategies'],
     queryFn: () => strategiesApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
     refetchInterval: 10_000,
+  })
+
+  const { data: registeredStrategies } = useQuery({
+    queryKey: ['registered-strategies'],
+    queryFn: () => strategiesApi.getRegisteredNames().then(r => r.data.data ?? []),
+    staleTime: 5 * 60 * 1000,
   })
 
   // Auto-select first strategy when list loads
@@ -666,6 +686,8 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
               instance={selectedInstance}
               onRunBacktest={onRunBacktest}
               onPromoteToForward={onPromoteToForward}
+              onScenarioJobStarted={onScenarioJobStarted}
+              onOpenBacktestResult={onOpenBacktestResult}
             />
           ) : strategies && strategies.length > 0 ? (
             <div style={{ color: C.textMuted, fontSize: 13, padding: 24 }}>
@@ -739,10 +761,16 @@ function statusColor(status: string): string {
 // BACKTEST PAGE
 // ──────────────────────────────────────────────────────────────────────────────
 
-function BacktestPage({ backtestResults, preset, onPresetConsumed }: {
+function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId, onInitialJobConsumed, openResultId, onOpenResultConsumed }: {
   backtestResults: BacktestResult[]
   preset?: StrategyInstance | null
   onPresetConsumed?: () => void
+  /** Job ID started from ScenariosPanel — immediately track it and show live progress */
+  initialJobId?: string | null
+  onInitialJobConsumed?: () => void
+  /** Backtest run ID to fetch and display (from compare-view Chart button) */
+  openResultId?: string | null
+  onOpenResultConsumed?: () => void
 }) {
   const qc = useQueryClient()
   const { data: registeredStrategies } = useQuery({
@@ -826,6 +854,35 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed }: {
       onPresetConsumed?.()
     }
   }, [preset]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Scenario job started from Strategies page — adopt the job and show live progress + chart
+  useEffect(() => {
+    if (!initialJobId || activeJobId) return
+    setActiveJobId(initialJobId)
+    setJobStatus({ jobId: initialJobId, status: 'Queued', progressPct: 0, currentBar: 0, totalBars: 0, tradesSoFar: 0, currentEquity: 0 })
+    setFullChartBars([])
+    setRunResult(null)
+    setErrorMsg('')
+    setShowForm(false)
+    onInitialJobConsumed?.()
+  }, [initialJobId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Chart" clicked on a scenario compare row — fetch the run and display it
+  useEffect(() => {
+    if (!openResultId) return
+    onOpenResultConsumed?.()
+    setRunResult(null)
+    setFullChartBars([])
+    setErrorMsg('')
+    setShowForm(false)
+    backtestApi.get(openResultId).then(resp => {
+      const result = resp.data.data
+      if (result) {
+        setRunResult(result)
+        setFullChartBars(result.chartSample ?? [])
+      }
+    }).catch(() => setErrorMsg('Failed to load backtest result'))
+  }, [openResultId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll job status every 2 seconds while running
   useEffect(() => {

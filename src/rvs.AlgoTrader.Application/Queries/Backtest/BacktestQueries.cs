@@ -12,7 +12,7 @@ public record RunWalkForwardQuery(BacktestRequestDto Request) : IRequest<object>
 public record GetBacktestResultsQuery(string? StrategyName) : IRequest<IReadOnlyList<BacktestResultDto>>;
 public record GetBacktestReportQuery(Guid RunId) : IRequest<byte[]?>;
 public record GetBacktestResultQuery(Guid RunId) : IRequest<BacktestResultDto?>;
-public record GetBacktestRunsQuery(Guid? StrategyInstanceId, int Page = 1, int PageSize = 20) : IRequest<PagedResult<BacktestResultDto>>;
+public record GetBacktestRunsQuery(Guid? StrategyInstanceId, int Page = 1, int PageSize = 20, string? StrategyName = null) : IRequest<PagedResult<BacktestResultDto>>;
 public record GetBacktestCostProfilesQuery() : IRequest<IReadOnlyList<BacktestCostProfileDto>>;
 public record GetBacktestCostProfileByIdQuery(Guid Id) : IRequest<BacktestCostProfileDto?>;
 public record ReproduceBacktestQuery(Guid RunId) : IRequest<BacktestResultDto?>;

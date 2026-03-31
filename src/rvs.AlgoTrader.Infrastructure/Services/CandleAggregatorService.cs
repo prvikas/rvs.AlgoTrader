@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
+using rvs.AlgoTrader.Domain.Constants;
+using rvs.AlgoTrader.Infrastructure.Constants;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
@@ -36,40 +38,53 @@ public class CandleAggregatorService(
     private readonly Dictionary<string, PartialCandle> _partials = new();
     private readonly object _lock = new();
 
-    // Subscribed symbols — updated by StrategyInstanceManager
+    // Subscribed symbols and active broker — guarded by _lock (#24)
     private HashSet<string> _subscribedSymbols = [];
-    // Read active broker from config; defaults to MStock
     private string _brokerName = string.Empty;
-    private readonly string[] _timeframes = ["1m", "3m", "5m", "15m", "30m", "60m", "1d"];
+
+    // All supported timeframes as a static readonly — no per-instance allocation (#22)
+    private static readonly IReadOnlyList<string> _timeframes = Timeframes.All;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Read active broker from config at startup; can be overridden by UpdateSubscriptions()
-        _brokerName = configuration["Broker:ActiveBroker"] ?? "MStock";
+        lock (_lock)
+        {
+            _brokerName = configuration["Broker:ActiveBroker"] ?? BrokerNames.Default;
+        }
         logger.LogInformation("[CandleAggregator] Background service started. Active broker: {Broker}. Waiting for symbol subscriptions...", _brokerName);
 
         var backoffSeconds = BackoffInitialSeconds;
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Snapshot subscribed symbols and broker under lock to avoid torn reads (#24)
+            HashSet<string> symbols;
+            string broker;
+            lock (_lock)
+            {
+                symbols = _subscribedSymbols;
+                broker  = _brokerName;
+            }
+
             // Wait until symbols are subscribed before attempting broker connection
-            if (_subscribedSymbols.Count == 0)
+            if (symbols.Count == 0)
             {
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ContinueWith(_ => { });
                 continue;
             }
 
             logger.LogInformation("[CandleAggregator] Starting tick stream for broker {Broker} with {Count} symbols",
-                _brokerName, _subscribedSymbols.Count);
+                broker, symbols.Count);
 
             try
             {
-                await foreach (var tick in brokerFactory.GetStreamClient(_brokerName)
-                    .StreamAsync(_subscribedSymbols, stoppingToken))
+                await foreach (var tick in brokerFactory.GetStreamClient(broker)
+                    .StreamAsync(symbols, stoppingToken))
                 {
                     // Feed is alive — reset backoff and update health monitor
                     backoffSeconds = BackoffInitialSeconds;
-                    healthMonitor.RecordTick(_brokerName);
+                    healthMonitor.RecordTick(broker);
 
                     try
                     {
@@ -82,8 +97,8 @@ public class CandleAggregatorService(
                 }
 
                 // StreamAsync completed without exception — broker closed connection cleanly
-                logger.LogWarning("[CandleAggregator] Broker {Broker} stream ended. Scheduling reconnect.", _brokerName);
-                healthMonitor.RecordDisconnect(_brokerName);
+                logger.LogWarning("[CandleAggregator] Broker {Broker} stream ended. Scheduling reconnect.", broker);
+                healthMonitor.RecordDisconnect(broker);
             }
             catch (OperationCanceledException)
             {
@@ -92,21 +107,21 @@ public class CandleAggregatorService(
             }
             catch (Exception ex)
             {
-                healthMonitor.RecordDisconnect(_brokerName);
+                healthMonitor.RecordDisconnect(broker);
                 logger.LogWarning(ex,
                     "[CandleAggregator] Broker {Broker} stream disconnected. Reconnecting in {Backoff}s (attempt #{Attempts})...",
-                    _brokerName, backoffSeconds, healthMonitor.GetStatus(_brokerName)?.ReconnectAttempts + 1);
+                    broker, backoffSeconds, healthMonitor.GetStatus(broker)?.ReconnectAttempts + 1);
             }
 
             // ── Exponential backoff delay before reconnect ────────────────────
-            healthMonitor.RecordReconnectAttempt(_brokerName);
+            healthMonitor.RecordReconnectAttempt(broker);
             await Task.Delay(TimeSpan.FromSeconds(backoffSeconds), stoppingToken).ContinueWith(_ => { });
 
             // Double backoff, capped at max
             backoffSeconds = Math.Min(backoffSeconds * 2, BackoffMaxSeconds);
 
             if (!stoppingToken.IsCancellationRequested)
-                healthMonitor.RecordReconnect(_brokerName);
+                healthMonitor.RecordReconnect(broker);
         }
 
         logger.LogInformation("[CandleAggregator] Background service stopped.");
@@ -191,10 +206,17 @@ public class CandleAggregatorService(
         }
     }
 
+    /// <summary>
+    /// Called by StrategyInstanceManager when running instances change.
+    /// Both fields updated atomically under _lock to prevent torn reads in ExecuteAsync (#24).
+    /// </summary>
     public void UpdateSubscriptions(IEnumerable<string> brokerTokens, string brokerName)
     {
-        _subscribedSymbols = [..brokerTokens];
-        _brokerName = brokerName;
+        lock (_lock)
+        {
+            _subscribedSymbols = [..brokerTokens];
+            _brokerName = brokerName;
+        }
     }
 
     private static ZonedDateTime GetBarStart(ZonedDateTime tick, string timeframe)
@@ -202,19 +224,19 @@ public class CandleAggregatorService(
         var local = tick.LocalDateTime;
         return timeframe switch
         {
-            "1m" => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, local.Minute, 0)
+            Timeframes.OneMinute     => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, local.Minute, 0)
                 .InZoneLeniently(Ist),
-            "3m" => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 3) * 3, 0)
+            Timeframes.ThreeMinute   => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 3) * 3, 0)
                 .InZoneLeniently(Ist),
-            "5m" => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 5) * 5, 0)
+            Timeframes.FiveMinute    => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 5) * 5, 0)
                 .InZoneLeniently(Ist),
-            "15m" => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 15) * 15, 0)
+            Timeframes.FifteenMinute => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 15) * 15, 0)
                 .InZoneLeniently(Ist),
-            "30m" => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 30) * 30, 0)
+            Timeframes.ThirtyMinute  => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, (local.Minute / 30) * 30, 0)
                 .InZoneLeniently(Ist),
-            "60m" => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, 0, 0)
+            Timeframes.SixtyMinute   => new LocalDateTime(local.Year, local.Month, local.Day, local.Hour, 0, 0)
                 .InZoneLeniently(Ist),
-            "1d" => new LocalDateTime(local.Year, local.Month, local.Day, 9, 15, 0)
+            Timeframes.Daily         => new LocalDateTime(local.Year, local.Month, local.Day, 9, 15, 0)
                 .InZoneLeniently(Ist),
             _ => tick
         };
@@ -223,13 +245,13 @@ public class CandleAggregatorService(
     private static ZonedDateTime GetBarEnd(ZonedDateTime barStart, string timeframe)
         => timeframe switch
         {
-            "1m" => barStart.Plus(Duration.FromMinutes(1)),
-            "3m" => barStart.Plus(Duration.FromMinutes(3)),
-            "5m" => barStart.Plus(Duration.FromMinutes(5)),
-            "15m" => barStart.Plus(Duration.FromMinutes(15)),
-            "30m" => barStart.Plus(Duration.FromMinutes(30)),
-            "60m" => barStart.Plus(Duration.FromMinutes(60)),
-            "1d" => barStart.Date.At(new LocalTime(15, 30, 0)).InZoneLeniently(Ist),
+            Timeframes.OneMinute     => barStart.Plus(Duration.FromMinutes(1)),
+            Timeframes.ThreeMinute   => barStart.Plus(Duration.FromMinutes(3)),
+            Timeframes.FiveMinute    => barStart.Plus(Duration.FromMinutes(5)),
+            Timeframes.FifteenMinute => barStart.Plus(Duration.FromMinutes(15)),
+            Timeframes.ThirtyMinute  => barStart.Plus(Duration.FromMinutes(30)),
+            Timeframes.SixtyMinute   => barStart.Plus(Duration.FromMinutes(60)),
+            Timeframes.Daily         => barStart.Date.At(new LocalTime(15, 30, 0)).InZoneLeniently(Ist),
             _ => barStart.Plus(Duration.FromMinutes(1))
         };
 

@@ -36,6 +36,7 @@ public class GetScenariosQueryHandler(
         effectiveParamsJson,
         s.AllocatedCapital,
         s.Status.ToString(),
+        s.Version,
         s.LastBacktestRunId,
         s.CreatedAt.ToDateTimeOffset(),
         s.UpdatedAt.ToDateTimeOffset());

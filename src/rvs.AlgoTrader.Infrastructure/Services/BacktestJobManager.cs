@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 
@@ -26,8 +27,8 @@ public class BacktestJobManager(
 
     public Task<string> EnqueueAsync(BacktestRequestDto dto, CancellationToken ct)
     {
-        var jobId = Guid.NewGuid().ToString("N")[..12];
-        var job   = new BacktestJob(jobId);
+        var jobId = Guid.NewGuid().ToString("N")[..TradingDefaults.JobIdLength];
+        var job   = new BacktestJob(jobId) { ScenarioId = dto.ScenarioId };
         _jobs[jobId] = job;
 
         logger.LogInformation("[BacktestJob] Enqueued job {JobId} — {Strategy}/{Symbol}/{Tf}",
@@ -62,7 +63,7 @@ public class BacktestJobManager(
 
     public Task<string> EnqueueScenarioAsync(Guid scenarioId, BacktestRequestDto mergedRequest, CancellationToken ct)
     {
-        var jobId = Guid.NewGuid().ToString("N")[..12];
+        var jobId = Guid.NewGuid().ToString("N")[..TradingDefaults.JobIdLength];
         var job   = new BacktestJob(jobId) { ScenarioId = scenarioId };
         _jobs[jobId] = job;
 
@@ -247,13 +248,26 @@ public class BacktestJobManager(
             GrossPnl: t.GrossPnl,
             NetPnl: t.NetPnl,
             EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
-            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o")
+            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o"),
+            Mae: t.Direction == "BUY"
+                ? Math.Max(0m, t.EntryPrice - t.WorstPrice)
+                : Math.Max(0m, t.WorstPrice - t.EntryPrice),
+            Mfe: t.Direction == "BUY"
+                ? Math.Max(0m, t.BestPrice - t.EntryPrice)
+                : Math.Max(0m, t.EntryPrice - t.BestPrice)
         )).ToList(),
         MonthlyBreakdown: r.MonthlyBreakdown.Select(m => new BacktestMonthlyBreakdownDto(m.Year, m.Month, m.Pnl, m.Trades, m.WinRate)).ToList(),
         YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList(),
         ChartSample: r.ChartSample?.Select(MapToChartBarDto).ToList(),
         CircuitBreakerHit: r.CircuitBreakerHit,
-        CircuitBreakerReason: r.CircuitBreakerReason);
+        CircuitBreakerReason: r.CircuitBreakerReason,
+        VaR95: r.VaR95,
+        CVaR95: r.CVaR95,
+        OmegaRatio: r.OmegaRatio,
+        Skewness: r.Skewness,
+        Kurtosis: r.Kurtosis,
+        DeploymentRating: r.DeploymentRating,
+        DeploymentRationale: r.DeploymentRationale);
 
     private static BacktestChartBarDto MapToChartBarDto(BacktestChartBar b) => new(
         TimeMs: b.TimeMs,
@@ -270,7 +284,9 @@ public class BacktestJobManager(
 internal sealed class BacktestJob(string jobId)
 {
     public string  JobId          { get; } = jobId;
-    /// <summary>Set when this job was triggered by EnqueueScenarioAsync.</summary>
+    /// <summary>Captured at enqueue time so status polls show a consistent StartedAt.</summary>
+    public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+    /// <summary>Set when this job was triggered by EnqueueScenarioAsync or when ScenarioId is provided in BacktestRequestDto.</summary>
     public Guid?   ScenarioId     { get; init; }
     public BacktestJobStatus Status { get; set; } = BacktestJobStatus.Queued;
     public decimal ProgressPct   { get; set; } = 0m;
@@ -291,5 +307,6 @@ internal sealed class BacktestJob(string jobId)
         TradesSoFar: TradesSoFar,
         CurrentEquity: CurrentEquity,
         Error: Error,
-        Result: Status is BacktestJobStatus.Completed or BacktestJobStatus.Failed ? Result : null);
+        Result: Status is BacktestJobStatus.Completed or BacktestJobStatus.Failed ? Result : null,
+        StartedAt: StartedAt);
 }

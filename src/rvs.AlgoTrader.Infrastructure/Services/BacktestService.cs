@@ -127,10 +127,28 @@ public class BacktestService(
             GrossPnl: t.GrossPnl,
             NetPnl: t.NetPnl,
             EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
-            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o")
+            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o"),
+            Mae: t.Direction == "BUY"
+                ? Math.Max(0m, t.EntryPrice - t.WorstPrice)
+                : Math.Max(0m, t.WorstPrice - t.EntryPrice),
+            Mfe: t.Direction == "BUY"
+                ? Math.Max(0m, t.BestPrice - t.EntryPrice)
+                : Math.Max(0m, t.EntryPrice - t.BestPrice)
         )).ToList(),
         MonthlyBreakdown: r.MonthlyBreakdown.Select(m => new BacktestMonthlyBreakdownDto(m.Year, m.Month, m.Pnl, m.Trades, m.WinRate)).ToList(),
-        YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList());
+        YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList(),
+        ChartSample: r.ChartSample?.Select(b => new BacktestChartBarDto(
+            b.TimeMs, b.Open, b.High, b.Low, b.Close, b.Volume,
+            b.Signal, b.SignalPrice, b.StopLoss, b.TakeProfit, b.Indicators)).ToList(),
+        CircuitBreakerHit: r.CircuitBreakerHit,
+        CircuitBreakerReason: r.CircuitBreakerReason,
+        VaR95: r.VaR95,
+        CVaR95: r.CVaR95,
+        OmegaRatio: r.OmegaRatio,
+        Skewness: r.Skewness,
+        Kurtosis: r.Kurtosis,
+        DeploymentRating: r.DeploymentRating,
+        DeploymentRationale: r.DeploymentRationale);
 }
 
 /// <summary>

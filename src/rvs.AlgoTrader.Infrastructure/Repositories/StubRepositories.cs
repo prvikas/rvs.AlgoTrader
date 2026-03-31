@@ -129,11 +129,13 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
     }
 
     public async Task<(IReadOnlyList<BacktestResultDto> Items, int Total)> GetPagedAsync(
-        Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct)
+        Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct, string? strategyName = null)
     {
-        // BacktestRun doesn't track StrategyInstanceId — return all, paged
-        var total = await db.BacktestRuns.CountAsync(ct);
-        var items = await db.BacktestRuns
+        var q = db.BacktestRuns.AsQueryable();
+        if (!string.IsNullOrEmpty(strategyName))
+            q = q.Where(r => r.StrategyName == strategyName);
+        var total = await q.CountAsync(ct);
+        var items = await q
             .OrderByDescending(r => r.RanAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
             .ToListAsync(ct);
@@ -202,7 +204,11 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
                 result.SortinoRatio, result.DailySharpe, result.MonthlySharpe,
                 result.MonthlyWinRate, result.DrawdownRecoveryBars, result.MaxLots,
                 MonthlyBreakdown = result.MonthlyBreakdown ?? [],
-                YearlyBreakdown  = result.YearlyBreakdown  ?? []
+                YearlyBreakdown  = result.YearlyBreakdown  ?? [],
+                result.VaR95, result.CVaR95, result.OmegaRatio,
+                result.Skewness, result.Kurtosis,
+                result.DeploymentRating, result.DeploymentRationale,
+                result.CircuitBreakerHit, result.CircuitBreakerReason
             }),
             RanAt = NodaTime.SystemClock.Instance.GetCurrentInstant()
         };
@@ -223,6 +229,10 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
 
         decimal sortinoRatio = 0, dailySharpe = 0, monthlySharpe = 0, monthlyWinRate = 0;
         int ddRecoveryBars = 0, maxLots = 0;
+        decimal var95 = 0, cVar95 = 0, omegaRatio = 0, skewness = 0, kurtosis = 0;
+        string deploymentRating = "", deploymentRationale = "";
+        bool circuitBreakerHit = false;
+        string? circuitBreakerReason = null;
         IReadOnlyList<BacktestMonthlyBreakdownDto>? monthlyBreakdown = null;
         IReadOnlyList<BacktestYearlyBreakdownDto>? yearlyBreakdown = null;
         if (!string.IsNullOrEmpty(r.ExtendedStatsJson))
@@ -240,6 +250,15 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
                     monthlyBreakdown = System.Text.Json.JsonSerializer.Deserialize<List<BacktestMonthlyBreakdownDto>>(mb.GetRawText());
                 if (ext.TryGetProperty("YearlyBreakdown", out var yb))
                     yearlyBreakdown = System.Text.Json.JsonSerializer.Deserialize<List<BacktestYearlyBreakdownDto>>(yb.GetRawText());
+                if (ext.TryGetProperty("VaR95", out var v95)) var95 = v95.GetDecimal();
+                if (ext.TryGetProperty("CVaR95", out var cv95)) cVar95 = cv95.GetDecimal();
+                if (ext.TryGetProperty("OmegaRatio", out var om)) omegaRatio = om.GetDecimal();
+                if (ext.TryGetProperty("Skewness", out var sk)) skewness = sk.GetDecimal();
+                if (ext.TryGetProperty("Kurtosis", out var ku)) kurtosis = ku.GetDecimal();
+                if (ext.TryGetProperty("DeploymentRating", out var dr)) deploymentRating = dr.GetString() ?? "";
+                if (ext.TryGetProperty("DeploymentRationale", out var drat)) deploymentRationale = drat.GetString() ?? "";
+                if (ext.TryGetProperty("CircuitBreakerHit", out var cbh)) circuitBreakerHit = cbh.GetBoolean();
+                if (ext.TryGetProperty("CircuitBreakerReason", out var cbr)) circuitBreakerReason = cbr.GetString();
             }
             catch { /* ignore */ }
         }
@@ -280,7 +299,16 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
             Trades: trades,
             MonthlyBreakdown: monthlyBreakdown,
             YearlyBreakdown: yearlyBreakdown,
-            ScenarioId: r.ScenarioId);
+            ScenarioId: r.ScenarioId,
+            VaR95: var95,
+            CVaR95: cVar95,
+            OmegaRatio: omegaRatio,
+            Skewness: skewness,
+            Kurtosis: kurtosis,
+            DeploymentRating: deploymentRating,
+            DeploymentRationale: deploymentRationale,
+            CircuitBreakerHit: circuitBreakerHit,
+            CircuitBreakerReason: circuitBreakerReason);
     }
 }
 

@@ -60,12 +60,13 @@ public class BacktestEngineTests
     [Fact]
     public void MonteCarloSimulator_P95DrawdownExceedsMedian()
     {
-        var simulator = new MonteCarloSimulator(NullLogger<MonteCarloSimulator>.Instance, seed: 42);
+        var simulator = new MonteCarloSimulator(NullLogger<MonteCarloSimulator>.Instance);
         var trades = Enumerable.Range(0, 20).Select(i =>
             MakeTrade("BUY", 1, 100m, i % 3 == 0 ? 105m : 97m, i % 3 == 0 ? 5m : -3m,
                 i % 3 == 0 ? "TAKE_PROFIT" : "STOP_LOSS")).ToList();
+        var netPnls = trades.Select(t => t.NetPnl).ToList();
 
-        var result = simulator.Run(trades, 100_000m, simulations: 500);
+        var result = simulator.Run(netPnls, 100_000m, simulations: 500, seed: 42);
 
         result.DrawdownP95.Should().BeGreaterThanOrEqualTo(result.DrawdownP50,
             because: "P95 drawdown should be worse than median");

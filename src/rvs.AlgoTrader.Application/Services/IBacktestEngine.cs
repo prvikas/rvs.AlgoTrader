@@ -130,7 +130,15 @@ public record BacktestResult(
     IReadOnlyList<BacktestChartBar>? ChartSample = null,
     // Circuit breaker: set when backtest is stopped early due to capital loss
     bool CircuitBreakerHit = false,
-    string? CircuitBreakerReason = null)
+    string? CircuitBreakerReason = null,
+    // ── Advanced risk analytics (#89) ─────────────────────────────────────────
+    decimal VaR95 = 0m,
+    decimal CVaR95 = 0m,
+    decimal OmegaRatio = 0m,
+    decimal Skewness = 0m,
+    decimal Kurtosis = 0m,
+    string DeploymentRating = "",
+    string? DeploymentRationale = null)
 {
     public static BacktestResult Failed(string error) => new(
         false, "", "", "", LocalDate.MinIsoValue, LocalDate.MinIsoValue,
@@ -208,5 +216,6 @@ public record BacktestTrade(
     string ExitReason,
     // ── Trailing stop state (managed by BacktestEngine, not strategy) ─────
     decimal InitialStopLoss = 0m,   // original SL at entry — never changes, used to compute R
-    decimal BestPrice      = 0m,    // running high (longs) or running low (shorts) since entry
+    decimal BestPrice      = 0m,    // running high (longs) or running low (shorts) since entry — used for MFE
+    decimal WorstPrice     = 0m,    // running low (longs) or running high (shorts) since entry — used for MAE
     bool TrailActive       = false); // true once trailing has been activated
