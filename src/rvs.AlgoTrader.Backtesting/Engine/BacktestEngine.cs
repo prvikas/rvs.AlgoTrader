@@ -137,6 +137,15 @@ public class BacktestEngine(
                     var drawdown = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
                     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
 
+                    // ── Bankruptcy guard: stop if equity reaches zero or below ────
+                    if (equity <= 0)
+                    {
+                        circuitBreakerHit    = true;
+                        circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt. Backtest stopped.";
+                        logger.LogWarning("[Backtest] Bankruptcy at bar {I}: {Reason}", i, circuitBreakerReason);
+                        break;
+                    }
+
                     // ── Circuit breaker: stop early if equity falls below the floor ──
                     if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
                     {
@@ -587,9 +596,10 @@ public class BacktestEngine(
         var m4       = returnCount > 0 ? returns.Select(r => Math.Pow(r - avgReturn, 4)).Average() : 0;
         var kurtosis = stdDev < 1e-12 ? 0m : (decimal)(m4 / Math.Pow(stdDev, 4)) - 3m;
 
-        // Deployment readiness rating
+        // Deployment readiness rating: use dailySharpe (annualised daily P&L series × √252)
+        // because per-trade sharpe is un-annualised and not comparable to industry thresholds.
         var (deployRating, deployRationale) = ComputeDeploymentRating(
-            sharpe, maxDrawdown, winRate, trades.Count, sortino);
+            dailySharpe, maxDrawdown, winRate, trades.Count, sortino);
 
         return new BacktestResult(
             Success: true,

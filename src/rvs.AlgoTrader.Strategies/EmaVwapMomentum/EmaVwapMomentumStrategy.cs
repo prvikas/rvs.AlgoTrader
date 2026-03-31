@@ -1,4 +1,5 @@
 using System.Text.Json;
+using NodaTime;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
@@ -50,6 +51,11 @@ namespace rvs.AlgoTrader.Strategies.EmaVwapMomentum;
 /// </summary>
 public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
 {
+    // ClosedCandle.OpenTime is ZonedDateTime in UTC (constructed with DateTimeZone.Utc in
+    // CandleRepository.ToClosedCandle). All IST-sensitive operations must re-zone to IST
+    // explicitly — never use .LocalDateTime or .Date directly on an Instant/ZonedDateTime.
+    private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
+
     public string Name => "EmaVwapMomentum";
 
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
@@ -105,9 +111,9 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
 
         // ── 2. Session detection & intraday time filters ──────────────────
         // For daily charts todayStart stays at 0 — logic is harmless.
-        var today = current.OpenTime.Date;
+        var today = current.OpenTime.ToInstant().InZone(Ist).Date;
         int todayStart = candles.Count - 1;
-        while (todayStart > 0 && candles[todayStart - 1].OpenTime.Date == today)
+        while (todayStart > 0 && candles[todayStart - 1].OpenTime.ToInstant().InZone(Ist).Date == today)
             todayStart--;
         int barsIntoSession = candles.Count - 1 - todayStart;
 
@@ -121,8 +127,8 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
         // NoTradeAfterMinutes: minutes from midnight (e.g. 900 = 15:00 IST)
         if (config.NoTradeAfterMinutes > 0)
         {
-            var barTime    = current.OpenTime.LocalDateTime.TimeOfDay;
-            var barMinutes = barTime.Hour * 60 + barTime.Minute;
+            var barIst     = current.OpenTime.ToInstant().InZone(Ist).LocalDateTime;
+            var barMinutes = barIst.Hour * 60 + barIst.Minute;
             if (barMinutes >= config.NoTradeAfterMinutes)
                 return Task.FromResult(SignalResult.Hold(
                     $"Past no-trade cutoff ({config.NoTradeAfterMinutes / 60}:{config.NoTradeAfterMinutes % 60:D2} IST)",
@@ -310,16 +316,17 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
         if (candles.Count == 0) return [];
         var result = new decimal[candles.Count];
         decimal cumPV = 0, cumVol = 0;
-        var sessionDate = candles[0].OpenTime.Date;
+        var sessionDate = candles[0].OpenTime.ToInstant().InZone(Ist).Date;
         for (int i = 0; i < candles.Count; i++)
         {
             var c = candles[i];
-            // Reset at each new session day
-            if (c.OpenTime.Date != sessionDate)
+            // Reset at each new IST session day
+            var candleDate = c.OpenTime.ToInstant().InZone(Ist).Date;
+            if (candleDate != sessionDate)
             {
                 cumPV = 0;
                 cumVol = 0;
-                sessionDate = c.OpenTime.Date;
+                sessionDate = candleDate;
             }
             var tp = (c.High + c.Low + c.Close) / 3m;
             cumPV  += tp * c.Volume;

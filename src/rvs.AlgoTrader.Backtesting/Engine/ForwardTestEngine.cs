@@ -119,8 +119,9 @@ public class ForwardTestEngine(
         if (!fillResult.Filled || fillResult.FillPrice == null) return;
 
         var entryPrice = fillResult.FillPrice.Value;
+        var lotSize    = instance.LotSize > 0 ? instance.LotSize : 1;
         state.OpenTrade = new ForwardTestOpenTrade(
-            signal.Signal.ToString().ToUpperInvariant(), 1, entryPrice,
+            signal.Signal.ToString().ToUpperInvariant(), lotSize, entryPrice,
             signal.StopLoss ?? entryPrice * 0.99m,
             signal.TakeProfit ?? entryPrice * 1.02m,
             clock.NowInstant());
@@ -185,7 +186,19 @@ public class ForwardTestEngine(
 
         if (trade.Direction == "BUY")
         {
-            if (candle.Low <= trade.StopLoss)
+            if (candle.Open <= trade.StopLoss)
+            // Gap-fill: bar opened below SL — fill at open
+            { exitPrice = candle.Open; reason = "STOP_LOSS"; }
+            else if (candle.Low <= trade.StopLoss && candle.High >= trade.TakeProfit)
+            {
+                // Both SL and TP touched in same bar — midpoint heuristic
+                var mid = (candle.High + candle.Low) / 2m;
+                if (mid >= trade.TakeProfit)
+                { exitPrice = trade.TakeProfit; reason = "TAKE_PROFIT"; }
+                else
+                { exitPrice = trade.StopLoss; reason = "STOP_LOSS"; }
+            }
+            else if (candle.Low <= trade.StopLoss)
             { exitPrice = trade.StopLoss; reason = "STOP_LOSS"; }
             else if (candle.High >= trade.TakeProfit)
             { exitPrice = trade.TakeProfit; reason = "TAKE_PROFIT"; }
@@ -193,7 +206,18 @@ public class ForwardTestEngine(
         }
         else // SELL / short
         {
-            if (candle.High >= trade.StopLoss)
+            if (candle.Open >= trade.StopLoss)
+            // Gap-fill: bar opened above SL
+            { exitPrice = candle.Open; reason = "STOP_LOSS"; }
+            else if (candle.High >= trade.StopLoss && candle.Low <= trade.TakeProfit)
+            {
+                var mid = (candle.High + candle.Low) / 2m;
+                if (mid <= trade.TakeProfit)
+                { exitPrice = trade.TakeProfit; reason = "TAKE_PROFIT"; }
+                else
+                { exitPrice = trade.StopLoss; reason = "STOP_LOSS"; }
+            }
+            else if (candle.High >= trade.StopLoss)
             { exitPrice = trade.StopLoss; reason = "STOP_LOSS"; }
             else if (candle.Low <= trade.TakeProfit)
             { exitPrice = trade.TakeProfit; reason = "TAKE_PROFIT"; }
