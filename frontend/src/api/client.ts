@@ -851,3 +851,75 @@ export interface StrategyParamDef {
   hint?: string
   options?: StrategyParamOption[]
 }
+
+// ── Trade Journal ────────────────────────────────────────────────────────────
+
+export interface TradeJournalEntry {
+  id: string
+  strategyInstanceId?: string
+  sessionId?: string
+  symbol: string
+  direction: string
+  quantity: number
+  entryPrice: number
+  exitPrice?: number
+  entryTime: string
+  exitTime?: string
+  grossPnl?: number
+  netPnl?: number
+  initialRisk?: number
+  rMultiple?: number
+  mae?: number
+  mfe?: number
+  holdingDays?: number
+  taxClassification?: string
+  exitReason?: string
+  entryReason?: string
+  notes?: string
+  tags?: string[]
+  source?: string
+  createdAt: string
+}
+
+export interface PnlByDimension {
+  dimension: string
+  label: string
+  grossPnl: number
+  netPnl: number
+  tradeCount: number
+  winRate: number
+}
+
+export interface PnlAttribution {
+  bySymbol: PnlByDimension[]
+  byMonth: PnlByDimension[]
+  byDayOfWeek: PnlByDimension[]
+  byExitType: PnlByDimension[]
+}
+
+export interface TaxLotRow {
+  symbol: string
+  openDate: string
+  closeDate: string
+  quantity: number
+  buyPrice: number
+  sellPrice: number
+  grossPnl: number
+  classification: string
+  holdingDays: number
+}
+
+export const tradeJournalApi = {
+  list: (params?: { page?: number; pageSize?: number; symbol?: string; source?: string; from?: string; to?: string }) =>
+    apiClient.get<ApiResponse<PagedResult<TradeJournalEntry>>>('/tradejournal', { params }),
+  get: (id: string) =>
+    apiClient.get<ApiResponse<TradeJournalEntry>>(`/tradejournal/${id}`),
+  updateNotes: (id: string, notes: string, tags?: string[]) =>
+    apiClient.patch<ApiResponse<boolean>>(`/tradejournal/${id}/notes`, { notes, tags }),
+  getAttribution: (params?: { from?: string; to?: string; strategyInstanceId?: string }) =>
+    apiClient.get<ApiResponse<PnlAttribution>>('/tradejournal/attribution', { params }),
+  getTaxLots: (fy: string) =>
+    apiClient.get<ApiResponse<TaxLotRow[]>>('/tradejournal/tax-lots', { params: { fy } }),
+  exportTaxLots: (fy: string) =>
+    apiClient.get(`/tradejournal/tax-lots/export`, { params: { fy }, responseType: 'blob' }),
+}

@@ -7,19 +7,14 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Solution structure | PARTIAL | repo, backend, frontend, tests, Claude kit |
 | Claude docs | DONE | compressed CLAUDE.md, ANTI_PATTERNS.md extracted |
 | Strategy abstraction | DONE | StrategyFactory + GetSchema(); 10 strategies registered (3 equity + 7 options) |
-| STRAT-001 VCP Swing | DONE | #77: SMA200 trend filter, pivot-based contraction detection, support/breakout entry, scaling-ready |
-| STRAT-002 Fib Option Spread | DONE | #78: Fibonacci 0.618 zone entry, IV filter, put/call credit spread direction by trend |
-| STRAT-003 Intraday PCR | DONE | #79: PCR bias, VWAP entry, session window 09:15–11:00, gap defer to 13:00, delta-targeted strike |
-| Iron Condor | DONE | #80: 4-leg (short call spread + short put spread), IV range + Bollinger range-bound filter |
-| Short Straddle/Strangle | DONE | #81: ATM straddle or OTM strangle, mandatory MaxLossMultiple safety gate per spec |
-| Calendar Spread | DONE | #82: sell near-weekly + buy far-monthly ATM, IV filter, call/put by chain bias |
+| Strategies (6) | DONE | STRAT-001 VCP (#77), STRAT-002 Fib spread (#78), STRAT-003 PCR (#79), Iron Condor (#80), Straddle/Strangle (#81), Calendar (#82) |
 | Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
-| Backtest engine | PARTIAL | async jobs, SignalR streaming, extended stats, chart markers, PDF report, fullscreen chart; **BUGS**: position sizing ignores entry price scale (over-leverage on tight stops); entry costs not deducted from equity; trailing stop can activate on bar 1; see REQUIREMENTS_DELTA |
+| Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report; position sizing fixed (risk/stop capped at 25% equity); entry+exit costs both deducted |
 | Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007; Version field (migration 015) auto-increments on param change |
-| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–015 applied (012: option_iv_history + spread tables, 013: currency + fx_rates, 014: execution_mode column, 015: scenario version) |
-| FluentValidation | DONE | #17: ScenarioCommandValidators — Create/Update/Promote with JSON, capital, length rules |
-| DTOs in controllers | DONE | #16: inline DTOs moved to Application/DTOs/{Auth,Broker,Settings,HistoricalData,MarketData} |
-| Stub repositories | DONE | #18: 7 real EF Core repos; stubs removed from production DI; field-encryption service wired |
+| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–016 applied (016: trade_journal_entries with R-multiple, MAE/MFE, tax classification) |
+| Trade Journal | DONE | TradeJournalEntry entity, EF config, EfTradeJournalRepository, P&L attribution by symbol/month/DOW/exit-type, TaxLotReportService (ITR-3), TradeJournalController; frontend TradeJournalPage + PortfolioAnalysisPage (bar charts + tax lot export) |
+| Health checks | DONE | DbHealthCheck (SELECT 1), RedisHealthCheck (PING Degraded not Unhealthy), /health (JSON report) + /healthz (liveness) endpoints registered in Program.cs |
+| Infra quality | DONE | FluentValidation (#17), DTOs extracted (#16), EF Core repos (#18), BrokerNames constants (#27) |
 | Market breadth | DONE | #99: MarketBreadthSnapshot entity, IMarketBreadthService, single-SQL CTE computation, BreadthCalculatorJob, MarketBreadthController |
 | Event calendar | DONE | #90: MarketEvent entity, IEventCalendarService, F&O expiry seeder, EventCalendarController |
 | Historical data mgr | DONE | #91: IHistoricalDataManager, quality reports, gap detection, CSV bulk import, DataManagerController |
@@ -45,11 +40,10 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Portfolio risk manager | DONE | #85/#86: PortfolioRiskManager, 6 controls, auto kill-switch on daily loss limit, Redis-backed config |
 | Paper trading | DONE | #92: ExecutionMode enum on StrategyInstance, IPaperOrderSimulator, 5bps slippage, persists to forward_test_trades |
 | Trailing stop manager | DONE | #93: ITrailingStopManager, all 7 StopType variants, ratchet enforcement, TimeStop bar-counting |
-| Scaling/pyramid manager | DONE | #100: IScalingManager, ScalingMode/TrancheTrigger enums, weighted avg price, EmaBounce/PriceMoveUp/Down triggers |
-| Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order check not yet integrated into LiveExecutionEngine |
-| UI workflow | PARTIAL | top-nav layout, MetricCards, right-side drawers, backtest replay chart; strategy list dynamic from API; scenario list shows inline Return/Sharpe/Drawdown badges from compare endpoint; strategy creation form missing parameter schema fetch + default population |
+| Scaling/pyramid manager | DONE | IScalingManager, ScalingMode/TrancheTrigger enums, EmaBounce/PriceMoveUp/Down triggers |
+| Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order not integrated into LiveExecutionEngine |
+| UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
-| Tests | PARTIAL | PriceActionBreakout unit tests pass; SignalType enum comparisons fixed; integration factory wired |
+| Tests | PARTIAL | PriceActionBreakout unit tests pass; integration factory wired |
 
-## Update rule
-After each meaningful task: revise affected rows only, add evidence-based notes, do not mark DONE without code support.
+## Update rule: revise affected rows only; do not mark DONE without code support.

@@ -108,7 +108,7 @@ export default function ScenariosPanel({
         initialCapital:    runConfig.capital,
         scenarioIds:       ids,
       }),
-    onSuccess: (resp, ids) => {
+    onSuccess: (resp, _ids) => {
       const jobs: Record<string, string> = {}
       const results = resp.data?.data ?? []
       results.forEach(r => { jobs[r.scenarioId] = r.jobId })

@@ -20,6 +20,9 @@ import { StrategyLabPage } from './StrategyLabPage'
 import { UniversePage } from './UniversePage'
 import { InstrumentTypesPage } from './InstrumentTypesPage'
 import { MasterDataRefreshPage } from './MasterDataRefreshPage'
+import { TradeJournalPage } from './TradeJournalPage'
+import { PortfolioAnalysisPage } from './PortfolioAnalysisPage'
+import { RiskDashboardPage } from './RiskDashboardPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
@@ -28,7 +31,7 @@ import { useBacktestSignalR } from '../hooks/useBacktestSignalR'
 import { BacktestReplayChart } from '../components/Backtest/BacktestReplayChart'
 import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../styles/tokens'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk'
 
 // Descriptions for known strategies; unknown ones registered on backend show name only.
 const STRATEGY_DESCS: Record<string, string> = {
@@ -52,7 +55,8 @@ export function Dashboard() {
   const activeBrokerName = localStorage.getItem('active_broker') || 'MStock'
 
   // ── Data Queries ──────────────────────────────────────────────────────────
-  const { data: registeredStrategies } = useQuery({
+  // Prefetch registered strategies so they're cached for child pages
+  useQuery({
     queryKey: ['registered-strategies'],
     queryFn: () => strategiesApi.getRegisteredNames().then(r => r.data.data ?? []),
     staleTime: 5 * 60 * 1000, // rarely changes — cache for 5 min
@@ -97,6 +101,9 @@ export function Dashboard() {
     { id: 'universe', label: 'Universe' },
     { id: 'instrument-types', label: 'Inst. Types' },
     { id: 'master-data', label: 'Master Data' },
+    { id: 'journal', label: 'Journal' },
+    { id: 'portfolio-analysis', label: 'P&L Analysis' },
+    { id: 'risk', label: 'Risk' },
     { id: 'settings', label: 'Settings' },
   ]
 
@@ -216,6 +223,9 @@ export function Dashboard() {
         {activePage === 'universe' && <UniversePage />}
         {activePage === 'instrument-types' && <InstrumentTypesPage />}
         {activePage === 'settings' && <SettingsPage />}
+        {activePage === 'journal' && <TradeJournalPage />}
+        {activePage === 'portfolio-analysis' && <PortfolioAnalysisPage />}
+        {activePage === 'risk' && <RiskDashboardPage />}
       </main>
 
     </div>
