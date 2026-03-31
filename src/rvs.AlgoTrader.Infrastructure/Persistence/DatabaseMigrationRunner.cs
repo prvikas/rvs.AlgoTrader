@@ -306,6 +306,18 @@ public class DatabaseMigrationRunner(
                 "broker_sessions table"
             ),
 
+            // ── 009_ScenarioCapital ────────────────────────────────────────────
+            (
+                "009_ScenarioCapital.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'strategy_scenarios'
+                  AND column_name  = 'allocated_capital';
+                """,
+                "strategy_scenarios.allocated_capital"
+            ),
+
             // ── 016_TradeJournal ───────────────────────────────────────────────
             (
                 "016_TradeJournal.sql",
@@ -315,6 +327,19 @@ public class DatabaseMigrationRunner(
                   AND table_name   = 'trade_journal_entries';
                 """,
                 "trade_journal_entries table"
+            ),
+
+            // ── 017_QuantityBigInt ─────────────────────────────────────────────
+            (
+                "017_QuantityBigInt.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'orders'
+                  AND column_name  = 'quantity'
+                  AND data_type    = 'bigint';
+                """,
+                "orders.quantity BIGINT"
             ),
         };
 
@@ -410,7 +435,11 @@ public class DatabaseMigrationRunner(
             var pk = cmd.CreateParameter(); pk.ParameterName = "@k"; pk.Value = key;   cmd.Parameters.Add(pk);
             var pv = cmd.CreateParameter(); pv.ParameterName = "@v"; pv.Value = value; cmd.Parameters.Add(pv);
             try { await cmd.ExecuteNonQueryAsync(ct); }
-            catch { /* app_config may not exist yet on very first run — migrations create it */ }
+            catch (Exception ex) when (ex.Message.Contains("app_config") || ex.Message.Contains("does not exist"))
+            {
+                // app_config table does not exist yet on very first run;
+                // migrations will create it and the seed will succeed on next startup.
+            }
             cmd.Parameters.Clear();
         }
     }
