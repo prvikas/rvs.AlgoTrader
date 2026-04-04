@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { StrategyInstance, strategiesApi, scenariosApi, brokerApi, BrokerPosition, CreateStrategyCommand } from '../../api/client'
+import { StrategyInstance, strategiesApi, scenariosApi, brokerApi, BrokerPosition, CreateStrategyCommand, approvalApi } from '../../api/client'
 import { formatInr } from '../../utils/datetime'
 import { C } from '../../styles/tokens'
 import ScenariosPanel from './ScenariosPanel'
@@ -327,6 +327,169 @@ function LiveConfirmModal({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Approval Drawer
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [notes, setNotes] = useState('')
+  const [revokeReason, setRevokeReason] = useState('')
+
+  const { data: checksData, isLoading: checksLoading } = useQuery({
+    queryKey: ['approval-checks', instance.id],
+    queryFn: () => approvalApi.getChecks(instance.id).then(r => r.data.data!),
+  })
+
+  const { data: activeApproval } = useQuery({
+    queryKey: ['approval-status', instance.id],
+    queryFn: () => approvalApi.getStatus(instance.id).then(r => r.data.data ?? null),
+  })
+
+  const approveMutation = useMutation({
+    mutationFn: () => approvalApi.approve(instance.id, notes || undefined),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['approval-status', instance.id] })
+      qc.invalidateQueries({ queryKey: ['approval-checks', instance.id] })
+      onClose()
+    },
+  })
+
+  const revokeMutation = useMutation({
+    mutationFn: () => approvalApi.revoke(instance.id, activeApproval!.id, revokeReason),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['approval-status', instance.id] })
+      onClose()
+    },
+  })
+
+  const pct = (v?: number) => v != null ? `${(v * 100).toFixed(1)}%` : '—'
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 299 }} />
+      <div style={{
+        position: 'fixed', top: 36, right: 0, bottom: 0, width: 520,
+        background: C.surface, borderLeft: `1px solid ${C.border3}`,
+        zIndex: 300, overflowY: 'auto', padding: '16px 20px',
+        boxShadow: '-8px 0 32px rgba(0,0,0,0.6)',
+        display: 'flex', flexDirection: 'column', gap: 12,
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: `1px solid ${C.border3}` }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Approval Gate — {instance.name}
+          </span>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: C.textSub }}>✕</button>
+        </div>
+
+        {/* Current status */}
+        {activeApproval ? (
+          <div style={{ background: '#14532d', border: `1px solid #16a34a44`, borderRadius: 6, padding: '10px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#86efac', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+              Active Approval
+            </div>
+            <div style={{ fontSize: 12, color: C.text }}>
+              Approved by <strong>{activeApproval.approvedBy}</strong> on{' '}
+              {new Date(activeApproval.createdAt).toLocaleString()}
+            </div>
+            {activeApproval.approvalNotes && (
+              <div style={{ fontSize: 12, color: C.textSub, marginTop: 4 }}>Notes: {activeApproval.approvalNotes}</div>
+            )}
+          </div>
+        ) : (
+          <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 6, padding: '10px 14px', fontSize: 12, color: '#fca5a5' }}>
+            No active approval. This strategy will NOT place real orders until approved.
+          </div>
+        )}
+
+        {/* Automated check results */}
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.textSub, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Automated Checks
+        </div>
+        {checksLoading ? (
+          <p style={{ color: C.textSub, fontSize: 12, margin: 0 }}>Running checks…</p>
+        ) : checksData ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {[
+              { label: 'CAGR', value: pct(checksData.cagr), pass: (checksData.cagr ?? 0) >= 0.20 },
+              { label: 'Max Drawdown', value: pct(checksData.drawdown), pass: (checksData.drawdown ?? 1) <= 0.20 },
+              { label: 'Fwd Test Days', value: checksData.forwardTestDays != null ? `${checksData.forwardTestDays}d` : '—', pass: (checksData.forwardTestDays ?? 0) >= 15 },
+              { label: 'Fwd Win Rate', value: pct(checksData.forwardWinRate), pass: (checksData.forwardWinRate ?? 0) >= 0.40 },
+            ].map(({ label, value, pass }) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.surface2, borderRadius: 4, padding: '6px 10px' }}>
+                <span style={{ fontSize: 12, color: C.textSub }}>{label}</span>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: pass ? C.green : C.red }}>{pass ? 'PASS' : 'FAIL'}</span>
+                </div>
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: checksData.automatedChecksPassed ? C.green : C.red, fontWeight: 700, textAlign: 'right' }}>
+              {checksData.automatedChecksPassed ? 'All automated checks passed' : `${checksData.failedChecks.length} check(s) failed`}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Manual approval always required disclaimer */}
+        <div style={{ background: C.surface2, borderRadius: 4, padding: '8px 12px', fontSize: 11, color: C.textSub, borderLeft: `3px solid ${C.amber}` }}>
+          Manual approval is always required, even when all automated checks pass.
+        </div>
+
+        {/* Actions */}
+        {activeApproval ? (
+          <>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: C.textSub, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Revocation Reason
+              <input
+                value={revokeReason}
+                onChange={e => setRevokeReason(e.target.value)}
+                placeholder="Why are you revoking this approval?"
+                style={{ background: C.surface2, border: `1px solid ${C.border3}`, borderRadius: 4, color: C.text, padding: '7px 10px', fontSize: 13 }}
+              />
+            </label>
+            <button
+              onClick={() => revokeMutation.mutate()}
+              disabled={revokeMutation.isPending || !revokeReason.trim()}
+              style={{
+                padding: '9px', background: C.red, color: '#fff',
+                border: 'none', borderRadius: 4, cursor: revokeMutation.isPending || !revokeReason.trim() ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 700, opacity: !revokeReason.trim() ? 0.5 : 1,
+              }}
+            >
+              {revokeMutation.isPending ? 'Revoking…' : 'Revoke Approval'}
+            </button>
+          </>
+        ) : (
+          <>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, color: C.textSub, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Approval Notes (optional)
+              <textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder="Add notes about this approval decision…"
+                rows={3}
+                style={{ background: C.surface2, border: `1px solid ${C.border3}`, borderRadius: 4, color: C.text, padding: '7px 10px', fontSize: 13, resize: 'vertical' }}
+              />
+            </label>
+            <button
+              onClick={() => approveMutation.mutate()}
+              disabled={approveMutation.isPending}
+              style={{
+                padding: '9px', background: C.green, color: '#fff',
+                border: 'none', borderRadius: 4, cursor: approveMutation.isPending ? 'not-allowed' : 'pointer',
+                fontSize: 12, fontWeight: 700,
+              }}
+            >
+              {approveMutation.isPending ? 'Approving…' : 'Approve for Live Trading'}
+            </button>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // StrategyCard
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -335,6 +498,14 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onSc
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
   const [positionsExpanded, setPositionsExpanded] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  const [approvalOpen, setApprovalOpen] = useState(false)
+
+  const { data: approvalStatus } = useQuery({
+    queryKey: ['approval-status', instance.id],
+    queryFn: () => approvalApi.getStatus(instance.id).then(r => r.data.data ?? null),
+    enabled: instance.mode === 'Live',
+    staleTime: 30_000,
+  })
 
   const deleteMutation = useMutation({
     mutationFn: () => strategiesApi.delete(instance.id),
@@ -389,8 +560,16 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onSc
       >
         {/* Mode stripe — Live / Forward / Backtest */}
         {isLive && (
-          <div style={{ background: C.amberBg, borderRadius: 4, padding: '4px 10px', fontSize: 11, color: C.amber, fontWeight: 600 }}>
-            LIVE — Real money orders
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.amberBg, borderRadius: 4, padding: '4px 10px' }}>
+            <span style={{ fontSize: 11, color: C.amber, fontWeight: 600 }}>LIVE — Real money orders</span>
+            <span style={{
+              fontSize: 10, fontWeight: 700, borderRadius: 3, padding: '2px 7px',
+              background: approvalStatus ? '#14532d' : C.redBg,
+              color: approvalStatus ? '#86efac' : C.red,
+              border: `1px solid ${approvalStatus ? '#16a34a44' : `${C.red}44`}`,
+            }}>
+              {approvalStatus ? 'APPROVED' : 'NO APPROVAL'}
+            </span>
           </div>
         )}
         {isForward && (
@@ -559,6 +738,18 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onSc
             </SmallButton>
           )}
 
+          {/* Approval Gate — only for Live mode instances */}
+          {isLive && (
+            <SmallButton
+              onClick={() => setApprovalOpen(true)}
+              color={approvalStatus ? '#86efac' : C.red}
+              bg={approvalStatus ? '#14532d' : C.redBg}
+              title={approvalStatus ? 'View or revoke live-trading approval' : 'Approve this strategy for live trading'}
+            >
+              {approvalStatus ? 'Approved' : 'Approve'}
+            </SmallButton>
+          )}
+
           <SmallButton
             onClick={() => {
               if (window.confirm(`Delete strategy "${instance.name}"? This cannot be undone.`)) {
@@ -591,6 +782,9 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onSc
 
       {/* Edit Drawer */}
       {editOpen && <EditDrawer instance={instance} onClose={() => setEditOpen(false)} />}
+
+      {/* Approval Drawer */}
+      {approvalOpen && <ApprovalDrawer instance={instance} onClose={() => setApprovalOpen(false)} />}
 
       {/* Live Start Confirmation Modal */}
       {liveConfirmOpen && (

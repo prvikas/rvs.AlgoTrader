@@ -11,7 +11,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
 | Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report; position sizing fixed (risk/stop capped at 25% equity); entry+exit costs both deducted |
 | Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007; Version field (migration 015) auto-increments on param change |
-| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–016 applied (016: trade_journal_entries with R-multiple, MAE/MFE, tax classification) |
+| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–018 applied (018: strategy_approvals table + approval_ready/approved_at on strategy_instances) |
 | Trade Journal | DONE | TradeJournalEntry entity, EF config, EfTradeJournalRepository, P&L attribution by symbol/month/DOW/exit-type, TaxLotReportService (ITR-3), TradeJournalController; frontend TradeJournalPage + PortfolioAnalysisPage (bar charts + tax lot export) |
 | Health checks | DONE | DbHealthCheck (SELECT 1), RedisHealthCheck (PING Degraded not Unhealthy), /health (JSON report) + /healthz (liveness) endpoints registered in Program.cs |
 | Infra quality | DONE | FluentValidation (#17), DTOs extracted (#16), EF Core repos (#18), BrokerNames constants (#27) |
@@ -42,6 +42,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Trailing stop manager | DONE | #93: ITrailingStopManager, all 7 StopType variants, ratchet enforcement, TimeStop bar-counting |
 | Scaling/pyramid manager | DONE | IScalingManager, ScalingMode/TrancheTrigger enums, EmaBounce/PriceMoveUp/Down triggers |
 | Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order not integrated into LiveExecutionEngine |
+| Approval Gate (P4) | DONE | migration 018, StrategyApproval entity, IApprovalService, ApprovalService (CAGR/DD/fwd checks), ApprovalController (checks/status/approve/revoke), LiveExecutionEngine guard, StrategyCard badge + ApprovalDrawer |
 | UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; integration factory wired |

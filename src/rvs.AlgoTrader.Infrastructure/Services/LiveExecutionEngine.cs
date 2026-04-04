@@ -24,6 +24,7 @@ public class LiveExecutionEngine(
     IOrderRepository orderRepo,
     IPublishEndpoint bus,
     IClock clock,
+    IApprovalService approvalService,
     ILogger<LiveExecutionEngine> logger) : ILiveExecutionEngine
 {
 
@@ -33,6 +34,17 @@ public class LiveExecutionEngine(
         string correlationId,
         CancellationToken ct)
     {
+        // 0. Approval gate — instance must have an active live-trading approval
+        var activeApproval = await approvalService.GetActiveApprovalAsync(instance.Id, ct);
+        if (activeApproval == null)
+        {
+            logger.LogWarning(
+                "[LiveExecution] Signal suppressed — no active approval for instance {Instance} ({InstanceId}). " +
+                "Run backtest + forward test and obtain manual approval before live deployment.",
+                instance.Name, instance.Id);
+            return;
+        }
+
         // 1. Kill switch check
         if (await killSwitch.IsActiveAsync(ct))
         {

@@ -47,6 +47,9 @@ public class AlgoTraderDbContext : DbContext
     // Trade journal
     public DbSet<TradeJournalEntry> TradeJournalEntries => Set<TradeJournalEntry>();
 
+    // Strategy approvals (P4 Approval Gate)
+    public DbSet<StrategyApproval> StrategyApprovals => Set<StrategyApproval>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

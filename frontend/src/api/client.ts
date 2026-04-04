@@ -923,3 +923,50 @@ export const tradeJournalApi = {
   exportTaxLots: (fy: string) =>
     apiClient.get(`/tradejournal/tax-lots/export`, { params: { fy }, responseType: 'blob' }),
 }
+
+// ── P4 Approval Gate ─────────────────────────────────────────────────────────
+
+export interface ApprovalCheckResult {
+  automatedChecksPassed: boolean
+  cagr?: number
+  drawdown?: number
+  sharpe?: number
+  forwardTestDays?: number
+  forwardWinRate?: number
+  failedChecks: string[]
+}
+
+export interface ApprovalStatus {
+  id: string
+  strategyInstanceId: string
+  approvedBy: string
+  approvalNotes?: string
+  cagrAtApproval?: number
+  drawdownAtApproval?: number
+  sharpeAtApproval?: number
+  forwardTestDays?: number
+  forwardWinRate?: number
+  automatedChecksPassed: boolean
+  isActive: boolean
+  invalidatedAt?: string
+  invalidationReason?: string
+  createdAt: string
+}
+
+export const approvalApi = {
+  getChecks: (instanceId: string) =>
+    apiClient.get<ApiResponse<ApprovalCheckResult>>(
+      `/v1/strategy-instances/${instanceId}/approval-checks`),
+  getStatus: (instanceId: string) =>
+    apiClient.get<ApiResponse<ApprovalStatus | null>>(
+      `/v1/strategy-instances/${instanceId}/approval-status`),
+  getHistory: (instanceId: string) =>
+    apiClient.get<ApiResponse<ApprovalStatus[]>>(
+      `/v1/strategy-instances/${instanceId}/approval-history`),
+  approve: (instanceId: string, notes?: string) =>
+    apiClient.post<ApiResponse<ApprovalStatus>>(
+      `/v1/strategy-instances/${instanceId}/approve`, { notes }),
+  revoke: (instanceId: string, approvalId: string, reason: string) =>
+    apiClient.post<ApiResponse<boolean>>(
+      `/v1/strategy-instances/${instanceId}/approvals/${approvalId}/revoke`, { reason }),
+}

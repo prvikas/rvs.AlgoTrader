@@ -190,6 +190,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITradeJournalRepository, EfTradeJournalRepository>();
         services.AddScoped<ITaxLotReportService, TaxLotReportService>();
 
+        // ── P4 Approval Gate ─────────────────────────────────────────────────
+        services.AddScoped<IStrategyApprovalRepository, StrategyApprovalRepository>();
+        services.AddScoped<IApprovalService, ApprovalService>();
+
         // ── Risk & Execution Engine (#85, #86, #87, #88, #92, #93, #100) ──
         services.AddSingleton<IPositionSizingEngine, PositionSizingEngine>();
         services.AddSingleton<ISlippageModel, SlippageModel>();

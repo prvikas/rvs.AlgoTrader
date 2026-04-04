@@ -252,6 +252,26 @@ public interface IInstrumentUniverseRepository
     Task AddRangeAsync(IReadOnlyList<Domain.Entities.InstrumentUniverse> entries, CancellationToken ct);
 }
 
+// ── Strategy Approvals ────────────────────────────────────────────────────────
+
+public record ApprovalCheckResult(
+    bool AutomatedChecksPassed,
+    decimal? Cagr,
+    decimal? Drawdown,
+    decimal? Sharpe,
+    int?     ForwardTestDays,
+    decimal? ForwardWinRate,
+    IReadOnlyList<string> FailedChecks);
+
+public interface IStrategyApprovalRepository
+{
+    Task<Domain.Entities.StrategyApproval?> GetByIdAsync(Guid approvalId, CancellationToken ct);
+    Task<Domain.Entities.StrategyApproval?> GetActiveAsync(Guid instanceId, CancellationToken ct);
+    Task<IReadOnlyList<Domain.Entities.StrategyApproval>> GetHistoryAsync(Guid instanceId, CancellationToken ct);
+    Task AddAsync(Domain.Entities.StrategyApproval approval, CancellationToken ct);
+    Task InvalidateAsync(Guid approvalId, string reason, NodaTime.Instant now, CancellationToken ct);
+}
+
 // ── Trade Journal ─────────────────────────────────────────────────────────────
 
 public interface ITradeJournalRepository

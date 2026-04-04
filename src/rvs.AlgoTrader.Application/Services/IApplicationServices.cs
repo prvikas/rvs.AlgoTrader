@@ -847,3 +847,39 @@ public interface IBrokerAuthService
     // Upstox — exchanges auth_code (from OAuth2 redirect) for access_token + extended_token
     Task<BrokerAuthResultDto> AuthenticateUpstoxAsync(string authCode, CancellationToken ct);
 }
+
+// ── P4: Approval Gate ─────────────────────────────────────────────────────────
+
+/// <summary>
+/// Runs the automated pre-approval checks and records manual approvals.
+/// A strategy instance must have an active (non-invalidated) approval before
+/// LiveExecutionEngine will place any real order.
+/// Thresholds: CAGR ≥ 20%, drawdown ≤ 20%, fwd-test days ≥ 15, win-rate ≥ 40%.
+/// Manual approval is ALWAYS required even when all automated checks pass.
+/// </summary>
+public interface IApprovalService
+{
+    /// <summary>Run automated checks and return the result (does NOT approve).</summary>
+    Task<ApprovalCheckResult> RunChecksAsync(Guid instanceId, CancellationToken ct);
+
+    /// <summary>
+    /// Record a manual approval.
+    /// Calls RunChecksAsync internally, captures the metric snapshot, and persists
+    /// a StrategyApproval row + sets strategy_instances.approved_at.
+    /// </summary>
+    Task<Domain.Entities.StrategyApproval> ApproveAsync(
+        Guid instanceId, string approvedBy, string? notes, CancellationToken ct);
+
+    /// <summary>
+    /// Revoke an existing approval.
+    /// Sets invalidated_at on the approval row and clears approved_at on the instance.
+    /// </summary>
+    Task RevokeAsync(Guid approvalId, string reason, string actor, CancellationToken ct);
+
+    /// <summary>Returns the currently active approval, or null if none exists.</summary>
+    Task<Domain.Entities.StrategyApproval?> GetActiveApprovalAsync(Guid instanceId, CancellationToken ct);
+
+    /// <summary>Full approval history for an instance, newest first.</summary>
+    Task<IReadOnlyList<Domain.Entities.StrategyApproval>> GetHistoryAsync(Guid instanceId, CancellationToken ct);
+}
+

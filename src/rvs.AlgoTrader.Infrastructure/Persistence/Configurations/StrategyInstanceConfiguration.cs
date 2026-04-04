@@ -50,6 +50,13 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.WatchlistId).HasColumnName("WatchlistId");
         builder.Property(s => s.CurrentRunId).HasColumnName("CurrentRunId");
 
+        // Approval Gate (P4)
+        builder.Property(s => s.ApprovalReady).HasColumnName("approval_ready");
+        builder.Property(s => s.ApprovedAt).HasColumnName("approved_at")
+            .HasConversion(
+                v => v.HasValue ? v.Value.ToDateTimeUtc() : (DateTime?)null,
+                v => v.HasValue ? Instant.FromDateTimeUtc(v.Value) : (Instant?)null);
+
         // Ignore computed/derived properties with no DB column
         builder.Ignore(s => s.StrategyName);
 

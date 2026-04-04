@@ -40,6 +40,13 @@ public class StrategyInstance
     public ProductType ProductType { get; private set; } = Enums.ProductType.MIS;
     public int LotSize { get; private set; } = 1;
 
+    // ── P4 Approval Gate ─────────────────────────────────────────────────────
+
+    /// <summary>True once automated checks pass and a manual approval has been recorded.</summary>
+    public bool     ApprovalReady { get; set; }
+    /// <summary>Timestamp of the most recent manual approval (null if never approved or revoked).</summary>
+    public Instant? ApprovedAt    { get; set; }
+
     /// <summary>
     /// Controls whether this strategy instance places real orders (Live),
     /// simulates fills on live data without real orders (Paper),

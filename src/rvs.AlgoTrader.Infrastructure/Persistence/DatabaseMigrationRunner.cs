@@ -341,6 +341,17 @@ public class DatabaseMigrationRunner(
                 """,
                 "orders.quantity BIGINT"
             ),
+
+            // ── 018_StrategyApprovals ──────────────────────────────────────────
+            (
+                "018_StrategyApprovals.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name   = 'strategy_approvals';
+                """,
+                "strategy_approvals table"
+            ),
         };
 
         var toDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
