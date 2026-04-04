@@ -40,6 +40,20 @@ public class BacktestRunConfiguration : IEntityTypeConfiguration<BacktestRun>
         b.Property(x => x.ScenarioId).HasColumnName("scenario_id");
         b.Property(x => x.EffectiveParametersJson).HasColumnName("effective_parameters_json").HasColumnType("text");
 
+        // Add strategy_instance_id (nullable for historical runs) - Migration 021 #197
+        b.Property(x => x.StrategyInstanceId).HasColumnName("strategy_instance_id");
+
+        // Foreign key relationships (Migration 021 #192, #197)
+        b.HasOne<StrategyScenario>()
+            .WithMany()
+            .HasForeignKey("ScenarioId")
+            .OnDelete(DeleteBehavior.SetNull);
+
+        b.HasOne<StrategyInstance>()
+            .WithMany()
+            .HasForeignKey("StrategyInstanceId")
+            .OnDelete(DeleteBehavior.SetNull);
+
         b.HasIndex(x => new { x.StrategyName, x.InternalSymbol, x.Timeframe })
             .HasDatabaseName("idx_backtest_runs_strategy_symbol");
         b.HasIndex(x => x.DataHash).HasDatabaseName("idx_backtest_runs_data_hash");

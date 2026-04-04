@@ -34,10 +34,14 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
                 v => v.ToDateTimeUtc(),
                 v => Instant.FromDateTimeUtc(v));
 
-        builder.Property(s => s.IsActive).HasColumnName("IsActive");
-        builder.Property(s => s.ConfigJson).HasColumnName("ConfigJson").HasColumnType("jsonb");
-        builder.Property(s => s.CreatedBy).HasColumnName("CreatedBy").HasMaxLength(200);
-        builder.Property(s => s.WatchlistId).HasColumnName("WatchlistId");
+        builder.Property(s => s.AllocatedCapital).HasColumnName("allocated_capital");
+        builder.Property(s => s.ConfigJson).HasColumnName("config_json").HasColumnType("jsonb");
+        builder.Property(s => s.CreatedBy).HasColumnName("created_by").HasMaxLength(200);
+        builder.Property(s => s.WatchlistId).HasColumnName("watchlist_id");
+
+        // Foreign keys to related entities (Migration 021 #192, #197)
+        builder.HasOne<RiskProfile>().WithMany().HasForeignKey(s => s.RiskProfileId).OnDelete(DeleteBehavior.SetNull);
+        builder.HasOne<Domain.Entities.Watchlist>().WithMany().HasForeignKey(s => s.WatchlistId).OnDelete(DeleteBehavior.SetNull);
 
         // Approval Gate (P4)
         builder.Property(s => s.ApprovalReady).HasColumnName("approval_ready");

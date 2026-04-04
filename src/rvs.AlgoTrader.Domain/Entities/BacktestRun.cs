@@ -38,6 +38,9 @@ public class BacktestRun
     /// <summary>Scenario that triggered this run, if any.</summary>
     public Guid? ScenarioId { get; set; }
 
+    /// <summary>Strategy instance this backtest run belongs to (nullable for historical runs). Migration 021 #197</summary>
+    public Guid? StrategyInstanceId { get; set; }
+
     /// <summary>Effective merged parameters used for this run (base + scenario override).</summary>
     public string? EffectiveParametersJson { get; set; }
     /// <summary>JSON array of BacktestTradeDto objects.</summary>

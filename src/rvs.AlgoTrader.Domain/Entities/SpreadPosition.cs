@@ -18,7 +18,8 @@ public class SpreadPosition
     public decimal?                     NetPremium       { get; set; }
     public decimal?                     RealizedPnl      { get; set; }
     public Guid?                        StrategyRunId    { get; set; }
-    public string                       CorrelationId    { get; set; } = string.Empty;
+    // CorrelationId is nullable (changed from DEFAULT '' to NULL in Migration 020 #212)
+    public string?                      CorrelationId    { get; set; }
     public Instant                      OpenedAt         { get; set; }
     public Instant?                     ClosedAt         { get; set; }
 
