@@ -90,7 +90,9 @@ public record BacktestResultDto(
     decimal Kurtosis = 0m,
     // Deployment readiness: "Green" | "Amber" | "Red"
     string DeploymentRating = "",
-    string? DeploymentRationale = null);
+    string? DeploymentRationale = null,
+    // ── Signal diagnostics (#46) ────────────────────────────────────────────────
+    int SkippedSignalCount = 0);
 
 public record BacktestMonthlyBreakdownDto(int Year, int Month, decimal Pnl, int Trades, decimal WinRate);
 public record BacktestYearlyBreakdownDto(int Year, decimal Pnl, decimal Return, int Trades, decimal WinRate);

@@ -64,6 +64,21 @@ public class Position
         UpdatedAt = now;
     }
 
+    /// <summary>
+    /// Re-average cost basis after a partial fill adds to an existing position.
+    /// P&amp;L is always computed against <see cref="AvgPrice"/>, NOT <see cref="EntryPrice"/>.
+    /// EntryPrice is the first-fill price and is immutable; AvgPrice is the VWAP across all fills.
+    /// </summary>
+    public void UpdateAvgPrice(int additionalQuantity, decimal fillPrice, Instant now)
+    {
+        if (additionalQuantity <= 0) return;
+        var totalQty = Quantity + additionalQuantity;
+        AvgPrice = (AvgPrice * Quantity + fillPrice * additionalQuantity) / totalQty;
+        Quantity = totalQty;
+        UnrealizedPnl = (CurrentPrice - AvgPrice) * Quantity;
+        UpdatedAt = now;
+    }
+
     public void UpdateStopLoss(decimal newSl, Instant now)
     {
         StopLoss = newSl;

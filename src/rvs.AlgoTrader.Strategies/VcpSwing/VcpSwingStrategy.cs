@@ -20,6 +20,7 @@ namespace rvs.AlgoTrader.Strategies.VcpSwing;
 public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
 {
     public string Name => "VcpSwing";
+    public int MinWarmupBars => config.Sma200Period + config.PivotBars + 5;
 
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {

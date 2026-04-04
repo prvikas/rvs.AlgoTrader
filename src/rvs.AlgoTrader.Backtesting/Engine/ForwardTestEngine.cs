@@ -58,7 +58,9 @@ public class ForwardTestEngine(
             var closeResult = TryClosePosition(state.OpenTrade, candle);
             if (closeResult != null)
             {
-                var now = clock.NowInstant();
+                // ExitTime: use candle.OpenTime as the intrabar fill estimate (mirrors BacktestEngine).
+                // ClosedAt retains wall-clock time for audit/monitoring purposes.
+                var exitInstant = candle.OpenTime.ToInstant();
                 var trade = new ForwardTestTrade
                 {
                     Id = Guid.NewGuid(),
@@ -71,11 +73,12 @@ public class ForwardTestEngine(
                     SimulatedFillPrice = closeResult.ExitPrice,
                     Slippage = 0m,
                     Pnl = closeResult.Pnl,
+                    RealizedPnl = closeResult.Pnl,
                     CloseReason = closeResult.Reason,
                     OpenedAt = state.OpenTrade.OpenedAt,
-                    ClosedAt = now,
+                    ClosedAt = clock.NowInstant(),
                     EntryTime = state.OpenTrade.OpenedAt,
-                    ExitTime = now
+                    ExitTime = exitInstant
                 };
 
                 state.TotalPnl += closeResult.Pnl;
@@ -166,6 +169,7 @@ public class ForwardTestEngine(
         {
             session.EndedAt = clock.NowInstant();
             session.FinalPnl = state.TotalPnl;
+            session.FinalCapital = state.InitialCapital + state.TotalPnl;
             session.TradeCount = state.ClosedTradeCount;
             session.WinRate = state.ClosedTradeCount > 0
                 ? (decimal)state.WinCount / state.ClosedTradeCount

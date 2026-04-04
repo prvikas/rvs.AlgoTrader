@@ -1,6 +1,7 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 
 namespace rvs.AlgoTrader.Infrastructure.Persistence;
 
@@ -352,6 +353,19 @@ public class DatabaseMigrationRunner(
                 """,
                 "strategy_approvals table"
             ),
+
+            // ── 024_fix_medium_priority_bugs ──────────────────────────────────
+            (
+                "024_fix_medium_priority_bugs.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'forward_test_trades'
+                  AND column_name  = 'realized_pnl'
+                  AND is_nullable  = 'NO';
+                """,
+                "forward_test_trades.realized_pnl NOT NULL"
+            ),
         };
 
         var toDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -446,9 +460,9 @@ public class DatabaseMigrationRunner(
             var pk = cmd.CreateParameter(); pk.ParameterName = "@k"; pk.Value = key;   cmd.Parameters.Add(pk);
             var pv = cmd.CreateParameter(); pv.ParameterName = "@v"; pv.Value = value; cmd.Parameters.Add(pv);
             try { await cmd.ExecuteNonQueryAsync(ct); }
-            catch (Exception ex) when (ex.Message.Contains("app_config") || ex.Message.Contains("does not exist"))
+            catch (NpgsqlException ex) when (ex.SqlState == "42P01")
             {
-                // app_config table does not exist yet on very first run;
+                // app_config table does not exist yet on first run (PostgreSQL error 42P01: undefined_table);
                 // migrations will create it and the seed will succeed on next startup.
             }
             cmd.Parameters.Clear();

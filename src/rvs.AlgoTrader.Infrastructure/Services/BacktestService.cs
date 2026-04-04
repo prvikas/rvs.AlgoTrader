@@ -148,7 +148,8 @@ public class BacktestService(
         Skewness: r.Skewness,
         Kurtosis: r.Kurtosis,
         DeploymentRating: r.DeploymentRating,
-        DeploymentRationale: r.DeploymentRationale);
+        DeploymentRationale: r.DeploymentRationale,
+        SkippedSignalCount: r.SkippedSignalCount);
 }
 
 /// <summary>

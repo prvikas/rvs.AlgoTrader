@@ -57,6 +57,7 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
     public string Name => "EmaVwapMomentum";
+    public int MinWarmupBars => Math.Max(config.SlowEmaPeriod, Math.Max(config.BbPeriod, config.AtrPeriod)) + 5;
 
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {

@@ -116,7 +116,15 @@
       "Bash(broker \")",
       "Bash(find frontend/src -type f -name *scenar* -o -name *Scenar*)",
       "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *DbContext* -type f)",
-      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *StrategyInstanceMapper* -type f)"
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *StrategyInstanceMapper* -type f)",
+      "Bash(git commit:*)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src -type f -name *.cs)",
+      "Bash(ls -la /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/*.sql)",
+      "Bash(head -20 grep -rn \"MinWarmupBars\\\\|WarmupBars\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Strategies/)",
+      "Bash(head -20 grep -n \"SlowPeriod\\\\|LongPeriod\\\\|period\\\\|Period\\\\|lookback\\\\|Lookback\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Strategies/VcpSwing/VcpSwingStrategy.cs)",
+      "Bash(head -20 grep -n \"SkippedSignal\\\\|skippedSignal\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Services/IBacktestEngine.cs)",
+      "Bash(head -10 grep -n \"SkippedSignal\\\\|ExitTimeIsEstimate\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Services/IBacktestEngine.cs)",
+      "Bash(ls /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/*.sql)"
     ]
   }
 }

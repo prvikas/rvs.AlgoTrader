@@ -8,6 +8,13 @@ public interface IStrategy
 {
     string Name { get; }
     Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct);
+
+    /// <summary>
+    /// Minimum bars required before the strategy can produce reliable signals.
+    /// BacktestEngine uses Max(request.WarmupBars, strategy.MinWarmupBars) so strategies
+    /// with long lookbacks (e.g. SMA-200) are never under-warmed.
+    /// </summary>
+    int MinWarmupBars => 50;
 }
 
 public interface IStrategyFactory

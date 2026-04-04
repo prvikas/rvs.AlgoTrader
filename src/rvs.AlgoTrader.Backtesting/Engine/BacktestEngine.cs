@@ -59,12 +59,12 @@ public class BacktestEngine(
         logger.LogInformation("[Backtest] Loaded {Count} candles for {Symbol}/{Tf}",
             allCandles.Count, request.InternalSymbol, request.Timeframe);
 
-        var warmupBars = request.WarmupBars;
+        var strategy = strategyFactory.Create(request.StrategyName, request.ParametersJson);
+        var warmupBars = Math.Max(request.WarmupBars, strategy.MinWarmupBars);
         if (allCandles.Count < warmupBars + 1)
             return BacktestResult.Failed($"Insufficient candle data (need > {warmupBars} bars, got {allCandles.Count})");
 
         var dataHash = ComputeReproducibilityHash(allCandles, request);
-        var strategy = strategyFactory.Create(request.StrategyName, request.ParametersJson);
 
         var trades    = new List<BacktestTrade>();
         var equity    = request.InitialCapital;
@@ -72,6 +72,7 @@ public class BacktestEngine(
         var maxDrawdown = 0m;
         BacktestTrade? openTrade = null;
         var totalBars  = allCandles.Count;
+        var skippedSignals = 0;
         var circuitBreakerHit = false;
         string? circuitBreakerReason = null;
         var circuitBreakerFloor = request.CircuitBreakerPct > 0
@@ -226,7 +227,14 @@ public class BacktestEngine(
             if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) continue;
 
             var positionSize = CalculatePositionSize(equity, signal, request);
-            if (positionSize <= 0) continue;
+            if (positionSize <= 0)
+            {
+                skippedSignals++;
+                logger.LogDebug(
+                    "[Backtest] Signal skipped (size=0) bar={Bar} signal={Signal} entry={Entry} sl={SL} equity={Equity}",
+                    i, signal.Signal, signal.EntryPrice, signal.StopLoss, equity);
+                continue;
+            }
 
             decimal entryPrice;
             ZonedDateTime entryTime;
@@ -303,7 +311,12 @@ public class BacktestEngine(
         // Build downsampled chart sample (≤ 2000 bars) for the post-run replay chart
         var chartSample = DownsampleChart(chartBuffer, 2000);
 
+        if (skippedSignals > 0)
+            logger.LogInformation("[Backtest] {Skipped} signal(s) dropped (size=0) — check equity, stop distance, or null SL/entry.",
+                skippedSignals);
+
         var result = ComputeMetrics(trades, request, equity, maxDrawdown, dataHash, allCandles, chartSample);
+        result = result with { SkippedSignalCount = skippedSignals };
 
         if (circuitBreakerHit)
             result = result with
@@ -444,10 +457,14 @@ public class BacktestEngine(
             ? (exitPrice - trade.EntryPrice) * trade.Quantity
             : (trade.EntryPrice - exitPrice) * trade.Quantity;
 
+        // ExitTime: use candle.OpenTime as an intrabar fill estimate.
+        // Using CloseTime would inflate all time-of-day analytics for SL/TP exits by one bar.
+        // For gap-fill exits the fill IS at the open, so OpenTime is also the right choice.
+        // END_OF_DATA force-closes use CloseTime separately (force-closed at bar close).
         return trade with
         {
             ExitPrice  = exitPrice,
-            ExitTime   = candle.CloseTime,
+            ExitTime   = candle.OpenTime,
             GrossPnl   = grossPnl,
             ExitReason = exitReason
         };
@@ -504,8 +521,6 @@ public class BacktestEngine(
         var returns   = trades.Select(t => (double)(t.NetPnl / request.InitialCapital)).ToArray();
         var avgReturn = returns.Average();
         var stdDev    = Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Average());
-        // Per-trade Sharpe: no √252 annualization (that factor applies to daily/weekly series only)
-        var sharpe    = stdDev == 0 ? 0 : (decimal)(avgReturn / stdDev);
 
         // Sortino: downside deviation (negative returns only)
         var negReturns  = returns.Where(r => r < 0).ToArray();
@@ -613,7 +628,7 @@ public class BacktestEngine(
             TotalPnl: totalPnl,
             TotalReturn: totalReturn,
             MaxDrawdown: maxDrawdown,
-            SharpeRatio: sharpe,
+            SharpeRatio: dailySharpe,
             CalmarRatio: calmar,
             ProfitFactor: profitFactor,
             WinRate: winRate,
@@ -767,29 +782,46 @@ public class BacktestEngine(
 
     private static string ComputeReproducibilityHash(IReadOnlyList<ClosedCandle> candles, BacktestRequest request)
     {
-        // Stream directly into SHA256 — avoids allocating a large string for 200k+ candle runs.
+        // Stream directly into SHA256 — zero large-string allocations even for 200k+ candle runs.
         using var sha = SHA256.Create();
         using var cs  = new System.Security.Cryptography.CryptoStream(
             System.IO.Stream.Null, sha, System.Security.Cryptography.CryptoStreamMode.Write);
 
-        void Write(string s)
+        void WriteString(string s)
         {
             var bytes = Encoding.UTF8.GetBytes(s);
             cs.Write(bytes, 0, bytes.Length);
         }
 
-        Write($"strategy={request.StrategyName};params={request.ParametersJson};");
-        Write($"symbol={request.InternalSymbol};tf={request.Timeframe};");
-        Write($"from={request.FromDate};to={request.ToDate};capital={request.InitialCapital};");
+        WriteString($"strategy={request.StrategyName};params={request.ParametersJson};");
+        WriteString($"symbol={request.InternalSymbol};tf={request.Timeframe};");
+        WriteString($"from={request.FromDate};to={request.ToDate};capital={request.InitialCapital};");
 
-        // Write an 8-byte little-endian long for each OHLCV field to avoid string overhead.
-        Span<byte> buf = stackalloc byte[8];
+        // Write all OHLCV fields as binary (no per-candle string allocations).
+        // Each decimal is serialised as its 4 raw int components (16 bytes, stackalloc).
+        var buf8  = new byte[8];
+        var buf16 = new byte[16];
+
+        static void WriteDecimalTo(byte[] dest, decimal d, System.Security.Cryptography.CryptoStream stream)
+        {
+            var bits = decimal.GetBits(d);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dest,       bits[0]);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dest.AsSpan(4),  bits[1]);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dest.AsSpan(8),  bits[2]);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(dest.AsSpan(12), bits[3]);
+            stream.Write(dest, 0, 16);
+        }
+
         foreach (var c in candles)
         {
-            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(buf,
+            System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(buf8,
                 c.OpenTime.ToInstant().ToUnixTimeMilliseconds());
-            cs.Write(buf);
-            Write($"{c.Open},{c.High},{c.Low},{c.Close},{c.Volume};");
+            cs.Write(buf8, 0, 8);
+            WriteDecimalTo(buf16, c.Open,   cs);
+            WriteDecimalTo(buf16, c.High,   cs);
+            WriteDecimalTo(buf16, c.Low,    cs);
+            WriteDecimalTo(buf16, c.Close,  cs);
+            WriteDecimalTo(buf16, c.Volume, cs);
         }
 
         cs.FlushFinalBlock();

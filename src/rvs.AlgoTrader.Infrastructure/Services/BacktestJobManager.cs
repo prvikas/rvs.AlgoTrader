@@ -267,7 +267,8 @@ public class BacktestJobManager(
         Skewness: r.Skewness,
         Kurtosis: r.Kurtosis,
         DeploymentRating: r.DeploymentRating,
-        DeploymentRationale: r.DeploymentRationale);
+        DeploymentRationale: r.DeploymentRationale,
+        SkippedSignalCount: r.SkippedSignalCount);
 
     private static BacktestChartBarDto MapToChartBarDto(BacktestChartBar b) => new(
         TimeMs: b.TimeMs,

@@ -142,7 +142,11 @@ public record BacktestResult(
     decimal Skewness = 0m,
     decimal Kurtosis = 0m,
     string DeploymentRating = "",
-    string? DeploymentRationale = null)
+    string? DeploymentRationale = null,
+    // ── Signal diagnostics (#46) ────────────────────────────────────────────────
+    // Count of BUY/SELL signals that were silently dropped because CalculatePositionSize returned 0.
+    // Causes: null EntryPrice/StopLoss, zero stop distance, or insufficient equity.
+    int SkippedSignalCount = 0)
 {
     public static BacktestResult Failed(string error) => new(
         false, "", "", "", LocalDate.MinIsoValue, LocalDate.MinIsoValue,
