@@ -83,8 +83,8 @@ public sealed class PortfolioRiskManager(
         var instances     = await instanceRepo.GetAllActiveAsync(ct);
 
         decimal deployedCapital  = openPositions.Sum(p => Math.Abs((decimal)p.Quantity * p.AvgPrice));
-        decimal dailyRealized    = instances.Sum(i => i.TodayRealizedPnl);
-        decimal dailyUnrealized  = instances.Sum(i => i.TodayUnrealizedPnl);
+        decimal dailyRealized    = instances.Sum(i => i.RuntimeState?.TodayRealizedPnl ?? 0m);
+        decimal dailyUnrealized  = instances.Sum(i => i.RuntimeState?.TodayUnrealizedPnl ?? 0m);
         decimal totalEquity      = instances.Sum(i => i.AllocatedCapital);
 
         return new PortfolioRiskState(

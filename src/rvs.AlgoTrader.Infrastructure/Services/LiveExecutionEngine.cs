@@ -63,7 +63,8 @@ public class LiveExecutionEngine(
 
         // 3. Determine direction and quantity
         var direction = signal.Signal == SignalType.Buy ? OrderDirection.Buy : OrderDirection.Sell;
-        var quantity = instance.LotSize > 0 ? instance.LotSize : 1;
+        var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
+        var quantity = credential.LotSize > 0 ? credential.LotSize : 1;
 
         // 4. Capital reservation
         var orderValue = (signal.EntryPrice ?? 0) * quantity;
@@ -78,16 +79,16 @@ public class LiveExecutionEngine(
         var brokerClient = brokerFactory.GetOrderClient(instance.BrokerName ?? BrokerNames.Zerodha);
         var orderRequest = new OrderRequest(
             instance.InternalSymbol,
-            instance.BrokerToken ?? instance.InternalSymbol,
+            credential.BrokerToken ?? instance.InternalSymbol,
             OrderType.Market.ToString().ToUpperInvariant(),
             direction.ToString().ToUpperInvariant(),
             quantity,
             signal.EntryPrice,
             null,
-            instance.Exchange.ToString(),
-            instance.ProductType.ToString(),
+            credential.Exchange.ToString(),
+            credential.ProductType.ToString(),
             idempotencyKey,
-            instance.CurrentRunId,
+            instance.RuntimeState?.CurrentRunId,
             correlationId);
 
         var brokerResult = await brokerClient.PlaceOrderAsync(orderRequest, ct);

@@ -17,6 +17,8 @@ public class AlgoTraderDbContext : DbContext
 
     // Strategy tables
     public DbSet<StrategyInstance> StrategyInstances => Set<StrategyInstance>();
+    public DbSet<StrategyRuntimeState> StrategyRuntimeStates => Set<StrategyRuntimeState>();
+    public DbSet<BrokerCredential> BrokerCredentials => Set<BrokerCredential>();
     public DbSet<StrategyRun> StrategyRuns => Set<StrategyRun>();
     public DbSet<RiskProfile> RiskProfiles => Set<RiskProfile>();
     public DbSet<CapitalAllocation> CapitalAllocations => Set<CapitalAllocation>();

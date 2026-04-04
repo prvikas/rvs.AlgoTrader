@@ -29,7 +29,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Performance analytics | DONE | #89: VaR95, CVaR95, OmegaRatio, Skewness, Kurtosis, DeploymentRating/Rationale in BacktestResult/Dto; MAE/MFE in BacktestTradeDto; persisted in ExtendedStatsJson; restored in ToDto; BacktestService.MapToDto synced (ChartSample, CircuitBreaker, all analytics) |
 | Monte Carlo simulation | DONE | #97: IMonteCarloSimulator interface + MonteCarloSimulator (bootstrap resample, P5/P50/P95 drawdown+equity, ProbabilityOfRuin); POST /api/backtest/{id}/montecarlo endpoint |
 | Multi-timeframe | DONE | #94: StrategyContext gains Candles15Min/Candles1Hour/CandlesDaily; StrategyEvaluationQueue pre-fetches higher-TF from ICandleCache; IsFinerThan guard |
-| Strategy correlation | DONE | #95: IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser (Pearson + Monte Carlo 10K), CorrelationController with /matrix /portfolio /check endpoints |
+| Strategy correlation | DONE | #95: IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser (Pearson + Monte Carlo 10K), CorrelationController with /matrix /portfolio /check endpoints; CorrelationPage (heatmap, risk warnings, efficient frontier, optimal weights) |
 | Forward test engine | NOT_REVIEWED | |
 | Live execution engine | NOT_REVIEWED | |
 | Broker integrations | NOT_REVIEWED | |

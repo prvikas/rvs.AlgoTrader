@@ -25,20 +25,14 @@ public class StrategyInstance
     // Operational fields used by Infrastructure services
     public string InternalSymbol { get; set; } = string.Empty;
     public string Timeframe { get; set; } = string.Empty;
-    public bool AutoResumeOnRestart { get; private set; }
-    public Guid? CurrentRunId { get; set; }
-    public decimal AllocatedCapital { get; set; }
     public string? ParametersJson { get; set; }
+    public decimal AllocatedCapital { get; set; }
 
-    // Intraday P&L — mutated only via UpdatePnl() / ResetDailyPnl() domain methods
-    public decimal TodayRealizedPnl { get; private set; }
-    public decimal TodayUnrealizedPnl { get; private set; }
+    // ── P4 Approval Gate + Execution Mode (moved here from operational) ──────
 
-    // Order routing fields — mutated only via UpdateOrderRouting() domain method
-    public string? BrokerToken { get; set; }
-    public Exchange Exchange { get; private set; } = Enums.Exchange.NSE;
-    public ProductType ProductType { get; private set; } = Enums.ProductType.MIS;
-    public int LotSize { get; private set; } = 1;
+    // Navigation properties to related entities (separate concerns)
+    public StrategyRuntimeState? RuntimeState { get; set; }
+    public BrokerCredential? Credential { get; set; }
 
     // ── P4 Approval Gate ─────────────────────────────────────────────────────
 
@@ -88,7 +82,6 @@ public class StrategyInstance
             UpdatedAt = createdAt,
             InternalSymbol = internalSymbol ?? string.Empty,
             Timeframe = timeframe ?? string.Empty,
-            AutoResumeOnRestart = false,
             ParametersJson = parametersJson
         };
     }
@@ -99,33 +92,5 @@ public class StrategyInstance
         UpdatedAt = now;
     }
 
-    // ── Domain methods for operational fields (#25) ───────────────────────────
-
-    /// <summary>Records intraday P and L from the execution engine after a fill or mark-to-market tick.</summary>
-    public void UpdatePnl(decimal realizedPnl, decimal unrealizedPnl)
-    {
-        TodayRealizedPnl   = realizedPnl;
-        TodayUnrealizedPnl = unrealizedPnl;
-    }
-
-    /// <summary>Resets intraday P and L counters at the start of each trading day.</summary>
-    public void ResetDailyPnl()
-    {
-        TodayRealizedPnl   = 0m;
-        TodayUnrealizedPnl = 0m;
-    }
-
-    /// <summary>Controls whether this instance auto-resumes after a server restart.</summary>
-    public void SetAutoResume(bool value) => AutoResumeOnRestart = value;
-
-    /// <summary>
-    /// Updates order-routing configuration.
-    /// Called from command handlers when the user edits the instance, not from the execution engine.
-    /// </summary>
-    public void UpdateOrderRouting(Exchange exchange, ProductType productType, int lotSize)
-    {
-        Exchange    = exchange;
-        ProductType = productType;
-        LotSize     = lotSize > 0 ? lotSize : 1;
-    }
+    // Domain methods for P&L and order routing moved to StrategyRuntimeState and BrokerCredential
 }

@@ -93,7 +93,29 @@
       "Bash(curl -s --ssl-no-revoke \"https://api.github.com/repos/prvikas/rvs.AlgoTrader/issues?milestone=5&state=all&per_page=50&page=1\")",
       "Bash(for n:*)",
       "Bash(do echo:*)",
-      "Bash(grep -r \"monte.*carlo\\\\|overfitting\\\\|permutation\\\\|robustness\" /c/Users/prvik/Downloads/algotrader-claude-kit/src --include=*.cs)"
+      "Bash(grep -r \"monte.*carlo\\\\|overfitting\\\\|permutation\\\\|robustness\" /c/Users/prvik/Downloads/algotrader-claude-kit/src --include=*.cs)",
+      "Bash(grep -r v0.[89] C:UsersprvikDownloadsalgotrader-claude-kit --include=*.md --include=*.txt --include=*.json)",
+      "Bash(grep -r \"0\\\\.8\\\\|0\\\\.9\\\\|v0\\\\.8\\\\|v0\\\\.9\" C:UsersprvikDownloadsalgotrader-claude-kit --include=*.md)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitdocs -type f -name *.md -o -name *.txt)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application -path */Portfolio* -o -path */Backtest* -type f -name *.cs)",
+      "Bash(grep -n \"CREATE TABLE\\\\|ALTER TABLE\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/*.sql)",
+      "Bash(grep -rn \"forward_test\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/*.sql)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kit.claudeworktreesagent-ae38e1f2srcrvs.AlgoTrader.ApplicationDTOs -name *.cs)",
+      "Bash(dotnet restore:*)",
+      "Bash(ls \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\.claude\\\\worktrees\\\\agent-ab54b373\\\\frontend\\\\src\\\\pages\"\" 2>/dev/null | grep -E \"TradeJournal)",
+      "Bash(Portfolio)",
+      "Bash(RiskDash \")",
+      "Bash(wt=C:/Users/prvik/Downloads/algotrader-claude-kit/.claude/worktrees/agent-ab54b373)",
+      "Bash(main=C:/Users/prvik/Downloads/algotrader-claude-kit)",
+      "Bash(__NEW_LINE_04ff3cef184e2b8f__ cp:*)",
+      "Bash(cp \"$wt/frontend/src/pages/PortfolioAnalysisPage.tsx\" \"$main/frontend/src/pages/\")",
+      "Bash(cp \"$wt/frontend/src/pages/RiskDashboardPage.tsx\" \"$main/frontend/src/pages/\")",
+      "Bash(grep -n \"activePage === ''settings''\" /tmp/dashboard_orig.tsx)",
+      "Bash(ls \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\src\\\\rvs.AlgoTrader.API\\\\Controllers\"\" | grep -i \"strat)",
+      "Bash(order)",
+      "Bash(broker \")",
+      "Bash(find frontend/src -type f -name *scenar* -o -name *Scenar*)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *DbContext* -type f)"
     ]
   }
 }

@@ -119,7 +119,8 @@ public class ForwardTestEngine(
         if (!fillResult.Filled || fillResult.FillPrice == null) return;
 
         var entryPrice = fillResult.FillPrice.Value;
-        var lotSize    = instance.LotSize > 0 ? instance.LotSize : 1;
+        var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
+        var lotSize    = credential.LotSize > 0 ? credential.LotSize : 1;
         state.OpenTrade = new ForwardTestOpenTrade(
             signal.Signal.ToString().ToUpperInvariant(), lotSize, entryPrice,
             signal.StopLoss ?? entryPrice * 0.99m,

@@ -970,3 +970,55 @@ export const approvalApi = {
     apiClient.post<ApiResponse<boolean>>(
       `/v1/strategy-instances/${instanceId}/approvals/${approvalId}/revoke`, { reason }),
 }
+
+// ── Correlation & Portfolio Construction (#95) ─────────────────────────────
+
+export interface StrategyReturnSeries {
+  strategyInstanceId: string
+  strategyName: string
+  dailyReturns: number[]   // fractional daily returns (0.01 = 1%), chronological
+}
+
+export interface HighCorrelationPair {
+  strategyA: string
+  strategyB: string
+  correlation: number
+}
+
+export interface CorrelationMatrix {
+  strategyNames: string[]
+  coefficients: number[][]          // symmetric n×n — coefficients[i][j] = Pearson r
+  highCorrelationPairs: HighCorrelationPair[]
+}
+
+export interface MonteCarloPortfolio {
+  weights: Record<string, number>
+  annualReturn: number
+  annualVolatility: number
+  sharpeRatio: number
+}
+
+export interface PortfolioConstructionResult {
+  optimalWeights: Record<string, number>
+  portfolioSharpe: number
+  portfolioAnnualReturn: number
+  portfolioAnnualVolatility: number
+  maxDrawdown: number
+  diversificationRatio: number
+  efficientFrontierSamples: MonteCarloPortfolio[]
+}
+
+export const correlationApi = {
+  matrix: (series: StrategyReturnSeries[], highCorrThreshold = 0.7) =>
+    apiClient.post<ApiResponse<CorrelationMatrix>>('/correlation/matrix', {
+      series, highCorrThreshold,
+    }),
+  portfolio: (series: StrategyReturnSeries[], portfolioCount = 10_000, riskFreeRate = 0.065) =>
+    apiClient.post<ApiResponse<PortfolioConstructionResult>>('/correlation/portfolio', {
+      series, portfolioCount, riskFreeRate,
+    }),
+  check: (candidateSeries: StrategyReturnSeries, liveStrategySeries: StrategyReturnSeries[], highCorrThreshold = 0.7) =>
+    apiClient.post<ApiResponse<HighCorrelationPair[]>>('/correlation/check', {
+      candidateSeries, liveStrategySeries, highCorrThreshold,
+    }),
+}

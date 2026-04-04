@@ -15,8 +15,10 @@ public class GetPortfolioSummaryHandler(IStrategyInstanceRepository repo)
 
         var rows = all.Select(i =>
         {
-            var total = i.TodayRealizedPnl + i.TodayUnrealizedPnl;
-            var pct = i.AllocatedCapital > 0 ? total / i.AllocatedCapital * 100m : 0m;
+            var runtime = i.RuntimeState;
+            var total = (runtime?.TodayRealizedPnl ?? 0m) + (runtime?.TodayUnrealizedPnl ?? 0m);
+            var capital = i.AllocatedCapital;
+            var pct = capital > 0 ? total / capital * 100m : 0m;
             return new StrategyPnlRowDto(
                 InstanceId: i.Id.ToString(),
                 Name: i.Name,
@@ -24,9 +26,9 @@ public class GetPortfolioSummaryHandler(IStrategyInstanceRepository repo)
                 InternalSymbol: i.InternalSymbol,
                 Mode: i.Mode.ToString(),
                 Status: i.Status.ToString(),
-                AllocatedCapital: i.AllocatedCapital,
-                TodayRealizedPnl: i.TodayRealizedPnl,
-                TodayUnrealizedPnl: i.TodayUnrealizedPnl,
+                AllocatedCapital: capital,
+                TodayRealizedPnl: runtime?.TodayRealizedPnl ?? 0m,
+                TodayUnrealizedPnl: runtime?.TodayUnrealizedPnl ?? 0m,
                 TodayTotalPnl: total,
                 PnlPercent: pct);
         }).ToList();

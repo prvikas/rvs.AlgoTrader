@@ -22,17 +22,7 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.ParametersJson).HasColumnName("parameters_json").HasColumnType("jsonb");
         builder.Property(s => s.ScheduleJson).HasColumnName("schedule_json").HasColumnType("jsonb");
         builder.Property(s => s.FailureBehaviorJson).HasColumnName("failure_behavior_json").HasColumnType("jsonb");
-        builder.Property(s => s.AutoResumeOnRestart).HasColumnName("auto_resume_on_restart");
         builder.Property(s => s.RiskProfileId).HasColumnName("risk_profile_id");
-        builder.Property(s => s.AllocatedCapital).HasColumnName("allocated_capital").HasPrecision(18, 4);
-        builder.Property(s => s.TodayRealizedPnl).HasColumnName("today_realized_pnl").HasPrecision(18, 4);
-        builder.Property(s => s.TodayUnrealizedPnl).HasColumnName("today_unrealized_pnl").HasPrecision(18, 4);
-        builder.Property(s => s.Exchange).HasColumnName("exchange").HasMaxLength(10).IsRequired()
-            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.Exchange>(v));
-        builder.Property(s => s.ProductType).HasColumnName("product_type").HasMaxLength(10).IsRequired()
-            .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.ProductType>(v));
-        builder.Property(s => s.LotSize).HasColumnName("lot_size");
-        builder.Property(s => s.BrokerToken).HasColumnName("broker_token").HasMaxLength(100);
         builder.Property(s => s.ExecutionMode).HasColumnName("execution_mode").HasMaxLength(20).IsRequired()
             .HasConversion(v => v.ToString(), v => Enum.Parse<rvs.AlgoTrader.Domain.Enums.ExecutionMode>(v));
         builder.Property(s => s.CreatedAt).HasColumnName("created_at")
@@ -48,7 +38,6 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.ConfigJson).HasColumnName("ConfigJson").HasColumnType("jsonb");
         builder.Property(s => s.CreatedBy).HasColumnName("CreatedBy").HasMaxLength(200);
         builder.Property(s => s.WatchlistId).HasColumnName("WatchlistId");
-        builder.Property(s => s.CurrentRunId).HasColumnName("CurrentRunId");
 
         // Approval Gate (P4)
         builder.Property(s => s.ApprovalReady).HasColumnName("approval_ready");
@@ -59,6 +48,17 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
 
         // Ignore computed/derived properties with no DB column
         builder.Ignore(s => s.StrategyName);
+
+        // Navigation properties to related entities (1:1 relationships)
+        builder.HasOne(s => s.RuntimeState)
+            .WithOne(r => r.StrategyInstance)
+            .HasForeignKey<StrategyRuntimeState>(r => r.StrategyInstanceId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(s => s.Credential)
+            .WithOne(c => c.StrategyInstance)
+            .HasForeignKey<BrokerCredential>(c => c.StrategyInstanceId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasIndex(s => s.Status);
         builder.HasIndex(s => new { s.InternalSymbol, s.Status });

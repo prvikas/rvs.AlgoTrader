@@ -23,6 +23,7 @@ import { MasterDataRefreshPage } from './MasterDataRefreshPage'
 import { TradeJournalPage } from './TradeJournalPage'
 import { PortfolioAnalysisPage } from './PortfolioAnalysisPage'
 import { RiskDashboardPage } from './RiskDashboardPage'
+import { CorrelationPage } from './CorrelationPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
@@ -31,7 +32,7 @@ import { useBacktestSignalR } from '../hooks/useBacktestSignalR'
 import { BacktestReplayChart } from '../components/Backtest/BacktestReplayChart'
 import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../styles/tokens'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation'
 
 // Descriptions for known strategies; unknown ones registered on backend show name only.
 const STRATEGY_DESCS: Record<string, string> = {
@@ -104,6 +105,7 @@ export function Dashboard() {
     { id: 'journal', label: 'Journal' },
     { id: 'portfolio-analysis', label: 'P&L Analysis' },
     { id: 'risk', label: 'Risk' },
+    { id: 'correlation', label: 'Correlation' },
     { id: 'settings', label: 'Settings' },
   ]
 
@@ -226,6 +228,7 @@ export function Dashboard() {
         {activePage === 'journal' && <TradeJournalPage />}
         {activePage === 'portfolio-analysis' && <PortfolioAnalysisPage />}
         {activePage === 'risk' && <RiskDashboardPage />}
+        {activePage === 'correlation' && <CorrelationPage />}
       </main>
 
     </div>
