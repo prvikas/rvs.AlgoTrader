@@ -27,7 +27,7 @@ goals:
 - same signal logic verified via parity tests
 
 ### P4 Approval gate
-status: TODO
+status: DONE
 goals:
 - ApprovalService with threshold checks
 - strategy_approvals table
