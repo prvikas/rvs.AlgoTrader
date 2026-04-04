@@ -29,6 +29,7 @@
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
     <PackageReference Include="VaultSharp" />
     <PackageReference Include="Polly" />
+    <PackageReference Include="Microsoft.Extensions.Http.Polly" />
     <PackageReference Include="NodaTime" />
     <PackageReference Include="NodaTime.Serialization.SystemTextJson" />
     <PackageReference Include="QuestPDF" />

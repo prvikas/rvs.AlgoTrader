@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using NodaTime.Serialization.SystemTextJson;
+using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.API.Services;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Backtesting.Engine;
@@ -95,7 +96,22 @@ public static class ServiceCollectionExtensions
         // IForwardTestEngine is defined in Application layer; ForwardTestEngine is in Backtesting.
         services.AddSingleton<IForwardTestEngine, ForwardTestEngine>();
 
-        services.AddAuthorization();
+        // #128: 6-tier RBAC. Each policy requires the "role" claim to be one of the
+        // listed values. Higher tiers inherit lower-tier access (additive allowlist).
+        services.AddAuthorization(opts =>
+        {
+            opts.AddPolicy(PolicyNames.Viewer, p => p.RequireAuthenticatedUser());
+            opts.AddPolicy(PolicyNames.Analyst, p => p.RequireClaim("role",
+                "Analyst", "Trader", "RiskManager", "Admin", "SuperAdmin"));
+            opts.AddPolicy(PolicyNames.Trader, p => p.RequireClaim("role",
+                "Trader", "RiskManager", "Admin", "SuperAdmin"));
+            opts.AddPolicy(PolicyNames.RiskManager, p => p.RequireClaim("role",
+                "RiskManager", "Admin", "SuperAdmin"));
+            opts.AddPolicy(PolicyNames.Admin, p => p.RequireClaim("role",
+                "Admin", "SuperAdmin"));
+            opts.AddPolicy(PolicyNames.SuperAdmin, p => p.RequireClaim("role",
+                "SuperAdmin"));
+        });
         services.AddCors(opts =>
             opts.AddDefaultPolicy(p => p.WithOrigins(
                     config["CORS__ORIGINS"]?.Split(',') ?? ["http://localhost:3000"])

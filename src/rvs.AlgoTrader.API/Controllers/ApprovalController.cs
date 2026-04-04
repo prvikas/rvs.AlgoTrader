@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NodaTime;
+using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Services;
 
@@ -52,6 +53,7 @@ public class ApprovalController(
     /// Automated checks are run internally; manual approval is ALWAYS required.
     /// </summary>
     [HttpPost("approve")]
+    [Authorize(Policy = PolicyNames.RiskManager)]
     public async Task<ActionResult<ApiResponse<ApprovalStatusDto>>> Approve(
         Guid instanceId,
         [FromBody] ApproveRequest request,
@@ -71,6 +73,7 @@ public class ApprovalController(
 
     /// <summary>Revoke an existing approval (e.g. after strategy config change).</summary>
     [HttpPost("approvals/{approvalId:guid}/revoke")]
+    [Authorize(Policy = PolicyNames.RiskManager)]
     public async Task<ActionResult<ApiResponse<bool>>> Revoke(
         Guid instanceId,
         Guid approvalId,

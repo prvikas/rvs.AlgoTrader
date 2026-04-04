@@ -883,3 +883,26 @@ public interface IApprovalService
     Task<IReadOnlyList<Domain.Entities.StrategyApproval>> GetHistoryAsync(Guid instanceId, CancellationToken ct);
 }
 
+// ── #129: Token Store ─────────────────────────────────────────────────────────
+
+/// <summary>
+/// Secure, encrypted key-value store for broker JWT tokens and refresh tokens.
+/// Tokens are encrypted with AES-256-GCM before being written to the backing store
+/// so that secrets at rest (in Redis) are never in plaintext.
+///
+/// Key format: "tokens:{brokerId}:{tokenType}" — e.g. "tokens:mstock:jwt"
+/// TTL: callers supply the expiry so the store can set an absolute expiry.
+/// </summary>
+public interface ITokenStore
+{
+    /// <summary>Encrypt and store a token. Pass <paramref name="expiresAt"/> so the store
+    /// can evict it automatically when it becomes useless.</summary>
+    Task SetAsync(string key, string token, DateTimeOffset expiresAt, CancellationToken ct = default);
+
+    /// <summary>Retrieve and decrypt a token. Returns null if missing or expired.</summary>
+    Task<string?> GetAsync(string key, CancellationToken ct = default);
+
+    /// <summary>Remove a token immediately (e.g. on logout or token revocation).</summary>
+    Task DeleteAsync(string key, CancellationToken ct = default);
+}
+

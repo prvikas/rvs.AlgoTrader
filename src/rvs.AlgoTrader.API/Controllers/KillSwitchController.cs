@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.Commands.Strategy;
 using rvs.AlgoTrader.Application.DTOs.Common;
 
@@ -11,8 +12,8 @@ namespace rvs.AlgoTrader.API.Controllers;
 [Authorize]
 public class KillSwitchController(IMediator mediator) : ControllerBase
 {
-
     [HttpPost("activate")]
+    [Authorize(Policy = PolicyNames.RiskManager)]
     public async Task<ActionResult<ApiResponse<bool>>> Activate(
         [FromBody] ActivateKillSwitchCommand command, CancellationToken ct)
     {
@@ -22,6 +23,7 @@ public class KillSwitchController(IMediator mediator) : ControllerBase
     }
 
     [HttpPost("deactivate")]
+    [Authorize(Policy = PolicyNames.RiskManager)]
     public async Task<ActionResult<ApiResponse<bool>>> Deactivate(
         [FromBody] DeactivateKillSwitchCommand command, CancellationToken ct)
     {

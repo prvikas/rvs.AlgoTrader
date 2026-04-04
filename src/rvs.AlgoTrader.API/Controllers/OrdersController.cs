@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.Commands.Orders;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.DTOs.Orders;
@@ -13,8 +14,8 @@ namespace rvs.AlgoTrader.API.Controllers;
 [Authorize]
 public class OrdersController(IMediator mediator) : ControllerBase
 {
-
     [HttpPost]
+    [Authorize(Policy = PolicyNames.Trader)]
     public async Task<ActionResult<ApiResponse<PlaceOrderResult>>> PlaceOrder(
         [FromBody] PlaceOrderCommand command,
         CancellationToken ct)
@@ -44,6 +45,7 @@ public class OrdersController(IMediator mediator) : ControllerBase
     }
 
     [HttpDelete("{brokerId}")]
+    [Authorize(Policy = PolicyNames.Trader)]
     public async Task<ActionResult<ApiResponse<bool>>> CancelOrder(
         string brokerId, [FromQuery] string broker, CancellationToken ct)
     {

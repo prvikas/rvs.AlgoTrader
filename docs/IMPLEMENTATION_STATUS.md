@@ -11,7 +11,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
 | Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report; position sizing fixed; SharpeRatio daily-grouped+annualised (#180); WarmupBars=strategy.MinWarmupBars (#187); zero-alloc hash (#182); ExitTime=candle.OpenTime for SL/TP (#39); SkippedSignalCount logged+surfaced (#46) |
 | Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007; Version field (migration 015) auto-increments on param change |
-| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–024 applied; 024 fixes #202 (AvgPrice comments+UpdateAvgPrice), #203 (realized_pnl backfill+NOT NULL), #212 (correlation_id DROP DEFAULT ''), idempotent re-guards for 020 CHECKs |
+| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–025 applied; 024 fixes #202/#203/#212 + 020 idempotency; 025 fixes #170 (audit_log missing columns), #171 (drop signal_journal), #147 (candle partial index) |
 | Trade Journal | DONE | TradeJournalEntry entity, EF config, EfTradeJournalRepository, P&L attribution by symbol/month/DOW/exit-type, TaxLotReportService (ITR-3), TradeJournalController; frontend TradeJournalPage + PortfolioAnalysisPage (bar charts + tax lot export) |
 | Health checks | DONE | DbHealthCheck (SELECT 1), RedisHealthCheck (PING Degraded not Unhealthy), /health (JSON report) + /healthz (liveness) endpoints registered in Program.cs |
 | Infra quality | DONE | FluentValidation (#17), DTOs extracted (#16), EF Core repos (#18), BrokerNames constants (#27), SRP refactoring (#7: StrategyInstance split into RuntimeState + Credential) |
@@ -30,10 +30,10 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Monte Carlo simulation | DONE | #97: IMonteCarloSimulator interface + MonteCarloSimulator (bootstrap resample, P5/P50/P95 drawdown+equity, ProbabilityOfRuin); POST /api/backtest/{id}/montecarlo endpoint |
 | Multi-timeframe | DONE | #94: StrategyContext gains Candles15Min/Candles1Hour/CandlesDaily; StrategyEvaluationQueue pre-fetches higher-TF from ICandleCache; IsFinerThan guard |
 | Strategy correlation | DONE | #95: IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser (Pearson + Monte Carlo 10K), CorrelationController with /matrix /portfolio /check endpoints; CorrelationPage (heatmap, risk warnings, efficient frontier, optimal weights) |
-| Forward test engine | PARTIAL | ForwardTestEngine skeleton wired; FinalCapital now persisted on stop (#184); SL/TP close logic present; full candle-feed wiring NOT_REVIEWED |
+| Forward test engine | PARTIAL | ForwardTestEngine skeleton wired; FinalCapital now persisted (#184); SL/TP close logic present; #176 risk-based sizing via IPositionSizingEngine (FixedFractional 1%); full candle-feed wiring NOT_REVIEWED |
 | Live execution engine | NOT_REVIEWED | |
-| Broker integrations | NOT_REVIEWED | |
-| Candle pipeline | NOT_REVIEWED | |
+| Broker integrations | PARTIAL | #134 Polly retry (3×, exponential) + circuit breaker (50% failure/30s) on all 6 HTTP clients; #129 ITokenStore + RedisEncryptedTokenStore (AES-256-GCM) |
+| Candle pipeline | NOT_REVIEWED | CandleRepository.UpsertAsync now uses INSERT ON CONFLICT (#145); partial index on is_closed=true (#147 via migration 025) |
 | Scheduling | NOT_REVIEWED | |
 | Position sizing | DONE | #87: IPositionSizingEngine, 5 models (FixedLots, FixedFractional, AtrBased, KellyCriterion half-Kelly, VolatilityTargeting), hard caps |
 | Slippage & commission | DONE | #88: ISlippageModel (6 types incl. Almgren-Chriss VolumeImpact), ICommissionModel, IndianMarketCommissionModel (STT/GST/SEBI/stamp) |
@@ -43,7 +43,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Scaling/pyramid manager | DONE | IScalingManager, ScalingMode/TrancheTrigger enums, EmaBounce/PriceMoveUp/Down triggers |
 | Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order not integrated into LiveExecutionEngine |
 | Approval Gate (P4) | DONE | migration 018, StrategyApproval entity, IApprovalService, ApprovalService (CAGR/DD/fwd checks), ApprovalController (checks/status/approve/revoke), LiveExecutionEngine guard, StrategyCard badge + ApprovalDrawer |
-| UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added; scenario multi-select + batch backtest (#2); consolidated lifecycle commands with ICurrentUser audit logging (#9) |
+| UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added; scenario multi-select + batch backtest (#2); consolidated lifecycle commands with ICurrentUser audit logging (#9); #128 6-tier RBAC policies (Viewer/Analyst/Trader/RiskManager/Admin/SuperAdmin) + controller attributes |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; integration factory wired |
 

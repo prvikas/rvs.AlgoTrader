@@ -6,6 +6,7 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using static rvs.AlgoTrader.Domain.Enums.SizingModel;
 
 namespace rvs.AlgoTrader.Backtesting.Engine;
 
@@ -24,6 +25,7 @@ namespace rvs.AlgoTrader.Backtesting.Engine;
 public class ForwardTestEngine(
     IServiceScopeFactory scopeFactory,
     IStrategyFactory strategyFactory,
+    IPositionSizingEngine sizingEngine,
     IClock clock,
     ILogger<ForwardTestEngine> logger) : IForwardTestEngine
 {
@@ -123,9 +125,22 @@ public class ForwardTestEngine(
 
         var entryPrice = fillResult.FillPrice.Value;
         var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
-        var lotSize    = credential.LotSize > 0 ? credential.LotSize : 1;
+
+        // #176: Use risk-based position sizing (1% of allocated capital per trade) instead of
+        // a fixed lot size, so position size scales with account equity and respects stop distance.
+        var allocatedCapital = instance.AllocatedCapital > 0 ? instance.AllocatedCapital
+                             : credential.LotSize > 0 ? credential.LotSize * entryPrice : entryPrice;
+        var (lots, sizingRationale) = sizingEngine.Compute(
+            FixedFractional,
+            allocatedCapital,
+            entryPrice,
+            signal.StopLoss,
+            atr: null,
+            new PositionSizingConfig(FixedLots: credential.LotSize > 0 ? credential.LotSize : 1));
+        logger.LogDebug("[ForwardTest] Sizing: {Rationale}", sizingRationale);
+
         state.OpenTrade = new ForwardTestOpenTrade(
-            signal.Signal.ToString().ToUpperInvariant(), lotSize, entryPrice,
+            signal.Signal.ToString().ToUpperInvariant(), Math.Max(1, lots), entryPrice,
             signal.StopLoss ?? entryPrice * 0.99m,
             signal.TakeProfit ?? entryPrice * 1.02m,
             clock.NowInstant());

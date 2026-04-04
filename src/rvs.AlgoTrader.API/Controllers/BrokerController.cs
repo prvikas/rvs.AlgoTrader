@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.Commands.Broker;
 using rvs.AlgoTrader.Application.DTOs.Broker;
 // MStockLoginRequest, ZerodhaCallbackRequest, UpstoxCallbackRequest defined in Application/DTOs/Broker/BrokerRequestDtos.cs
@@ -48,6 +49,7 @@ public class BrokerController(IMediator mediator) : ControllerBase
     }
 
     [HttpPost("{brokerName}/reconcile")]
+    [Authorize(Policy = PolicyNames.RiskManager)]
     public async Task<ActionResult<ApiResponse<bool>>> Reconcile(string brokerName, CancellationToken ct)
     {
         var result = await mediator.Send(new ReconcileBrokerPositionsCommand(brokerName), ct);

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.DTOs.Settings;
 using rvs.AlgoTrader.Application.Services;
@@ -12,7 +13,7 @@ namespace rvs.AlgoTrader.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
+[Authorize(Policy = PolicyNames.Admin)]
 public class SettingsController(IAppConfigService configService) : ControllerBase
 {
     // ─── Config keys ───────────────────────────────────────────────────────────────

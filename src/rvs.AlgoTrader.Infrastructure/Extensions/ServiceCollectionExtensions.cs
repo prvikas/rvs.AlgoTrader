@@ -6,6 +6,9 @@ using MassTransit;
 using Hangfire;
 using Hangfire.PostgreSql;
 using StackExchange.Redis;
+using Polly;
+using Polly.Retry;
+using Polly.CircuitBreaker;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
@@ -16,11 +19,11 @@ using rvs.AlgoTrader.Brokers.Zerodha.Auth;
 using rvs.AlgoTrader.Brokers.Upstox;
 using rvs.AlgoTrader.Brokers.Upstox.Auth;
 using rvs.AlgoTrader.Infrastructure.Clock;
+using rvs.AlgoTrader.Infrastructure.Secrets;
 using rvs.AlgoTrader.Infrastructure.Messaging.Consumers;
 using rvs.AlgoTrader.Infrastructure.Persistence;
 using rvs.AlgoTrader.Infrastructure.Redis;
 using rvs.AlgoTrader.Infrastructure.Repositories;
-using rvs.AlgoTrader.Infrastructure.Secrets;
 using rvs.AlgoTrader.Infrastructure.Services;
 namespace rvs.AlgoTrader.Infrastructure.Extensions;
 
@@ -137,10 +140,15 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IBacktestService, BacktestService>();
         services.AddScoped<IBacktestReproductionService, BacktestReproductionService>();
 
-        // Secrets
+        // Secrets + Token Store
         services.AddSingleton<EnvironmentSecretsProvider>();
         services.AddSingleton<VaultSecretsProvider>();
         services.AddSingleton<ISecretsProviderFactory, SecretsProviderFactory>();
+        // #129: Encrypted token store — stores broker JWTs at rest using AES-256-GCM.
+        // Requires "TokenStore:EncryptionKey" (base64 32-byte key) via env var / Vault.
+        // Falls back silently when Redis is unavailable (registered only when Redis is up).
+        if (redisAvailable)
+            services.AddSingleton<ITokenStore, RedisEncryptedTokenStore>();
 
         // ── Repository registrations ──────────────────────────────────────────
         // Existing EF Core implementations
@@ -205,12 +213,23 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser>();
 
         // Broker HTTP clients (typed clients via IHttpClientFactory)
-        services.AddHttpClient<MStockAuth>();
-        services.AddHttpClient<MStockClient>();
-        services.AddHttpClient<ZerodhaAuth>();
-        services.AddHttpClient<ZerodhaClient>();
-        services.AddHttpClient<UpstoxAuth>();
-        services.AddHttpClient<UpstoxClient>();
+        // #134: Wire Polly retry (3 attempts, exponential back-off) + circuit breaker
+        // (50% failure ratio, 30s window, 10-request minimum) on all 6 broker clients.
+        // Policies are shared singletons so circuit-breaker state is preserved across requests.
+        var brokerRetry          = BrokerResiliencePolicies.Retry;
+        var brokerCircuitBreaker = BrokerResiliencePolicies.CircuitBreaker;
+        services.AddHttpClient<MStockAuth>()
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
+        services.AddHttpClient<MStockClient>()
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
+        services.AddHttpClient<ZerodhaAuth>()
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
+        services.AddHttpClient<ZerodhaClient>()
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
+        services.AddHttpClient<UpstoxAuth>()
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
+        services.AddHttpClient<UpstoxClient>()
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
 
         // Broker options from config
         services.Configure<MStockOptions>(config.GetSection("Broker:MStock"));

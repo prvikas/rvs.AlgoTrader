@@ -96,25 +96,28 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
             .OrderByDescending(c => c.OpenTime)
             .FirstOrDefaultAsync(ct);
 
+    // #145: Replace the two-round-trip SELECT + INSERT/UPDATE pattern with a single
+    // atomic INSERT … ON CONFLICT DO UPDATE (PostgreSQL "upsert").
+    // The candles table PRIMARY KEY is (internal_symbol, timeframe, open_time), so the
+    // conflict target matches that constraint — no separate SELECT ever needed.
     public async Task UpsertAsync(Candle candle, CancellationToken ct = default)
     {
-        var existing = await db.Candles
-            .FirstOrDefaultAsync(c => c.InternalSymbol == candle.InternalSymbol
-                && c.Timeframe == candle.Timeframe && c.OpenTime == candle.OpenTime, ct);
-        if (existing == null)
-            await db.Candles.AddAsync(candle, ct);
-        else
-        {
-            existing.Open = candle.Open;
-            existing.High = candle.High;
-            existing.Low = candle.Low;
-            existing.Close = candle.Close;
-            existing.Volume = candle.Volume;
-            existing.IsClosed = candle.IsClosed;
-            existing.CloseTime = candle.CloseTime;
-            db.Candles.Update(existing);
-        }
-        await db.SaveChangesAsync(ct);
+        await db.Database.ExecuteSqlAsync(
+            $"""
+            INSERT INTO candles
+                (internal_symbol, timeframe, open_time, close_time, open, high, low, close, volume, is_closed)
+            VALUES
+                ({candle.InternalSymbol}, {candle.Timeframe}, {candle.OpenTime}, {candle.CloseTime},
+                 {candle.Open}, {candle.High}, {candle.Low}, {candle.Close}, {candle.Volume}, {candle.IsClosed})
+            ON CONFLICT (internal_symbol, timeframe, open_time) DO UPDATE SET
+                close_time = EXCLUDED.close_time,
+                open       = EXCLUDED.open,
+                high       = EXCLUDED.high,
+                low        = EXCLUDED.low,
+                close      = EXCLUDED.close,
+                volume     = EXCLUDED.volume,
+                is_closed  = EXCLUDED.is_closed
+            """, ct);
     }
 
     public async Task<bool> HasDataAsync(string symbol, string timeframe, DateOnly date, CancellationToken ct = default)
