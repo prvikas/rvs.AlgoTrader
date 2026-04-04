@@ -186,10 +186,6 @@ export function Dashboard() {
           <StrategiesPage
             activeBroker={activeBrokerName}
             brokerStatus={brokerStatus ?? []}
-            onRunBacktest={(instance) => {
-              setBacktestPreset(instance)
-              setActivePage('backtest')
-            }}
             onPromoteToForward={(instance) => {
               setBacktestPreset(instance)
               setActivePage('backtest')
@@ -245,10 +241,9 @@ export function Dashboard() {
 // STRATEGIES PAGE
 // ──────────────────────────────────────────────────────────────────────────────
 
-function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: {
+function StrategiesPage({ activeBroker, brokerStatus, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: {
   activeBroker: string
   brokerStatus: BrokerStatus[]
-  onRunBacktest?: (instance: StrategyInstance) => void
   onPromoteToForward?: (instance: StrategyInstance) => void
   onScenarioJobStarted?: (jobId: string) => void
   onOpenBacktestResult?: (runId: string) => void
@@ -697,7 +692,6 @@ function StrategiesPage({ activeBroker, brokerStatus, onRunBacktest, onPromoteTo
             <StrategyCard
               key={selectedInstance.id}
               instance={selectedInstance}
-              onRunBacktest={onRunBacktest}
               onPromoteToForward={onPromoteToForward}
               onScenarioJobStarted={onScenarioJobStarted}
               onOpenBacktestResult={onOpenBacktestResult}

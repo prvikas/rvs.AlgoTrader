@@ -73,6 +73,7 @@ export default function ScenariosPanel({
   })
   const [runningJobs, setRunningJobs] = useState<Record<string, string>>({}) // scenarioId→jobId
   const [runError, setRunError] = useState<string | null>(null)
+  const [selectedScenarios, setSelectedScenarios] = useState<Set<string>>(new Set())
 
   // List
   const { data: listResp, isLoading } = useQuery({
@@ -159,6 +160,26 @@ export default function ScenariosPanel({
   const isRunning = (s: StrategyScenario) =>
     Object.keys(runningJobs).includes(s.id)
 
+  const toggleScenarioSelection = (id: string) => {
+    setSelectedScenarios(prev => {
+      const updated = new Set(prev)
+      if (updated.has(id)) {
+        updated.delete(id)
+      } else {
+        updated.add(id)
+      }
+      return updated
+    })
+  }
+
+  const toggleSelectAll = (ids: string[]) => {
+    if (selectedScenarios.size === ids.length) {
+      setSelectedScenarios(new Set())
+    } else {
+      setSelectedScenarios(new Set(ids))
+    }
+  }
+
   const canRun = runConfig.symbol && runConfig.fromDate && runConfig.toDate
 
   return (
@@ -228,18 +249,39 @@ export default function ScenariosPanel({
             }}
           />
         </label>
-        <button
-          onClick={() => runMut.mutate(undefined)}
-          disabled={!canRun || runMut.isPending || Object.keys(runningJobs).length > 0}
-          style={{
-            padding: '5px 16px', background: C.blue, border: 'none', borderRadius: 5,
-            color: '#fff', fontSize: 12, fontWeight: 600,
-            cursor: !canRun || runMut.isPending ? 'not-allowed' : 'pointer',
-            opacity: !canRun || runMut.isPending ? 0.5 : 1,
-          }}
-        >
-          {runMut.isPending || Object.keys(runningJobs).length > 0 ? 'Running…' : 'Run All'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {selectedScenarios.size > 0 && (
+            <>
+              <span style={{ fontSize: 11, color: C.textSub }}>
+                {selectedScenarios.size} selected
+              </span>
+              <button
+                onClick={() => runMut.mutate(Array.from(selectedScenarios))}
+                disabled={!canRun || runMut.isPending || Object.keys(runningJobs).length > 0}
+                style={{
+                  padding: '5px 16px', background: C.blue, border: 'none', borderRadius: 5,
+                  color: '#fff', fontSize: 12, fontWeight: 600,
+                  cursor: !canRun || runMut.isPending ? 'not-allowed' : 'pointer',
+                  opacity: !canRun || runMut.isPending ? 0.5 : 1,
+                }}
+              >
+                {runMut.isPending || Object.keys(runningJobs).length > 0 ? 'Running…' : 'Run Selected'}
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => runMut.mutate(undefined)}
+            disabled={!canRun || runMut.isPending || Object.keys(runningJobs).length > 0}
+            style={{
+              padding: '5px 16px', background: C.blue, border: 'none', borderRadius: 5,
+              color: '#fff', fontSize: 12, fontWeight: 600,
+              cursor: !canRun || runMut.isPending ? 'not-allowed' : 'pointer',
+              opacity: !canRun || runMut.isPending ? 0.5 : 1,
+            }}
+          >
+            {runMut.isPending || Object.keys(runningJobs).length > 0 ? 'Running…' : 'Run All'}
+          </button>
+        </div>
         {runError && (
           <span style={{ fontSize: 11, color: C.red }}>{runError}</span>
         )}
@@ -256,13 +298,41 @@ export default function ScenariosPanel({
               No scenarios yet. Create one to start parameter testing.
             </div>
           )}
+          {/* Select-all header (only show if there are scenarios) */}
+          {scenarios.length > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: SP.md,
+              padding: TABLE_CELL, borderBottom: `1px solid ${C.border}`,
+              background: C.surface2,
+            }}>
+              <input
+                type="checkbox"
+                checked={selectedScenarios.size === scenarios.length && scenarios.length > 0}
+                onChange={() => toggleSelectAll(scenarios.map(s => s.id))}
+                style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+                aria-label="Select all scenarios"
+              />
+              <span style={{ fontSize: 12, color: C.textMuted, flex: 1 }}>
+                {selectedScenarios.size > 0 ? `${selectedScenarios.size}/${scenarios.length} selected` : 'Select for batch run'}
+              </span>
+            </div>
+          )}
           {scenarios.map(s => (
             <div key={s.id} style={{
               display: 'flex', alignItems: 'center', gap: SP.md,
               padding: TABLE_CELL, borderBottom: `1px solid ${C.border2}`,
-              background: isRunning(s) ? C.blueBg : 'transparent',
+              background: isRunning(s) ? C.blueBg : selectedScenarios.has(s.id) ? `${C.blue}11` : 'transparent',
               transition: 'background 0.2s',
             }}>
+              {/* Checkbox */}
+              <input
+                type="checkbox"
+                checked={selectedScenarios.has(s.id)}
+                onChange={() => toggleScenarioSelection(s.id)}
+                style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+                aria-label={`Select ${s.name}`}
+              />
+
               {/* Status badge */}
               <span style={{
                 fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,

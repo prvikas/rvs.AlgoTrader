@@ -34,7 +34,8 @@ public sealed class PaperOrderSimulator(
         decimal fillPrice = slippageModel.ApplySlippage(
             currentPrice, direction, DefaultSlippage);
 
-        int lots     = instance.LotSize > 0 ? instance.LotSize : 1;
+        var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
+        int lots     = credential.LotSize > 0 ? credential.LotSize : 1;
         var now      = clock.NowInstant();
         var paperId  = $"PAPER-{instance.Id:N}-{now.ToUnixTimeTicks()}";
 
@@ -42,7 +43,7 @@ public sealed class PaperOrderSimulator(
         var trade = new ForwardTestTrade
         {
             Id             = Guid.NewGuid(),
-            SessionId      = instance.CurrentRunId ?? Guid.Empty,
+            SessionId      = instance.RuntimeState?.CurrentRunId ?? Guid.Empty,
             InternalSymbol = instance.InternalSymbol,
             Direction      = direction.ToString(),
             EntryPrice     = fillPrice,

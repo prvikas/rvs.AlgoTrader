@@ -18,7 +18,7 @@ public class GetStrategyInstanceByIdHandler(IStrategyInstanceRepository repo) : 
     internal static StrategyInstanceDto MapToDto(Domain.Entities.StrategyInstance inst) => new(
         inst.Id, inst.Name, inst.StrategyType, inst.InternalSymbol, inst.Timeframe,
         inst.Status.ToString(), inst.Mode.ToString(), inst.BrokerName, inst.AllocatedCapital,
-        inst.AutoResumeOnRestart, inst.ScheduleJson, inst.ParametersJson,
+        inst.RuntimeState?.AutoResumeOnRestart ?? false, inst.ScheduleJson, inst.ParametersJson,
         inst.FailureBehaviorJson, inst.CreatedAt.ToDateTimeOffset(), inst.UpdatedAt.ToDateTimeOffset());
 }
 

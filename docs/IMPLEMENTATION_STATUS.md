@@ -14,7 +14,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–018 applied (018: strategy_approvals table + approval_ready/approved_at on strategy_instances) |
 | Trade Journal | DONE | TradeJournalEntry entity, EF config, EfTradeJournalRepository, P&L attribution by symbol/month/DOW/exit-type, TaxLotReportService (ITR-3), TradeJournalController; frontend TradeJournalPage + PortfolioAnalysisPage (bar charts + tax lot export) |
 | Health checks | DONE | DbHealthCheck (SELECT 1), RedisHealthCheck (PING Degraded not Unhealthy), /health (JSON report) + /healthz (liveness) endpoints registered in Program.cs |
-| Infra quality | DONE | FluentValidation (#17), DTOs extracted (#16), EF Core repos (#18), BrokerNames constants (#27) |
+| Infra quality | DONE | FluentValidation (#17), DTOs extracted (#16), EF Core repos (#18), BrokerNames constants (#27), SRP refactoring (#7: StrategyInstance split into RuntimeState + Credential) |
 | Market breadth | DONE | #99: MarketBreadthSnapshot entity, IMarketBreadthService, single-SQL CTE computation, BreadthCalculatorJob, MarketBreadthController |
 | Event calendar | DONE | #90: MarketEvent entity, IEventCalendarService, F&O expiry seeder, EventCalendarController |
 | Historical data mgr | DONE | #91: IHistoricalDataManager, quality reports, gap detection, CSV bulk import, DataManagerController |
@@ -43,7 +43,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Scaling/pyramid manager | DONE | IScalingManager, ScalingMode/TrancheTrigger enums, EmaBounce/PriceMoveUp/Down triggers |
 | Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order not integrated into LiveExecutionEngine |
 | Approval Gate (P4) | DONE | migration 018, StrategyApproval entity, IApprovalService, ApprovalService (CAGR/DD/fwd checks), ApprovalController (checks/status/approve/revoke), LiveExecutionEngine guard, StrategyCard badge + ApprovalDrawer |
-| UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added |
+| UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added; scenario multi-select + batch backtest (#2); consolidated lifecycle commands with ICurrentUser audit logging (#9) |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; integration factory wired |
 

@@ -43,7 +43,7 @@ public sealed class OrderManager(
             brokerName:    instance.BrokerName ?? BrokerNames.Default,
             state:         order.BrokerOrderId != null ? OrderManagerState.Submitted : OrderManagerState.Pending,
             correlationId: correlationId,
-            strategyRunId: instance.CurrentRunId,
+            strategyRunId: instance.RuntimeState?.CurrentRunId,
             submittedAt:   DateTimeOffset.UtcNow);
 
         _entries[order.Id] = entry;

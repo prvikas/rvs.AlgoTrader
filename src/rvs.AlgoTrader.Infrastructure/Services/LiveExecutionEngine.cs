@@ -105,7 +105,7 @@ public class LiveExecutionEngine(
             null,
             idempotencyKey,
             correlationId,
-            instance.CurrentRunId,
+            instance.RuntimeState?.CurrentRunId,
             now);
 
         if (brokerResult.Success && brokerResult.BrokerOrderId != null)
@@ -122,7 +122,7 @@ public class LiveExecutionEngine(
                 order.Id, instance.BrokerName ?? BrokerNames.Zerodha, brokerResult.BrokerOrderId!,
                 instance.InternalSymbol, OrderType.Market, direction,
                 quantity, signal.EntryPrice,
-                instance.CurrentRunId, correlationId, clock.NowIst()), ct);
+                instance.RuntimeState?.CurrentRunId, correlationId, clock.NowIst()), ct);
 
             logger.LogInformation("[LiveExecution] Order placed: {OrderId} for {Instance} ({Signal})",
                 brokerResult.BrokerOrderId, instance.Name, signal.Signal.ToString().ToUpperInvariant());

@@ -7,52 +7,7 @@ using rvs.AlgoTrader.Domain.Enums;
 
 namespace rvs.AlgoTrader.Application.Commands.Strategy;
 
-// ── Existing commands (used internally / by other handlers) ──────────────────
-
-public record StartStrategyInstanceCommand(Guid InstanceId, string Actor, string CorrelationId) : IRequest<bool>;
-public record PauseStrategyInstanceCommand(Guid InstanceId, string Actor, string CorrelationId) : IRequest<bool>;
-public record StopStrategyInstanceCommand(Guid InstanceId, string Actor, string CorrelationId) : IRequest<bool>;
-
-public class StartStrategyInstanceValidator : AbstractValidator<StartStrategyInstanceCommand>
-{
-    public StartStrategyInstanceValidator()
-    {
-        RuleFor(x => x.InstanceId).NotEmpty();
-        RuleFor(x => x.Actor).NotEmpty();
-    }
-}
-
-public class StartStrategyInstanceHandler(IStrategyInstanceManager manager, IAuditService audit) : IRequestHandler<StartStrategyInstanceCommand, bool>
-{
-    public async Task<bool> Handle(StartStrategyInstanceCommand request, CancellationToken ct)
-    {
-        await manager.StartAsync(request.InstanceId, ct);
-        await audit.LogAsync("STRATEGY_STARTED", request.Actor, "StrategyInstance", request.InstanceId.ToString(), null, request.CorrelationId, ct);
-        return true;
-    }
-}
-
-public class PauseStrategyInstanceHandler(IStrategyInstanceManager manager, IAuditService audit) : IRequestHandler<PauseStrategyInstanceCommand, bool>
-{
-    public async Task<bool> Handle(PauseStrategyInstanceCommand request, CancellationToken ct)
-    {
-        await manager.PauseAsync(request.InstanceId, "USER_REQUESTED", ct);
-        await audit.LogAsync("STRATEGY_PAUSED", request.Actor, "StrategyInstance", request.InstanceId.ToString(), null, request.CorrelationId, ct);
-        return true;
-    }
-}
-
-public class StopStrategyInstanceHandler(IStrategyInstanceManager manager, IAuditService audit) : IRequestHandler<StopStrategyInstanceCommand, bool>
-{
-    public async Task<bool> Handle(StopStrategyInstanceCommand request, CancellationToken ct)
-    {
-        await manager.StopAsync(request.InstanceId, "USER_REQUESTED", ct);
-        await audit.LogAsync("STRATEGY_STOPPED", request.Actor, "StrategyInstance", request.InstanceId.ToString(), null, request.CorrelationId, ct);
-        return true;
-    }
-}
-
-// ── Controller-facing commands (used by StrategiesController) ─────────────────
+// ── Consolidated lifecycle commands (unified internal and external handling) ──
 
 /// <summary>Start a strategy instance; returns the new StrategyRun ID.</summary>
 public record StartStrategyCommand(Guid InstanceId) : IRequest<Guid>;
@@ -85,7 +40,9 @@ public record CreateStrategyInstanceCommand(
 
 public class StartStrategyCommandHandler(
     IStrategyInstanceManager manager,
-    IStrategyScenarioRepository scenarioRepo) : IRequestHandler<StartStrategyCommand, Guid>
+    IStrategyScenarioRepository scenarioRepo,
+    IAuditService audit,
+    ICurrentUser currentUser) : IRequestHandler<StartStrategyCommand, Guid>
 {
     public async Task<Guid> Handle(StartStrategyCommand request, CancellationToken ct)
     {
@@ -93,24 +50,47 @@ public class StartStrategyCommandHandler(
         if (scenarios.Count == 0)
             throw new InvalidOperationException(
                 "Cannot start a strategy with no scenarios. Create at least one scenario first.");
-        return await manager.StartAsync(request.InstanceId, ct);
+
+        var runId = await manager.StartAsync(request.InstanceId, ct);
+
+        var correlationId = Guid.NewGuid().ToString();
+        await audit.LogAsync("STRATEGY_STARTED", currentUser.Actor, "StrategyInstance", request.InstanceId.ToString(),
+            new { RunId = runId }, correlationId, ct);
+
+        return runId;
     }
 }
 
-public class PauseStrategyCommandHandler(IStrategyInstanceManager manager) : IRequestHandler<PauseStrategyCommand, bool>
+public class PauseStrategyCommandHandler(
+    IStrategyInstanceManager manager,
+    IAuditService audit,
+    ICurrentUser currentUser) : IRequestHandler<PauseStrategyCommand, bool>
 {
     public async Task<bool> Handle(PauseStrategyCommand request, CancellationToken ct)
     {
         await manager.PauseAsync(request.InstanceId, request.Reason ?? "USER_REQUESTED", ct);
+
+        var correlationId = Guid.NewGuid().ToString();
+        await audit.LogAsync("STRATEGY_PAUSED", currentUser.Actor, "StrategyInstance", request.InstanceId.ToString(),
+            new { Reason = request.Reason }, correlationId, ct);
+
         return true;
     }
 }
 
-public class StopStrategyCommandHandler(IStrategyInstanceManager manager) : IRequestHandler<StopStrategyCommand, bool>
+public class StopStrategyCommandHandler(
+    IStrategyInstanceManager manager,
+    IAuditService audit,
+    ICurrentUser currentUser) : IRequestHandler<StopStrategyCommand, bool>
 {
     public async Task<bool> Handle(StopStrategyCommand request, CancellationToken ct)
     {
         await manager.StopAsync(request.InstanceId, request.Reason ?? "USER_REQUESTED", ct);
+
+        var correlationId = Guid.NewGuid().ToString();
+        await audit.LogAsync("STRATEGY_STOPPED", currentUser.Actor, "StrategyInstance", request.InstanceId.ToString(),
+            new { Reason = request.Reason }, correlationId, ct);
+
         return true;
     }
 }

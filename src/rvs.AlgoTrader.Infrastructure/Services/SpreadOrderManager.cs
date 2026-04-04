@@ -68,7 +68,7 @@ public class SpreadOrderManager(
             UnderlyingSymbol = instance.InternalSymbol,
             SpreadType       = signal.SpreadType,
             Status           = "Open",
-            StrategyRunId    = instance.CurrentRunId,
+            StrategyRunId    = instance.RuntimeState?.CurrentRunId,
             CorrelationId    = correlationId,
             OpenedAt         = now
         };
@@ -188,7 +188,7 @@ public class SpreadOrderManager(
                 Domain.Enums.Exchange.NFO.ToString(),
                 ProductType.NRML.ToString(),
                 idempotencyKey,
-                instance.CurrentRunId,
+                instance.RuntimeState?.CurrentRunId,
                 correlationId);
 
             var result = await broker.PlaceOrderAsync(request, ct);

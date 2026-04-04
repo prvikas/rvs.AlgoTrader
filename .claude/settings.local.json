@@ -115,7 +115,8 @@
       "Bash(order)",
       "Bash(broker \")",
       "Bash(find frontend/src -type f -name *scenar* -o -name *Scenar*)",
-      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *DbContext* -type f)"
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *DbContext* -type f)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *StrategyInstanceMapper* -type f)"
     ]
   }
 }

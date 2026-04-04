@@ -8,8 +8,30 @@ namespace rvs.AlgoTrader.Application.Mappings;
 [Mapper]
 public partial class StrategyInstanceMapper
 {
-    public partial StrategyInstanceDto ToDto(StrategyInstance instance);
-    public partial IReadOnlyList<StrategyInstanceDto> ToDtoList(IReadOnlyList<StrategyInstance> instances);
+    public StrategyInstanceDto ToDto(StrategyInstance instance)
+    {
+        return new StrategyInstanceDto(
+            instance.Id,
+            instance.Name,
+            instance.StrategyType,
+            instance.InternalSymbol,
+            instance.Timeframe,
+            instance.Status.ToString(),
+            instance.Mode.ToString(),
+            instance.BrokerName,
+            instance.AllocatedCapital,
+            instance.RuntimeState?.AutoResumeOnRestart ?? false,
+            instance.ScheduleJson,
+            instance.ParametersJson,
+            instance.FailureBehaviorJson,
+            instance.CreatedAt.ToDateTimeOffset(),
+            instance.UpdatedAt.ToDateTimeOffset(),
+            instance.RuntimeState?.TodayRealizedPnl ?? 0m,
+            instance.RuntimeState?.TodayUnrealizedPnl ?? 0m);
+    }
+
+    public IReadOnlyList<StrategyInstanceDto> ToDtoList(IReadOnlyList<StrategyInstance> instances)
+        => instances.Select(ToDto).ToList();
 
     private static DateTimeOffset MapInstantToOffset(Instant instant) =>
         instant.ToDateTimeOffset();

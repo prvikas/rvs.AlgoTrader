@@ -118,7 +118,7 @@ public class StartupOrchestrator(
                 instance.Id,
                 instance.Name,
                 instance.Status,
-                instance.AutoResumeOnRestart,
+                instance.RuntimeState?.AutoResumeOnRestart ?? false,
                 scheduleConfig);
 
             var evaluation = scheduler.EvaluateOnStartup(snapshot);

@@ -50,7 +50,8 @@ public class StrategyInstanceManager(
         await runRepo.AddAsync(run, ct);
 
         instance.Status = StrategyStatus.Running;
-        instance.CurrentRunId = run.Id;
+        if (instance.RuntimeState != null)
+            instance.RuntimeState.CurrentRunId = run.Id;
         instance.UpdatedAt = nowInstant;
         await instanceRepo.UpdateAsync(instance, ct);
         _activeRuns.TryAdd(instanceId, run.Id);
@@ -116,7 +117,8 @@ public class StrategyInstanceManager(
         }
 
         instance.Status = StrategyStatus.Stopped;
-        instance.CurrentRunId = null;
+        if (instance.RuntimeState != null)
+            instance.RuntimeState.CurrentRunId = null;
         instance.UpdatedAt = nowInstant;
         await instanceRepo.UpdateAsync(instance, ct);
 

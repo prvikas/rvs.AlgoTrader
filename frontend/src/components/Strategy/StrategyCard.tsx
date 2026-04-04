@@ -16,8 +16,6 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> =
 
 interface Props {
   instance: StrategyInstance
-  /** Called when user clicks "Backtest" — parent navigates to backtest tab with pre-filled form */
-  onRunBacktest?: (instance: StrategyInstance) => void
   /** Called when user clicks "Forward Test" on a Backtest-mode instance */
   onPromoteToForward?: (instance: StrategyInstance) => void
   /** Called when a scenario run is enqueued — parent navigates to backtest tab to show live result */
@@ -493,7 +491,7 @@ function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onC
 // StrategyCard
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: Props) {
+export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: Props) {
   const qc = useQueryClient()
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
   const [positionsExpanded, setPositionsExpanded] = useState(false)
@@ -656,18 +654,6 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onSc
 
         {/* Primary action buttons */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {/* Backtest mode: primary action is "Run Backtest", not Start */}
-          {isBacktest && !isRunning && onRunBacktest && (
-            <ActionButton
-              onClick={() => onRunBacktest(instance)}
-              disabled={false}
-              color="#d97706"
-              ariaLabel={`Run backtest for ${instance.name}`}
-            >
-              ▶ Run Backtest
-            </ActionButton>
-          )}
-
           {/* Forward / Live mode: normal Start/Pause/Stop */}
           {!isBacktest && !isRunning && (
             <div title={!hasScenarios ? 'Create at least one scenario before starting' : undefined}>
@@ -713,18 +699,6 @@ export function StrategyCard({ instance, onRunBacktest, onPromoteToForward, onSc
           >
             Edit
           </SmallButton>
-
-          {/* For non-backtest modes, show the backtest link as a secondary option */}
-          {onRunBacktest && !isBacktest && (
-            <SmallButton
-              onClick={() => onRunBacktest(instance)}
-              color={C.blue}
-              bg={`${C.blueBg}88`}
-              title="Run a historical backtest for this strategy"
-            >
-              Backtest
-            </SmallButton>
-          )}
 
           {/* Backtest → Forward promotion: only shown on Backtest-mode instances */}
           {onPromoteToForward && isBacktest && (
