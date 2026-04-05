@@ -16,6 +16,7 @@ conceptually — that separation is kept and extended. The new spec adds:
 - Exit behaviour object, risk controls, kill-switch, regime filters
 - Rich stop/target/trailing/scale-out mechanics
 - Full TypeScript interfaces for all entities backed by enums
+- DB-backed enum values with runtime fetch — single source of truth is the DB
 - Five UI screens with precise layout requirements
 
 **Core invariants (never violate):**
@@ -24,14 +25,15 @@ conceptually — that separation is kept and extended. The new spec adds:
 3. Scenario cannot add, remove, or replace indicators. Cannot change rule structure or indicator roles/timeframes.
 4. Deployment binds a Scenario to an execution context: symbol, timeframe, broker, capital, schedule.
 5. RunResult ties a Scenario to a specific backtest or forward-test execution with full metrics.
-6. **All primitive domain values are TypeScript enums** — single source of truth in `strategy.ts`.
-   UI dropdowns, chips, and labels must derive their option lists from `ENUM_VALUES.*`, never hardcode strings.
+6. **Enum values are DB-owned at runtime.** TypeScript enums in `strategy.ts` are the compile-time contract
+   and validator only. The actual option lists shown in every UI dropdown come from `useEnums()` which
+   fetches `GET /api/enums` → sourced from the `enum_values` DB table. No component may hardcode string arrays.
 
 ---
 
 ### Scope
-Frontend only (`frontend/src/`). Do not change DB schema or API contracts.
-Missing endpoints → add `// TODO: API` comment + use mock data shaped to the DTOs below.
+Frontend + backend enum endpoint (`GET /api/enums`) + DB seed.
+All other backend routes: add `// TODO: API` comment + use mock data shaped to DTOs below.
 
 ---
 
@@ -70,199 +72,219 @@ Spacing from `SP.*`, table padding from `TABLE_CELL`, font from `F.mono` / `F.sa
 
 ---
 
-### Shared TypeScript interfaces
-Create `frontend/src/types/strategy.ts`. All components import from here. No `any`, no implicit undefined.
+## DB — enum_values table
 
-**Single source of truth rule:** Every domain value that appears in a dropdown, chip, badge, or
-table cell MUST be an enum member from this file. UI components call `Object.values(EnumName)` or
-use the `ENUM_VALUES` map below to build their option lists. No component may hardcode `['EMA', 'SMA', ...]`.
+This table is the **single source of truth** for all domain primitive values shown in the UI.
+Adding a new broker, indicator type, or timeframe is a DB INSERT — no frontend code change needed.
+
+```sql
+-- Migration: create enum_values lookup table
+CREATE TABLE enum_values (
+  domain      VARCHAR(64)   NOT NULL,  -- matches ENUM_VALUES key: 'timeframe', 'broker', 'indicatorType' ...
+  value       VARCHAR(128)  NOT NULL,  -- the actual stored/API value, e.g. '5m', 'MStock', 'EMA'
+  label       VARCHAR(128)  NOT NULL,  -- display label, e.g. '5 min', 'MStock', 'EMA'
+  sort_order  INT           NOT NULL DEFAULT 0,
+  is_active   BOOLEAN       NOT NULL DEFAULT TRUE,
+  PRIMARY KEY (domain, value)
+);
+
+-- Seed data — mirrors the TypeScript enums exactly at initial deploy.
+-- Add rows here to extend without a frontend redeploy.
+INSERT INTO enum_values (domain, value, label, sort_order) VALUES
+  -- Timeframe
+  ('timeframe','1m','1 min',1), ('timeframe','3m','3 min',2), ('timeframe','5m','5 min',3),
+  ('timeframe','15m','15 min',4), ('timeframe','30m','30 min',5),
+  ('timeframe','1h','1 Hour',6), ('timeframe','4h','4 Hour',7), ('timeframe','1D','Daily',8),
+  -- TradingStyle
+  ('tradingStyle','Scalping','Scalping',1), ('tradingStyle','Intraday','Intraday',2),
+  ('tradingStyle','Swing','Swing',3), ('tradingStyle','Positional','Positional',4),
+  ('tradingStyle','Custom','Custom',5),
+  -- IndicatorType — Trend
+  ('indicatorType','EMA','EMA',1), ('indicatorType','SMA','SMA',2),
+  ('indicatorType','HullMA','Hull MA',3), ('indicatorType','DonchianChannel','Donchian Channel',4),
+  ('indicatorType','SuperTrend','SuperTrend',5),
+  -- IndicatorType — Momentum
+  ('indicatorType','RSI','RSI',10), ('indicatorType','CCI','CCI',11),
+  ('indicatorType','Stochastics','Stochastics',12), ('indicatorType','MACD','MACD',13),
+  -- IndicatorType — Volatility
+  ('indicatorType','ATR','ATR',20), ('indicatorType','BollingerBands','Bollinger Bands',21),
+  ('indicatorType','RangePercentile','Range Percentile',22),
+  -- IndicatorType — Volume
+  ('indicatorType','Volume','Volume',30), ('indicatorType','VolumeSpike','Volume Spike',31),
+  ('indicatorType','VWAP','VWAP',32),
+  -- IndicatorType — Price Action
+  ('indicatorType','SwingHighLow','Swing High/Low',40), ('indicatorType','InsideBar','Inside Bar',41),
+  ('indicatorType','Engulfing','Engulfing',42), ('indicatorType','PrevHighLowBreak','Prev High/Low Break',43),
+  -- IndicatorType — Session/Time
+  ('indicatorType','SessionFilter','Session Filter',50), ('indicatorType','DayOfWeekFilter','Day of Week Filter',51),
+  -- IndicatorType — Regime
+  ('indicatorType','ADX','ADX',60), ('indicatorType','ATRPercentile','ATR Percentile',61),
+  -- IndicatorRole
+  ('indicatorRole','EntryTrigger','Entry Trigger',1), ('indicatorRole','EntryFilter','Entry Filter',2),
+  ('indicatorRole','Exit','Exit',3), ('indicatorRole','StopLoss','Stop Loss',4),
+  ('indicatorRole','TakeProfit','Take Profit',5), ('indicatorRole','TrailingStop','Trailing Stop',6),
+  ('indicatorRole','RiskModel','Risk Model',7), ('indicatorRole','RegimeFilter','Regime Filter',8),
+  ('indicatorRole','InfoOnly','Info Only',9),
+  -- ConditionOperator
+  ('conditionOp','>','>',1), ('conditionOp','<','<',2), ('conditionOp','>=','≥',3),
+  ('conditionOp','<=','≤',4), ('conditionOp','==','=',5), ('conditionOp','!=','≠',6),
+  ('conditionOp','crossesAbove','Crosses Above',7), ('conditionOp','crossesBelow','Crosses Below',8),
+  -- AggregationType
+  ('aggregationType','avg','Average',1), ('aggregationType','max','Max',2),
+  ('aggregationType','min','Min',3), ('aggregationType','percentile','Percentile',4),
+  ('aggregationType','highest','Highest',5), ('aggregationType','lowest','Lowest',6),
+  -- StopType
+  ('stopType','FixedPoints','Fixed Points',1), ('stopType','ATRMultiple','ATR Multiple',2),
+  ('stopType','StructureLowHigh','Structure Low/High',3),
+  -- TrailingType
+  ('trailingType','FixedPoints','Fixed Points',1), ('trailingType','ATRMultiple','ATR Multiple',2),
+  ('trailingType','MovingAverage','Moving Average',3), ('trailingType','DonchianChannel','Donchian Channel',4),
+  -- ScenarioStatus
+  ('scenarioStatus','Draft','Draft',1), ('scenarioStatus','Running','Running',2),
+  ('scenarioStatus','Backtested','Backtested',3), ('scenarioStatus','Fwd Testing','Fwd Testing',4),
+  ('scenarioStatus','Live Candidate','Live Candidate',5), ('scenarioStatus','Live','Live',6),
+  ('scenarioStatus','Archived','Archived',7),
+  -- StrategyStatus
+  ('strategyStatus','Draft','Draft',1), ('strategyStatus','Backtested','Backtested',2),
+  ('strategyStatus','Fwd Testing','Fwd Testing',3), ('strategyStatus','Live','Live',4),
+  ('strategyStatus','Archived','Archived',5),
+  -- DeploymentStatus (same as ScenarioStatus)
+  ('deploymentStatus','Draft','Draft',1), ('deploymentStatus','Running','Running',2),
+  ('deploymentStatus','Backtested','Backtested',3), ('deploymentStatus','Fwd Testing','Fwd Testing',4),
+  ('deploymentStatus','Live Candidate','Live Candidate',5), ('deploymentStatus','Live','Live',6),
+  ('deploymentStatus','Archived','Archived',7),
+  -- RunMode
+  ('runMode','Backtest','Backtest',1), ('runMode','ForwardTest','Forward Test',2),
+  -- ExitCombineLogic
+  ('exitCombineLogic','AND','AND',1), ('exitCombineLogic','OR','OR',2),
+  -- DayOfWeek
+  ('dayOfWeek','Mon','Mon',1), ('dayOfWeek','Tue','Tue',2), ('dayOfWeek','Wed','Wed',3),
+  ('dayOfWeek','Thu','Thu',4), ('dayOfWeek','Fri','Fri',5),
+  ('dayOfWeek','Sat','Sat',6), ('dayOfWeek','Sun','Sun',7),
+  -- MoveStopTo
+  ('moveStopTo','breakeven','Breakeven',1), ('moveStopTo','previousLevel','Previous Level',2),
+  ('moveStopTo','custom','Custom',3),
+  -- StartCondition
+  ('startCondition','immediately','Immediately',1), ('startCondition','afterKR','After K×R',2),
+  ('startCondition','afterAbsoluteProfit','After Absolute Profit',3),
+  -- DeploymentMode
+  ('deploymentMode','Backtest','Backtest',1), ('deploymentMode','Forward Test','Forward Test',2),
+  ('deploymentMode','Live','Live',3),
+  -- Broker
+  ('broker','MStock','MStock',1), ('broker','Zerodha','Zerodha',2), ('broker','Upstox','Upstox',3),
+  -- OverrideSection
+  ('overrideSection','indicator','Indicator',1), ('overrideSection','stopLoss','Stop Loss',2),
+  ('overrideSection','profitTarget','Profit Target',3), ('overrideSection','trailing','Trailing',4),
+  ('overrideSection','scaleOut','Scale Out',5), ('overrideSection','exitBehaviour','Exit Behaviour',6),
+  ('overrideSection','rr','R:R',7);
+```
+
+---
+
+## Backend — GET /api/enums
+
+**File:** `backend/src/routes/enumsRoute.ts` (CREATE)
+
+Returns all active enum values grouped by domain, sorted by `sort_order`.
+This is the ONLY place in the codebase that supplies option lists to the UI.
 
 ```ts
-// ─── Enums — single source of truth for ALL domain primitives ──────────────────
-// Rule: interfaces use enum types; UI derives option arrays from ENUM_VALUES
+// GET /api/enums
+// Response shape: Record<string, EnumOption[]>
+// EnumOption: { value: string; label: string }
 
-export enum Timeframe {
-  M1  = '1m',
-  M3  = '3m',
-  M5  = '5m',
-  M15 = '15m',
-  M30 = '30m',
-  H1  = '1h',
-  H4  = '4h',
-  D1  = '1D',
+export interface EnumOption {
+  value: string
+  label: string
 }
 
-export enum TradingStyle {
-  Scalping   = 'Scalping',
-  Intraday   = 'Intraday',
-  Swing      = 'Swing',
-  Positional = 'Positional',
-  Custom     = 'Custom',
+export type EnumsResponse = Record<string, EnumOption[]>
+
+// Query:
+//   SELECT domain, value, label
+//   FROM enum_values
+//   WHERE is_active = TRUE
+//   ORDER BY domain, sort_order ASC
+//
+// Group results by domain key → return as JSON object.
+// Cache-Control: public, max-age=300  (5-minute browser cache — values rarely change)
+```
+
+Example response:
+```json
+{
+  "timeframe":     [{ "value": "1m", "label": "1 min" }, { "value": "5m", "label": "5 min" }, ...],
+  "broker":        [{ "value": "MStock", "label": "MStock" }, ...],
+  "indicatorType": [{ "value": "EMA", "label": "EMA" }, ...]
+}
+```
+
+---
+
+## Frontend — EnumsContext + useEnums hook
+
+**File:** `frontend/src/context/EnumsContext.tsx` (CREATE)
+
+Fetches `/api/enums` once on app load. Provides the result via context.
+All UI dropdowns, chip lists, and filter selectors consume this — never `ENUM_VALUES` directly.
+
+```ts
+import { ENUM_VALUES } from '../types/strategy'   // used as FALLBACK only if fetch fails
+import { validateEnumResponse } from '../types/strategy'
+
+interface EnumOption { value: string; label: string }
+type EnumsMap = Record<string, EnumOption[]>
+
+interface EnumsContextValue {
+  enums: EnumsMap        // live data from DB via /api/enums
+  loading: boolean
+  error: string | null
 }
 
-export enum IndicatorType {
-  // Trend
-  EMA              = 'EMA',
-  SMA              = 'SMA',
-  HullMA           = 'HullMA',
-  DonchianChannel  = 'DonchianChannel',
-  SuperTrend       = 'SuperTrend',
-  // Momentum / Oscillator
-  RSI              = 'RSI',
-  CCI              = 'CCI',
-  Stochastics      = 'Stochastics',
-  MACD             = 'MACD',
-  // Volatility
-  ATR              = 'ATR',
-  BollingerBands   = 'BollingerBands',
-  RangePercentile  = 'RangePercentile',
-  // Volume / Flow
-  Volume           = 'Volume',
-  VolumeSpike      = 'VolumeSpike',
-  VWAP             = 'VWAP',
-  // Price Action / Structure
-  SwingHighLow     = 'SwingHighLow',
-  InsideBar        = 'InsideBar',
-  Engulfing        = 'Engulfing',
-  PrevHighLowBreak = 'PrevHighLowBreak',
-  // Time / Session
-  SessionFilter    = 'SessionFilter',
-  DayOfWeekFilter  = 'DayOfWeekFilter',
-  // Regime helpers
-  ADX              = 'ADX',
-  ATRPercentile    = 'ATRPercentile',
-}
+// On mount: fetch('/api/enums')
+//   → on success: validate response with validateEnumResponse(), store in state
+//   → on failure: log warning, fall back to ENUM_VALUES converted to EnumOption[]
+//                 (fallback ensures UI never breaks on network error)
+//
+// Cache: store in module-level variable so hot-reload doesn't re-fetch
 
-export enum IndicatorRole {
-  EntryTrigger  = 'EntryTrigger',
-  EntryFilter   = 'EntryFilter',
-  Exit          = 'Exit',
-  StopLoss      = 'StopLoss',
-  TakeProfit    = 'TakeProfit',
-  TrailingStop  = 'TrailingStop',
-  RiskModel     = 'RiskModel',
-  RegimeFilter  = 'RegimeFilter',
-  InfoOnly      = 'InfoOnly',
-}
+export const EnumsProvider: React.FC<{ children: React.ReactNode }>
+export const useEnums: () => EnumsContextValue
+```
 
-export enum ConditionOperator {
-  Gt            = '>',
-  Lt            = '<',
-  Gte           = '>=',
-  Lte           = '<=',
-  Eq            = '==',
-  Neq           = '!=',
-  CrossesAbove  = 'crossesAbove',
-  CrossesBelow  = 'crossesBelow',
-}
+Usage in any component:
+```tsx
+// CORRECT — runtime values from DB
+const { enums } = useEnums()
+<Select options={enums.timeframe} />           // [{ value:'1m', label:'1 min' }, ...]
 
-export enum AggregationType {
-  Avg        = 'avg',
-  Max        = 'max',
-  Min        = 'min',
-  Percentile = 'percentile',
-  Highest    = 'highest',
-  Lowest     = 'lowest',
-}
+// FORBIDDEN — never do this in a component
+<Select options={['1m', '3m', '5m']} />        // hardcoded strings
+<Select options={ENUM_VALUES.timeframe} />     // bypasses DB, violates invariant 6
+```
 
-export enum StopType {
-  FixedPoints      = 'FixedPoints',
-  ATRMultiple      = 'ATRMultiple',
-  StructureLowHigh = 'StructureLowHigh',
-}
+**Wrap app root:**
+```tsx
+// frontend/src/main.tsx or App.tsx
+<EnumsProvider>
+  <App />
+</EnumsProvider>
+```
 
-export enum TrailingType {
-  FixedPoints      = 'FixedPoints',
-  ATRMultiple      = 'ATRMultiple',
-  MovingAverage    = 'MovingAverage',
-  DonchianChannel  = 'DonchianChannel',
-}
+---
 
-export enum ScenarioStatus {
-  Draft          = 'Draft',
-  Running        = 'Running',
-  Backtested     = 'Backtested',
-  FwdTesting     = 'Fwd Testing',
-  LiveCandidate  = 'Live Candidate',
-  Live           = 'Live',
-  Archived       = 'Archived',
-}
+## Frontend — EnumValidator utility
 
-export enum StrategyStatus {
-  Draft      = 'Draft',
-  Backtested = 'Backtested',
-  FwdTesting = 'Fwd Testing',
-  Live       = 'Live',
-  Archived   = 'Archived',
-}
+**File:** `frontend/src/types/strategy.ts` — add at bottom
 
-export enum DeploymentStatus {
-  Draft          = 'Draft',
-  Running        = 'Running',
-  Backtested     = 'Backtested',
-  FwdTesting     = 'Fwd Testing',
-  LiveCandidate  = 'Live Candidate',
-  Live           = 'Live',
-  Archived       = 'Archived',
-}
+`ENUM_VALUES` is now a **validator and offline fallback** only. It is never imported by UI components directly.
 
-export enum RunMode {
-  Backtest    = 'Backtest',
-  ForwardTest = 'ForwardTest',
-}
-
-export enum ExitCombineLogic {
-  AND = 'AND',
-  OR  = 'OR',
-}
-
-export enum DayOfWeek {
-  Mon = 'Mon',
-  Tue = 'Tue',
-  Wed = 'Wed',
-  Thu = 'Thu',
-  Fri = 'Fri',
-  Sat = 'Sat',
-  Sun = 'Sun',
-}
-
-export enum MoveStopTo {
-  Breakeven      = 'breakeven',
-  PreviousLevel  = 'previousLevel',
-  Custom         = 'custom',
-}
-
-export enum StartCondition {
-  Immediately         = 'immediately',
-  AfterKR             = 'afterKR',
-  AfterAbsoluteProfit = 'afterAbsoluteProfit',
-}
-
-export enum DeploymentMode {
-  Backtest    = 'Backtest',
-  ForwardTest = 'Forward Test',
-  Live        = 'Live',
-}
-
-export enum Broker {
-  MStock = 'MStock',
-  Zerodha = 'Zerodha',
-  Upstox = 'Upstox',
-}
-
-export enum OverrideSection {
-  Indicator     = 'indicator',
-  StopLoss      = 'stopLoss',
-  ProfitTarget  = 'profitTarget',
-  Trailing      = 'trailing',
-  ScaleOut      = 'scaleOut',
-  ExitBehaviour = 'exitBehaviour',
-  RR            = 'rr',
-}
-
-// ─── ENUM_VALUES — UI option arrays derived from enums (do NOT hardcode elsewhere) ───────
-// Usage: Object.values(ENUM_VALUES.timeframe) gives ['1m','3m','5m',...]
-// Every dropdown, chip list, and filter in the UI must use this map.
+```ts
+// ─── ENUM_VALUES — compile-time fallback + API response validator ─────────────
+// UI components: use useEnums() instead. This map exists for:
+//   1. Validating /api/enums response values against known enum members
+//   2. Offline/error fallback inside EnumsContext only
+//   3. Unit tests
 
 export const ENUM_VALUES = {
   timeframe:        Object.values(Timeframe),
@@ -286,7 +308,220 @@ export const ENUM_VALUES = {
   overrideSection:  Object.values(OverrideSection),
 } as const
 
-// ─── Indicators ──────────────────────────────────────────────────────────────
+// validateEnumResponse: called inside EnumsContext after fetch.
+// Logs a warning for any value returned by the API that is not a known enum member.
+// Unknown values are kept in the UI list (so new DB rows work without a frontend deploy)
+// but warned so devs know to add the corresponding enum member in the next release.
+export function validateEnumResponse(
+  apiResponse: Record<string, { value: string; label: string }[]>
+): void {
+  for (const [domain, options] of Object.entries(apiResponse)) {
+    const known = (ENUM_VALUES as Record<string, readonly string[]>)[domain]
+    if (!known) {
+      console.warn(`[EnumsContext] Unknown domain "${domain}" returned by /api/enums`)
+      continue
+    }
+    for (const opt of options) {
+      if (!known.includes(opt.value)) {
+        console.warn(
+          `[EnumsContext] Domain "${domain}" value "${opt.value}" is not in TypeScript enum. ` +
+          `Add it to strategy.ts enum to restore type safety.`
+        )
+      }
+    }
+  }
+}
+```
+
+---
+
+### Shared TypeScript interfaces
+Create `frontend/src/types/strategy.ts`. All components import from here. No `any`, no implicit undefined.
+
+**Rule:** interfaces use enum types. UI components use `useEnums()` for runtime option lists.
+`ENUM_VALUES` is imported only by `EnumsContext` (fallback) and unit tests.
+
+```ts
+// ─── Enums — compile-time contract ───────────────────────────────────────────
+// These mirror the enum_values DB table exactly at deploy time.
+// When a new value is added to the DB, add it here too in the next release.
+// UI dropdowns do NOT use these directly — they use useEnums() which reads the DB.
+
+export enum Timeframe {
+  M1  = '1m',
+  M3  = '3m',
+  M5  = '5m',
+  M15 = '15m',
+  M30 = '30m',
+  H1  = '1h',
+  H4  = '4h',
+  D1  = '1D',
+}
+
+export enum TradingStyle {
+  Scalping   = 'Scalping',
+  Intraday   = 'Intraday',
+  Swing      = 'Swing',
+  Positional = 'Positional',
+  Custom     = 'Custom',
+}
+
+export enum IndicatorType {
+  EMA              = 'EMA',
+  SMA              = 'SMA',
+  HullMA           = 'HullMA',
+  DonchianChannel  = 'DonchianChannel',
+  SuperTrend       = 'SuperTrend',
+  RSI              = 'RSI',
+  CCI              = 'CCI',
+  Stochastics      = 'Stochastics',
+  MACD             = 'MACD',
+  ATR              = 'ATR',
+  BollingerBands   = 'BollingerBands',
+  RangePercentile  = 'RangePercentile',
+  Volume           = 'Volume',
+  VolumeSpike      = 'VolumeSpike',
+  VWAP             = 'VWAP',
+  SwingHighLow     = 'SwingHighLow',
+  InsideBar        = 'InsideBar',
+  Engulfing        = 'Engulfing',
+  PrevHighLowBreak = 'PrevHighLowBreak',
+  SessionFilter    = 'SessionFilter',
+  DayOfWeekFilter  = 'DayOfWeekFilter',
+  ADX              = 'ADX',
+  ATRPercentile    = 'ATRPercentile',
+}
+
+export enum IndicatorRole {
+  EntryTrigger  = 'EntryTrigger',
+  EntryFilter   = 'EntryFilter',
+  Exit          = 'Exit',
+  StopLoss      = 'StopLoss',
+  TakeProfit    = 'TakeProfit',
+  TrailingStop  = 'TrailingStop',
+  RiskModel     = 'RiskModel',
+  RegimeFilter  = 'RegimeFilter',
+  InfoOnly      = 'InfoOnly',
+}
+
+export enum ConditionOperator {
+  Gt           = '>',
+  Lt           = '<',
+  Gte          = '>=',
+  Lte          = '<=',
+  Eq           = '==',
+  Neq          = '!=',
+  CrossesAbove = 'crossesAbove',
+  CrossesBelow = 'crossesBelow',
+}
+
+export enum AggregationType {
+  Avg        = 'avg',
+  Max        = 'max',
+  Min        = 'min',
+  Percentile = 'percentile',
+  Highest    = 'highest',
+  Lowest     = 'lowest',
+}
+
+export enum StopType {
+  FixedPoints      = 'FixedPoints',
+  ATRMultiple      = 'ATRMultiple',
+  StructureLowHigh = 'StructureLowHigh',
+}
+
+export enum TrailingType {
+  FixedPoints     = 'FixedPoints',
+  ATRMultiple     = 'ATRMultiple',
+  MovingAverage   = 'MovingAverage',
+  DonchianChannel = 'DonchianChannel',
+}
+
+export enum ScenarioStatus {
+  Draft         = 'Draft',
+  Running       = 'Running',
+  Backtested    = 'Backtested',
+  FwdTesting    = 'Fwd Testing',
+  LiveCandidate = 'Live Candidate',
+  Live          = 'Live',
+  Archived      = 'Archived',
+}
+
+export enum StrategyStatus {
+  Draft      = 'Draft',
+  Backtested = 'Backtested',
+  FwdTesting = 'Fwd Testing',
+  Live       = 'Live',
+  Archived   = 'Archived',
+}
+
+export enum DeploymentStatus {
+  Draft         = 'Draft',
+  Running       = 'Running',
+  Backtested    = 'Backtested',
+  FwdTesting    = 'Fwd Testing',
+  LiveCandidate = 'Live Candidate',
+  Live          = 'Live',
+  Archived      = 'Archived',
+}
+
+export enum RunMode {
+  Backtest    = 'Backtest',
+  ForwardTest = 'ForwardTest',
+}
+
+export enum ExitCombineLogic {
+  AND = 'AND',
+  OR  = 'OR',
+}
+
+export enum DayOfWeek {
+  Mon = 'Mon',
+  Tue = 'Tue',
+  Wed = 'Wed',
+  Thu = 'Thu',
+  Fri = 'Fri',
+  Sat = 'Sat',
+  Sun = 'Sun',
+}
+
+export enum MoveStopTo {
+  Breakeven     = 'breakeven',
+  PreviousLevel = 'previousLevel',
+  Custom        = 'custom',
+}
+
+export enum StartCondition {
+  Immediately         = 'immediately',
+  AfterKR             = 'afterKR',
+  AfterAbsoluteProfit = 'afterAbsoluteProfit',
+}
+
+export enum DeploymentMode {
+  Backtest    = 'Backtest',
+  ForwardTest = 'Forward Test',
+  Live        = 'Live',
+}
+
+export enum Broker {
+  MStock  = 'MStock',
+  Zerodha = 'Zerodha',
+  Upstox  = 'Upstox',
+}
+
+export enum OverrideSection {
+  Indicator     = 'indicator',
+  StopLoss      = 'stopLoss',
+  ProfitTarget  = 'profitTarget',
+  Trailing      = 'trailing',
+  ScaleOut      = 'scaleOut',
+  ExitBehaviour = 'exitBehaviour',
+  RR            = 'rr',
+}
+
+// ENUM_VALUES and validateEnumResponse defined below interfaces (see EnumValidator section above)
+
+// ─── Indicators ───────────────────────────────────────────────────────────────
 
 export interface ParamRange {
   min: number
@@ -294,25 +529,25 @@ export interface ParamRange {
 }
 
 export interface IndicatorConfig {
-  id: string                                          // unique within strategy, e.g. "ema_15m"
+  id: string
   type: IndicatorType
-  timeframe: Timeframe                               // always explicit — never inherited
+  timeframe: Timeframe
   role: IndicatorRole
   baseParams: Record<string, number | string | boolean>
-  allowedParamRanges: Record<string, ParamRange | string[]> // numeric → ParamRange, categorical → string[]
+  allowedParamRanges: Record<string, ParamRange | string[]>
 }
 
 // ─── Rule builder ─────────────────────────────────────────────────────────────
 
 export interface WindowExpression {
-  sourceIndicatorId: string                          // e.g. "volume_5m", "close_5m"
+  sourceIndicatorId: string
   lookbackBars: number
   aggregationType: AggregationType
-  multiplier?: number                                // optional: currentVal > multiplier × aggregated
+  multiplier?: number
 }
 
 export type ConditionOperand =
-  | { kind: 'indicator'; indicatorId: string; field?: string }   // field: close, high, low, hl2 …
+  | { kind: 'indicator'; indicatorId: string; field?: string }
   | { kind: 'window';    expr: WindowExpression }
   | { kind: 'value';     value: number }
 
@@ -325,7 +560,7 @@ export interface Condition {
 
 export interface RuleGroup {
   id: string
-  label: string                                      // e.g. "Long Entry Group 1"
+  label: string
   logicalOperator: ExitCombineLogic
   conditions: Condition[]
 }
@@ -340,14 +575,12 @@ export interface EntryExitBlock {
 
 export interface ExitBehaviour {
   exitEndOfSession: boolean
-  exitAfterNBars: number | null                      // null = disabled
+  exitAfterNBars: number | null
   exitAtStopOrTargetOnly: boolean
   combineLogic: ExitCombineLogic
-  // tradableDays: backtest-level day filter only.
-  // For live/forward deployments, Deployment.schedule.days takes precedence.
   tradableDays: DayOfWeek[]
-  sessionStart?: string                              // "09:15" IST
-  sessionEnd?: string                                // "15:20" IST
+  sessionStart?: string
+  sessionEnd?: string
 }
 
 // ─── Stops, targets, trailing, scale-out ─────────────────────────────────────
@@ -362,54 +595,54 @@ export interface PartialExit {
   triggerR: number
   percentToClose: number
   moveStopTo: MoveStopTo
-  customLevel?: number                               // only when moveStopTo === MoveStopTo.Custom
+  customLevel?: number
 }
 
 export interface TrailingConfig {
   enabled: boolean
   trailingType: TrailingType
-  trailingParams: Record<string, number>             // e.g. { atrPeriod: 14, atrMult: 2 }
+  trailingParams: Record<string, number>
   startCondition: StartCondition
-  startConditionValue?: number                       // k for AfterKR, amount for AfterAbsoluteProfit
+  startConditionValue?: number
   partialExits: PartialExit[]
 }
 
 export interface RRConfig {
   rrMin: number
   rrMax: number
-  deriveTargetFromSL: boolean                        // if true, PT = SL × rrMin
+  deriveTargetFromSL: boolean
 }
 
 // ─── Risk controls ────────────────────────────────────────────────────────────
 
 export interface RiskControls {
-  maxRiskPerTradePercent: number                     // 0.25–2.0, mandatory
-  maxTradesPerDay: number                            // mandatory
+  maxRiskPerTradePercent: number
+  maxTradesPerDay: number
   maxOpenPositions?: number
 }
 
 export interface KillSwitch {
-  dailyLossLimitR?: number                           // stop new entries if loss ≥ X R
-  maxIntradayDrawdownPercent?: number                // pause if equity DD from day high ≥ Y%
-  cooldownBarsAfterHit?: number                      // skip entries for Z bars after breach
+  dailyLossLimitR?: number
+  maxIntradayDrawdownPercent?: number
+  cooldownBarsAfterHit?: number
 }
 
 // ─── Regime ───────────────────────────────────────────────────────────────────
 
 export interface RegimeDefinition {
   id: string
-  label: string                                      // e.g. "HighVol", "Trending"
+  label: string
   conditions: Condition[]
 }
 
-// ─── Strategy (root entity) ───────────────────────────────────────────────────
+// ─── Strategy ─────────────────────────────────────────────────────────────────
 
 export interface Strategy {
   id: string
   name: string
   description?: string
   primaryTimeframe: Timeframe
-  instruments: string[]                              // e.g. ["NSE:AXISBANK", "NSE:NIFTY"]
+  instruments: string[]
   tradingStyle: TradingStyle
   status: StrategyStatus
   indicators: IndicatorConfig[]
@@ -417,16 +650,16 @@ export interface Strategy {
   shortEntry: EntryExitBlock
   longExit: EntryExitBlock
   shortExit: EntryExitBlock
-  exitBehaviour: ExitBehaviour                      // mandatory; at least one rule must be enabled
+  exitBehaviour: ExitBehaviour
   stopLoss: StopTargetConfig
   profitTarget: StopTargetConfig
   rrConfig: RRConfig
   trailing: TrailingConfig
-  riskControls: RiskControls                         // mandatory
+  riskControls: RiskControls
   killSwitch?: KillSwitch
   regimeDefinitions?: RegimeDefinition[]
-  allowedRegimes?: string[]                          // regime ids
-  createdAt: string                                  // ISO string — never Date object
+  allowedRegimes?: string[]
+  createdAt: string
   updatedAt: string
 }
 
@@ -434,7 +667,7 @@ export interface Strategy {
 
 export interface ParameterOverride {
   section: OverrideSection
-  indicatorId?: string                               // required when section === OverrideSection.Indicator
+  indicatorId?: string
   paramKey: string
   baseValue: number | boolean
   overrideValue: number | boolean
@@ -461,13 +694,11 @@ export interface Deployment {
   strategyId: string
   scenarioId: string
   name: string
-  symbol: string                                     // e.g. "NSE:AXISBANK"
+  symbol: string
   timeframe: Timeframe
   mode: DeploymentMode
   broker: Broker
   allocatedCapital: number
-  // schedule.days overrides ExitBehaviour.tradableDays for live/forward deployments.
-  // ExitBehaviour.tradableDays applies only during backtesting.
   schedule: {
     days: DayOfWeek[]
     startTime?: string
@@ -490,9 +721,6 @@ export interface RunMetrics {
   avgRealisedRR: number
   longWinRate?: number
   shortWinRate?: number
-  // undefined when no forward run has been executed yet.
-  // UI rule: if undefined → render '—' with no color applied.
-  // Only apply C.redBg when value is present AND < 0.7.
   btToFtDegradationRatio?: number
   drawdownDurationBars?: number
 }
@@ -506,7 +734,7 @@ export interface RunResult {
   engineVersion: string
   dataVersion: string
   metrics: RunMetrics
-  completedAt: string                                // ISO string
+  completedAt: string
 }
 ```
 
@@ -516,6 +744,7 @@ export interface RunResult {
 
 | Method | Path | Used in |
 |---|---|---|
+| GET | `/api/enums` | EnumsContext — fetched once on app load |
 | GET | `/api/strategies` | Task 1 sidebar list |
 | POST | `/api/strategies` | Task 2 create |
 | PUT | `/api/strategies/{id}` | Task 2 edit |
@@ -593,13 +822,15 @@ Also used inline as a full-panel replace when editing from the Definition tab.
 
 Props: `{ strategyId?: string }` (absent = create mode)
 
+All dropdowns use `useEnums()` — not `ENUM_VALUES`.
+
 ### Sub-tab 1 — Core & Indicators
 
 **Left column — Basic Details block**
 - Strategy Name * — text input
-- Primary Timeframe * — dropdown: `ENUM_VALUES.timeframe`
+- Primary Timeframe * — dropdown: `enums.timeframe`
 - Instruments * — multi-value tag input (e.g. `NSE:AXISBANK`)
-- Trading Style * — dropdown: `ENUM_VALUES.tradingStyle`
+- Trading Style * — dropdown: `enums.tradingStyle`
 - Description — textarea (optional)
 
 **Left column — Exit Behaviour block** (mandatory; user must enable at least one)
@@ -607,10 +838,10 @@ Props: `{ strategyId?: string }` (absent = create mode)
 ☑ Exit at end of session
 ☑ Exit after [__] bars
 ☑ Exit at stop/target only
-Combine rules with: [ENUM_VALUES.exitCombineLogic ▾]
+Combine rules with: [enums.exitCombineLogic ▾]
 
 Session filters:
-Tradable days: ENUM_VALUES.dayOfWeek checkboxes
+Tradable days: enums.dayOfWeek checkboxes
 Session start: [09:15]   Session end: [15:20]
 ```
 
@@ -633,16 +864,16 @@ Two-column layout: Long side (left) | Short side (right)
 
 For each of `longEntry`, `shortEntry`, `longExit`, `shortExit`:
 - Enable toggle
-- Group operator selector: `ENUM_VALUES.exitCombineLogic`
+- Group operator selector: `enums.exitCombineLogic`
 - List of RuleGroups, each collapsed by default showing: `label · operator · N conditions`
 - Expand group → show conditions list
 
 Each RuleGroup:
 - Label input (editable, e.g. "Long Entry Group 1")
-- Group logic: `ENUM_VALUES.exitCombineLogic` toggle
+- Group logic: `enums.exitCombineLogic` toggle
 - Conditions list:
   - Left operand: `[Indicator ▾] [field ▾]` or `[Window ▾]`
-  - Operator: `ENUM_VALUES.conditionOp` dropdown
+  - Operator: `enums.conditionOp` dropdown
   - Right operand: `[Value input]` or `[Indicator ▾] [field ▾]` or `[Window ▾]`
   - Delete condition button
 - Buttons: `+ Condition` | `Duplicate group` | `Delete group`
@@ -650,14 +881,14 @@ Each RuleGroup:
 WindowExpression inline editor (shown when operand = Window):
 - Source indicator selector (from strategy's indicators)
 - Lookback bars input
-- Aggregation type: `ENUM_VALUES.aggregationType` dropdown
+- Aggregation type: `enums.aggregationType` dropdown
 - Optional multiplier input
 
 ### Sub-tab 3 — Risk & Regime
 
 **Stops & Targets block**
 Stop Loss:
-- Type: `ENUM_VALUES.stopType` dropdown
+- Type: `enums.stopType` dropdown
 - Base value input
 - Allowed range: min / max inputs
 
@@ -671,11 +902,11 @@ Risk-to-Reward:
 
 **Trailing & Scale-out block**
 - Enable trailing stop — checkbox
-  - When enabled: `ENUM_VALUES.trailingType` dropdown, params (dynamic per type)
-  - Start condition: `ENUM_VALUES.startCondition` dropdown
+  - When enabled: `enums.trailingType` dropdown, params (dynamic per type)
+  - Start condition: `enums.startCondition` dropdown
   - Start condition value input (shown for non-Immediately)
 - Partial exits table:
-  - Columns: `Trigger R | % to Close | Move Stop To (ENUM_VALUES.moveStopTo) | Delete`
+  - Columns: `Trigger R | % to Close | Move Stop To (enums.moveStopTo) | Delete`
   - `+ Add partial exit` button
 
 **Regime filters block** (optional; hidden behind `Enable Regime Filtering` toggle)
@@ -685,10 +916,10 @@ Risk-to-Reward:
 ### IndicatorModal
 Props: `{ indicatorId?: string; strategyIndicators: IndicatorConfig[]; onSave: (i: IndicatorConfig) => void }`
 
-Step 1: Type (`ENUM_VALUES.indicatorType`) + Timeframe (`ENUM_VALUES.timeframe`) + Role (`ENUM_VALUES.indicatorRole`)
+Step 1: Type (`enums.indicatorType`) + Timeframe (`enums.timeframe`) + Role (`enums.indicatorRole`)
 Step 2: Configure baseParams (fields rendered dynamically per type) + allowedParamRanges (min/max per numeric param)
 
-No hard-coded TF restrictions — all `ENUM_VALUES.timeframe` options are valid.
+No hard-coded TF restrictions — all `enums.timeframe` options are valid.
 
 ### Page footer
 `Save Strategy` | `Save & Go to Scenarios`
@@ -740,7 +971,7 @@ For each group heading e.g. `EMA (15m) — EntryFilter`:
 
 Section: **Run Configuration**
 - Capital (₹) — number input
-- Broker account — `ENUM_VALUES.broker` dropdown
+- Broker account — `enums.broker` dropdown
 - Backtest from / to — date inputs
 
 Footer: `Cancel` | `Save Scenario` | `Save & Run Backtest`
@@ -753,21 +984,18 @@ Footer: `Cancel` | `Save Scenario` | `Save & Run Backtest`
 
 Props: `{ strategy: Strategy }`
 
-Deployment drawer fields:
+Deployment drawer fields (all use `useEnums()`):
 - Deployment Name *
 - Scenario * — dropdown of strategy's scenarios
 - Symbol * — text input (`NSE:AXISBANK`)
-- Timeframe * — `ENUM_VALUES.timeframe` dropdown
-- Mode * — `ENUM_VALUES.deploymentMode` dropdown
-- Broker * — `ENUM_VALUES.broker` dropdown
+- Timeframe * — `enums.timeframe` dropdown
+- Mode * — `enums.deploymentMode` dropdown
+- Broker * — `enums.broker` dropdown
 - Allocated Capital (₹) * — number input
-- Schedule — `ENUM_VALUES.dayOfWeek` checkboxes + start/end time (HH:MM)
+- Schedule — `enums.dayOfWeek` checkboxes + start/end time (HH:MM)
 
 Table columns: `Name | Scenario | Symbol | TF | Mode | Broker | Capital | Status | Actions`
 Actions: `Run Backtest` | `→ Fwd Test` | `Delete`
-
-Existing instances (old model): map `instanceSymbol → symbol`, `instanceTimeframe → timeframe`.
-Show `—` in Scenario column if `scenarioId` missing.
 
 ---
 
@@ -794,20 +1022,13 @@ Right pane (flex-1):
 - **Charts** (middle section):
   - Equity curve(s) — one line per selected run, `C.blue` / `C.green` / `C.amber`
   - Drawdown curve(s) — area chart, `C.redBg` fill
-  - Use lightweight charting library (already in project) or recharts
 - **Notes** (bottom section): freetext textarea, `C.border` border, `12px` font
 
 Metric table rules:
-- Rows fixed (metrics), columns = selected runs
-- Delta column (Δ) shown only when ≥ 2 columns
-- `btToFtDegradationRatio` rendering:
-  - `undefined` (no forward run) → render `'—'`, no bg color
-  - defined AND `< 0.7` → cell bg `C.redBg`, color `C.red`
-  - defined AND `>= 0.7` → normal cell (best-value highlight still applies via `C.greenBg`)
+- `btToFtDegradationRatio` undefined → render `'—'`, no bg color
+- `btToFtDegradationRatio` defined AND `< 0.7` → cell bg `C.redBg`, color `C.red`
 - Best value per row → cell bg `C.greenBg`
 - All values: `F.mono`, `tabular-nums`, right-aligned
-
-Metric table columns:
 
 | Metric | Key | Format |
 |---|---|---|
@@ -821,8 +1042,6 @@ Metric table columns:
 | Expectancy | `expectancy` | `₹840` |
 | Realised R:R | `avgRealisedRR` | `2.1` |
 | BT→FT | `btToFtDegradationRatio` | `0.92` or `—` |
-
-Empty state: "No scenarios have been run yet. Run a backtest to start comparing."
 
 ---
 
@@ -839,45 +1058,47 @@ Filters bar:
 
 Table columns: `Scenario | Mode | Date Range | Return | Max DD | Sharpe | Win% | PF | Trades | Details`
 
-- Details link: `View →` opens run detail panel or route
-- Return: green if positive, red if negative
-- All numeric metrics: `F.mono`, right-aligned, `tabular-nums`
-
 ---
 
 ## File checklist
 
 ```
-frontend/src/types/strategy.ts                          CREATE — all enums + ENUM_VALUES + interfaces
-frontend/src/pages/StrategyDefinitionPage.tsx           CREATE — full-page 3-sub-tab form
-frontend/src/pages/StrategiesPage.tsx                   MODIFY — 5-tab layout, new sidebar card
-frontend/src/components/strategies/
-  ScenariosTab.tsx                                      CREATE
-  ScenarioDrawer.tsx                                    CREATE
-  DeploymentsTab.tsx                                    CREATE
-  ResultsTab.tsx                                        CREATE
-  CompareTab.tsx                                        CREATE
-  IndicatorModal.tsx                                    CREATE
-  RuleGroupEditor.tsx                                   CREATE — reusable rule group UI
-  ConditionRow.tsx                                      CREATE — single condition row
-  WindowExpressionEditor.tsx                            CREATE — inline window expr editor
-frontend/src/components/ui/RightDrawer.tsx              CREATE if not exists — 520px fixed drawer
-```
+DB migration:
+  enum_values table + seed                              CREATE (see DB section above)
 
-Note: `frontend/src/components/strategies/` does not exist — Claude must create the directory.
+Backend:
+  backend/src/routes/enumsRoute.ts                      CREATE — GET /api/enums
+
+Frontend:
+  frontend/src/types/strategy.ts                        CREATE — enums + ENUM_VALUES (fallback) + validateEnumResponse + interfaces
+  frontend/src/context/EnumsContext.tsx                 CREATE — EnumsProvider + useEnums hook
+  frontend/src/pages/StrategyDefinitionPage.tsx         CREATE — full-page 3-sub-tab form
+  frontend/src/pages/StrategiesPage.tsx                 MODIFY — 5-tab layout, new sidebar card
+  frontend/src/components/strategies/
+    ScenariosTab.tsx                                    CREATE
+    ScenarioDrawer.tsx                                  CREATE
+    DeploymentsTab.tsx                                  CREATE
+    ResultsTab.tsx                                      CREATE
+    CompareTab.tsx                                      CREATE
+    IndicatorModal.tsx                                  CREATE
+    RuleGroupEditor.tsx                                 CREATE
+    ConditionRow.tsx                                    CREATE
+    WindowExpressionEditor.tsx                          CREATE
+  frontend/src/components/ui/RightDrawer.tsx            CREATE if not exists
+```
 
 ---
 
 ## Constraints
 - No raw hex anywhere — `C.*` tokens only (AP-020)
-- **No hardcoded string arrays in UI** — all dropdown option lists must use `ENUM_VALUES.*` (single source of truth)
+- **UI dropdowns use `useEnums()` only** — never `ENUM_VALUES`, never hardcoded string arrays
+- **`ENUM_VALUES` imported only by** `EnumsContext` (fallback) and unit tests — nowhere else
 - **No string literals for enum fields** — always use enum member (e.g. `Timeframe.M5`, not `'5m'`)
 - Scenario drawer only — no inline form expansion for scenarios (AP-022)
 - Strategy definition is full-page — NOT a 520px drawer
 - No `DateTime.Now` on backend; frontend receives ISO strings only
 - No `"New Strategy Instance"` modal — replaced by Deployment drawer (Task 4)
 - No indicator add/remove/role-change in Scenario drawer — param list structurally locked
-- Scenario cannot change rule structure — no adding/removing conditions or groups
 - Table padding `TABLE_CELL`, font `12px`
 - Metric values: `F.mono`, `tabular-nums`, right-aligned
 - TypeScript strict — no `any`, no implicit undefined
@@ -887,8 +1108,11 @@ Note: `frontend/src/components/strategies/` does not exist — Claude must creat
 ---
 
 ## Definition of done
-- [ ] `frontend/src/types/strategy.ts` created with ALL enums, `ENUM_VALUES`, and interfaces
-- [ ] Every UI dropdown/chip derives its options from `ENUM_VALUES.*` — zero hardcoded string arrays
+- [ ] `enum_values` DB table created and seeded
+- [ ] `GET /api/enums` returns all active values grouped by domain
+- [ ] `EnumsContext` fetches `/api/enums` on mount; falls back to `ENUM_VALUES` on error
+- [ ] `frontend/src/types/strategy.ts` created with all enums, `ENUM_VALUES` (fallback only), `validateEnumResponse`, and interfaces
+- [ ] Every UI dropdown uses `useEnums()` — grep for `ENUM_VALUES` in component files returns zero results
 - [ ] Strategy creation: Name + primaryTimeframe + instruments + tradingStyle + indicators + rules + exits + risk (full form, 3 sub-tabs)
 - [ ] Scenario creation: inherited indicators read-only, parameter overrides only within allowedParamRanges, run config
 - [ ] Deployment creation: symbol + timeframe + broker + capital + schedule + scenario link
@@ -896,8 +1120,6 @@ Note: `frontend/src/components/strategies/` does not exist — Claude must creat
 - [ ] Compare tab: 3 comparison modes, metric table + delta column + equity/drawdown charts
 - [ ] All 5 tabs render without console errors
 - [ ] Status chips consistent across all components using `ScenarioStatus` / `DeploymentStatus` enum values
-- [ ] IndicatorModal: type + TF + role from `ENUM_VALUES.*`, no TF restrictions
-- [ ] RuleGroupEditor: condition builder with IndicatorRef, WindowExpression, numeric operands
 - [ ] Zero raw hex in any new file
 - [ ] `npx tsc --noEmit` passes
 - [ ] `npm run dev` starts clean
