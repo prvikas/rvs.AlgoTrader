@@ -6,7 +6,7 @@
 
 -- Add CHECK constraint for expiry validation
 DO $$ BEGIN
-    IF NOT EXISTS (SELECT FROM information_schema.constraints WHERE constraint_name = 'ck_broker_sessions_expiry') THEN
+    IF NOT EXISTS (SELECT FROM information_schema.table_constraints WHERE constraint_name = 'ck_broker_sessions_expiry') THEN
         ALTER TABLE broker_sessions
         ADD CONSTRAINT ck_broker_sessions_expiry CHECK (expires_at > stored_at);
     END IF;

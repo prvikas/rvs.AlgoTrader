@@ -37,7 +37,7 @@ public class SearchInstrumentsHandler(IInstrumentRepository repo) : IRequestHand
 {
     public async Task<PagedResult<InstrumentDto>> Handle(SearchInstrumentsQuery request, CancellationToken ct)
     {
-        var instruments = await repo.SearchAsync(request.Query, request.PageSize * request.Page, ct);
+        var instruments = await repo.SearchAsync(request.Query, request.PageSize * request.Page, ct, request.UniverseOnly);
         var total = instruments.Count;
         var items = instruments.Skip((request.Page - 1) * request.PageSize).Take(request.PageSize)
             .Select(InstrumentMapper.ToDto)
@@ -65,7 +65,7 @@ public class GetInstrumentsHandler(IInstrumentRepository repo) : IRequestHandler
 
         var (items, total) = await repo.FilterPagedAsync(
             request.Search, request.Exchange, request.InstrumentType, request.Active,
-            request.SortBy, request.SortDesc, pageSize, offset, ct);
+            request.SortBy, request.SortDesc, pageSize, offset, ct, request.UniverseOnly);
 
         return new PagedResult<InstrumentDto>(
             items.Select(InstrumentMapper.ToDto).ToList(),

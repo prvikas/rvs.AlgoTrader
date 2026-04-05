@@ -144,6 +144,11 @@ public class DatabaseMigrationRunner(
                 var executed = 0;
                 var skipped  = 0;
 
+                // Wrap each migration in a transaction so a mid-migration failure
+                // rolls back all statements — the migration is never partially applied.
+                using var tx = await conn.BeginTransactionAsync(ct);
+                cmd.Transaction = (System.Data.Common.DbTransaction)tx;
+
                 foreach (var stmt in SplitStatements(sql))
                 {
                     cmd.CommandText = stmt;
@@ -160,11 +165,10 @@ public class DatabaseMigrationRunner(
                             name, ex.Message[..Math.Min(120, ex.Message.Length)]);
                         skipped++;
                     }
-                    // All other exceptions propagate: the migration is NOT marked applied,
-                    // the app refuses to start, and the error is clearly visible in logs.
+                    // All other exceptions propagate — transaction rolls back automatically.
                 }
 
-                // Record as applied only when all non-optional statements succeeded
+                // Record as applied inside the same transaction
                 cmd.Parameters.Clear();
                 cmd.CommandText = "INSERT INTO schema_migrations (name) VALUES (@n) ON CONFLICT DO NOTHING;";
                 var pApply = cmd.CreateParameter();
@@ -172,6 +176,9 @@ public class DatabaseMigrationRunner(
                 cmd.Parameters.Add(pApply);
                 await cmd.ExecuteNonQueryAsync(ct);
                 cmd.Parameters.Clear();
+
+                await tx.CommitAsync(ct);
+                cmd.Transaction = null;
 
                 logger.LogInformation("[Migration] {Name} — done ({Executed} executed, {Skipped} optional skipped).",
                     name, executed, skipped);

@@ -44,7 +44,7 @@ public class InstrumentConfiguration : IEntityTypeConfiguration<Instrument>
         builder.Property(i => i.SettlementCurrency).HasColumnName("settlement_currency").HasMaxLength(10);
         builder.Property(i => i.PriceMultiplier).HasColumnName("price_multiplier").HasPrecision(18, 6);
 
-        builder.HasIndex(i => i.InternalSymbol).IsUnique();
+        builder.HasAlternateKey(i => i.InternalSymbol);
         builder.HasIndex(i => new { i.TradingSymbol, i.Exchange });
         builder.HasIndex(i => i.IsActive);
     }

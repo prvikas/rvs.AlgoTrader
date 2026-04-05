@@ -10,15 +10,14 @@ repo: rvs.AlgoTrader | ns: rvs.AlgoTrader.* | stack: .NET 9 / C# 13 / React 19 /
 1. read this file
 2. read docs/IMPLEMENTATION_STATUS.md — must stay under 50 lines
 3. read docs/PLAN.md — identify current phase and next step
-4. do not read docs/PROMPT.md unless explicitly requested
-5. use docs/STRATEGY_SPECS.md as the only authoritative strategy source
-6. state current phase + gaps + proposed next step
-7. wait for confirmation before writing any code
+4. use docs/STRATEGY_SPECS.md as the only authoritative strategy source
+5. state current phase + gaps + proposed next step
+6. wait for confirmation before writing any code
 
 ## Commands
 ```bash
-dotnet build rvs.AlgoTrader.sln
-dotnet run --project src/rvs.AlgoTrader.API
+dotnet run --project src/rvs.AlgoTrader.API   # prefer over build — catches DB migration + DI errors at startup
+dotnet build rvs.AlgoTrader.sln               # use only when run is not possible (e.g. no DB available)
 cd frontend && npm run dev        # :3000, proxies API to :62318
 ./run-tests.sh [unit|arch|integration|e2e|all]
 dotnet test tests/rvs.AlgoTrader.Tests.Unit --filter "FullyQualifiedName~MyTestName"
@@ -62,6 +61,8 @@ spec: docs/UI_DESIGN_SPEC.md — read before any frontend change
 - validate market calendar before placing any order (AP-011); all logs must carry correlation ID via Serilog enrichment (AP-008)
 - frontend order submit: crypto.randomUUID() per submit (AP-012)
 - no naked short options in any strategy; no business config in appsettings
+- Avoid praise/filler openings; answer directly.
+- verify changes by running (`dotnet run`) not just building — `dotnet build` misses DB migration failures and DI wiring errors
 see full list: docs/ANTI_PATTERNS.md
 
 ## Architecture

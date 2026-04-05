@@ -27,7 +27,11 @@ public class StrategyScenarioConfiguration : IEntityTypeConfiguration<StrategySc
         b.Property(x => x.UpdatedAt).HasColumnName("updated_at")
             .HasConversion(v => v.ToDateTimeUtc(), v => Instant.FromDateTimeUtc(v));
 
-        b.Ignore(x => x.StrategyInstance);
+        b.HasOne(x => x.StrategyInstance)
+            .WithMany()
+            .HasForeignKey(x => x.StrategyInstanceId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
 
         b.HasIndex(x => x.StrategyInstanceId).HasDatabaseName("ix_strategy_scenarios_instance");
     }

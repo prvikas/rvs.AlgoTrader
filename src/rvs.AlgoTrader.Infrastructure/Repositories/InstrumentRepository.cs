@@ -18,7 +18,7 @@ public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepo
     public async Task<Instrument?> GetByInternalSymbolAsync(string symbol, CancellationToken ct = default)
         => await db.Instruments.FirstOrDefaultAsync(i => i.InternalSymbol == symbol, ct);
 
-    public async Task<IReadOnlyList<Instrument>> SearchAsync(string query, int limit, CancellationToken ct = default)
+    public async Task<IReadOnlyList<Instrument>> SearchAsync(string query, int limit, CancellationToken ct = default, bool universeOnly = false)
     {
         var q = db.Instruments.AsQueryable();
         if (!string.IsNullOrWhiteSpace(query))
@@ -29,6 +29,11 @@ public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepo
                 i.TradingSymbol.ToLower().Contains(lower) ||
                 i.Name.ToLower().Contains(lower) ||
                 i.Exchange.ToLower().Contains(lower));
+        }
+        if (universeOnly)
+        {
+            var universeSymbols = db.InstrumentUniverse.Where(u => u.IsActive).Select(u => u.Symbol);
+            q = q.Where(i => universeSymbols.Contains(i.InternalSymbol));
         }
         return await q.Take(limit).ToListAsync(ct);
     }
@@ -41,7 +46,8 @@ public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepo
     /// </summary>
     public async Task<(IReadOnlyList<Instrument> Items, int TotalCount)> FilterPagedAsync(
         string? search, string? exchange, string? instrumentType, bool? active,
-        string sortBy, bool sortDesc, int pageSize, int offset, CancellationToken ct = default)
+        string sortBy, bool sortDesc, int pageSize, int offset, CancellationToken ct = default,
+        bool universeOnly = false)
     {
         var q = db.Instruments.AsNoTracking().AsQueryable();
 
@@ -61,6 +67,11 @@ public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepo
             q = q.Where(i => i.InstrumentType == parsedType);
         if (active.HasValue)
             q = q.Where(i => i.IsActive == active.Value);
+        if (universeOnly)
+        {
+            var universeSymbols = db.InstrumentUniverse.Where(u => u.IsActive).Select(u => u.Symbol);
+            q = q.Where(i => universeSymbols.Contains(i.InternalSymbol));
+        }
 
         // ── COUNT (same predicates, no ordering/paging) ───────────────────────
         var total = await q.CountAsync(ct);

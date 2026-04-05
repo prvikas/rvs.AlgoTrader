@@ -52,5 +52,11 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
         builder.HasIndex(p => new { p.BrokerName, p.IsOpen });
         builder.HasIndex(p => p.StrategyRunId);
         builder.HasIndex(p => new { p.InternalSymbol, p.IsOpen });
+
+        builder.HasOne<StrategyRun>()
+            .WithMany()
+            .HasForeignKey(p => p.StrategyRunId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

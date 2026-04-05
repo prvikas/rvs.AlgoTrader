@@ -21,5 +21,12 @@ public class InstrumentUniverseConfiguration : IEntityTypeConfiguration<Instrume
 
         builder.HasIndex(u => new { u.Symbol, u.Exchange, u.Category }).IsUnique();
         builder.HasIndex(u => new { u.Category, u.IsActive });
+
+        builder.HasOne<Instrument>()
+            .WithMany()
+            .HasForeignKey(u => u.Symbol)
+            .HasPrincipalKey(i => i.InternalSymbol)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

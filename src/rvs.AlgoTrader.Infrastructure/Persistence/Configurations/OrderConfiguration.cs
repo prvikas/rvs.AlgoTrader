@@ -54,5 +54,11 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.HasIndex(o => o.BrokerOrderId);
         builder.HasIndex(o => new { o.BrokerName, o.PlacedAt });
         builder.HasIndex(o => o.StrategyRunId);
+
+        builder.HasOne<StrategyRun>()
+            .WithMany()
+            .HasForeignKey(o => o.StrategyRunId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

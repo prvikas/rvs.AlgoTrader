@@ -33,5 +33,11 @@ public class StrategyRunConfiguration : IEntityTypeConfiguration<StrategyRun>
 
         builder.HasIndex(r => r.StrategyInstanceId);
         builder.HasIndex(r => r.Status);
+
+        builder.HasOne<StrategyInstance>()
+            .WithMany()
+            .HasForeignKey(r => r.StrategyInstanceId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

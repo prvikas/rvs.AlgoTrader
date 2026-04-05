@@ -34,7 +34,8 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
                 v => v.ToDateTimeUtc(),
                 v => Instant.FromDateTimeUtc(v));
 
-        builder.Property(s => s.AllocatedCapital).HasColumnName("allocated_capital");
+        builder.Property(s => s.AllocatedCapital).HasColumnName("allocated_capital").HasPrecision(18, 4);
+        builder.Property(s => s.IsActive).HasColumnName("is_active");
         builder.Property(s => s.ConfigJson).HasColumnName("config_json").HasColumnType("jsonb");
         builder.Property(s => s.CreatedBy).HasColumnName("created_by").HasMaxLength(200);
         builder.Property(s => s.WatchlistId).HasColumnName("watchlist_id");

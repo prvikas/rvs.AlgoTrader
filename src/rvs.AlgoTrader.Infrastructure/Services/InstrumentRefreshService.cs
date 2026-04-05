@@ -47,28 +47,14 @@ public class InstrumentRefreshService(
             return;
         }
 
-        // 2. Load symbol universe from DB and apply filter
-        var universe = await LoadUniverseAsync(ct);
-        var before   = mappings.Count;
-        mappings     = mappings.Where(m => IsInUniverse(m, universe)).ToList();
-        logger.LogInformation(
-            "[InstrumentRefresh] Universe filter: {Before} → {After} instruments kept for {Broker}",
-            before, mappings.Count, brokerName);
-
-        if (mappings.Count == 0)
-        {
-            logger.LogWarning(
-                "[InstrumentRefresh] No instruments remain after universe filter. " +
-                "Seed instrument_universe with NSE_EQUITY / OPTIONS_UNDERLYING rows to control which symbols are stored.");
-            return;
-        }
-
-        // 3. Upsert into the local instruments table
+        // 2. Upsert ALL broker instruments — instruments is the full master list.
+        // instrument_universe is the trading whitelist (subset); it is NOT a filter here.
+        // Strategies use instrument_universe at execution time to select which symbols to trade.
         var (newCount, updatedCount) = await UpsertInstrumentsAsync(brokerName, mappings.ToList(), ct);
 
         logger.LogInformation(
-            "[InstrumentRefresh] {Broker}: {Created} new, {Updated} updated instruments ({Total} total) - COMPLETED",
-            brokerName, newCount, updatedCount, mappings.Count);
+            "[InstrumentRefresh] {Broker}: {Created} new, {Updated} updated, {Total} total instruments — COMPLETED",
+            brokerName, newCount, updatedCount, newCount + updatedCount);
     }
 
     public async Task RefreshAllBrokersAsync(CancellationToken ct)

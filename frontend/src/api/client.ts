@@ -164,7 +164,7 @@ export const instrumentsApi = {
     apiClient.get<ApiResponse<PagedResult<Instrument>>>('/instruments', { params }),
   search: (query: string) =>
     apiClient.get<ApiResponse<PagedResult<Instrument>>>('/instruments', {
-      params: { search: query, pageSize: 20 },
+      params: { search: query, pageSize: 20, universeOnly: true },
     }),
   /** Legacy / scheduled-job path: download + immediately save using stored filter config. */
   refresh: (brokerName = 'all') =>
@@ -850,6 +850,16 @@ export interface StrategyParamDef {
   step?: number
   hint?: string
   options?: StrategyParamOption[]
+  /**
+   * Logical section heading (e.g. "Trend Template", "Price Structure").
+   * The frontend groups all params with the same section under one collapsible card.
+   */
+  section?: string
+  /**
+   * Key of the bool param that gates this param — the input is dimmed/hidden
+   * when the referenced bool param is false.
+   */
+  enabledBy?: string
 }
 
 // ── Trade Journal ────────────────────────────────────────────────────────────

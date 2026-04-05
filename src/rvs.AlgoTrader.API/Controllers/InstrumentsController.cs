@@ -28,16 +28,17 @@ public class InstrumentsController(
         [FromQuery] string? exchange,
         [FromQuery] string? instrumentType,
         [FromQuery] bool?   active,
-        [FromQuery] string  sortBy   = "symbol",
-        [FromQuery] string  sortDir  = "asc",
-        [FromQuery] int     page     = 1,
-        [FromQuery] int     pageSize = 50,
+        [FromQuery] string  sortBy      = "symbol",
+        [FromQuery] string  sortDir     = "asc",
+        [FromQuery] int     page        = 1,
+        [FromQuery] int     pageSize    = 50,
+        [FromQuery] bool    universeOnly = false,
         CancellationToken ct = default)
     {
         var result = await mediator.Send(new GetInstrumentsQuery(
             search, exchange, instrumentType, active,
             sortBy, sortDir.Equals("desc", StringComparison.OrdinalIgnoreCase),
-            page, pageSize), ct);
+            page, pageSize, universeOnly), ct);
         return Ok(ApiResponse<PagedResult<InstrumentDto>>.Ok(result));
     }
 

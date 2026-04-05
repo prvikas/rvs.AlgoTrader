@@ -27,5 +27,11 @@ public class CapitalAllocationConfiguration : IEntityTypeConfiguration<CapitalAl
                 v => Instant.FromDateTimeUtc(v));
 
         builder.HasIndex(c => c.StrategyInstanceId).IsUnique();
+
+        builder.HasOne<StrategyInstance>()
+            .WithMany()
+            .HasForeignKey(c => c.StrategyInstanceId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

@@ -39,7 +39,9 @@ public record StrategyParamDef(
     decimal? Max = null,
     decimal? Step = null,
     string? Hint = null,
-    IReadOnlyList<StrategyParamOption>? Options = null);
+    IReadOnlyList<StrategyParamOption>? Options = null,
+    string? Section = null,
+    string? EnabledBy = null);
 
 public record StrategyParamOption(string Value, string Label);
 

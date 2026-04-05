@@ -11,14 +11,20 @@ DO $$ BEGIN
         SELECT 1 FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'audit_log'
     ) THEN
-        -- Add 'action' column if missing (010's primary write column)
+        -- Add 'action' column if missing (010's primary write column).
+        -- Use NOT NULL DEFAULT 'UNKNOWN' so all existing rows are filled atomically —
+        -- this avoids a separate UPDATE + SET NOT NULL which can fail if event_type is NULL.
         IF NOT EXISTS (
             SELECT 1 FROM information_schema.columns
             WHERE table_schema = 'public' AND table_name = 'audit_log' AND column_name = 'action'
         ) THEN
-            ALTER TABLE audit_log ADD COLUMN action VARCHAR(100);
-            -- Backfill: event_type and action share the same semantic intent
-            UPDATE audit_log SET action = event_type WHERE action IS NULL;
+            ALTER TABLE audit_log ADD COLUMN action VARCHAR(100) NOT NULL DEFAULT 'UNKNOWN';
+            -- Best-effort refinement: copy event_type where it is not NULL.
+            UPDATE audit_log SET action = event_type WHERE event_type IS NOT NULL;
+        ELSE
+            -- Column already exists (e.g. from a previous partial run that committed the DDL
+            -- but not the NOT-NULL enforcement). Backfill any remaining NULLs then enforce.
+            UPDATE audit_log SET action = COALESCE(event_type, 'UNKNOWN') WHERE action IS NULL;
             ALTER TABLE audit_log ALTER COLUMN action SET NOT NULL;
         END IF;
 

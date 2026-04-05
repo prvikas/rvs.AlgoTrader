@@ -28,6 +28,12 @@ public class ForwardTestSessionConfiguration : IEntityTypeConfiguration<ForwardT
             .HasConversion(
                 v => v == null ? (DateTime?)null : v.Value.ToDateTimeUtc(),
                 v => v == null ? (Instant?)null : Instant.FromDateTimeUtc(v.Value));
+
+        builder.HasOne<StrategyInstance>()
+            .WithMany()
+            .HasForeignKey(s => s.StrategyInstanceId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -63,5 +69,11 @@ public class ForwardTestTradeConfiguration : IEntityTypeConfiguration<ForwardTes
             .HasConversion(
                 v => v == null ? (DateTime?)null : v.Value.ToDateTimeUtc(),
                 v => v == null ? (Instant?)null : Instant.FromDateTimeUtc(v.Value));
+
+        builder.HasOne<ForwardTestSession>()
+            .WithMany()
+            .HasForeignKey(t => t.SessionId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

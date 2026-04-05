@@ -40,7 +40,8 @@ public interface IInstrumentRepository
 {
     Task<Instrument?> GetBySymbolAsync(string internalSymbol, CancellationToken ct);
     Task<Instrument?> GetByInternalSymbolAsync(string symbol, CancellationToken ct);
-    Task<IReadOnlyList<Instrument>> SearchAsync(string query, int limit, CancellationToken ct);
+    // universeOnly: when true, restrict to symbols active in instrument_universe (strategy context).
+    Task<IReadOnlyList<Instrument>> SearchAsync(string query, int limit, CancellationToken ct, bool universeOnly = false);
     Task<IReadOnlyList<Instrument>> GetAllActiveAsync(CancellationToken ct);
     Task UpsertAsync(Instrument instrument, CancellationToken ct);
     Task UpsertAsync(IEnumerable<Instrument> instruments, CancellationToken ct);
@@ -49,10 +50,12 @@ public interface IInstrumentRepository
     /// Server-side paged + sorted + filtered query.
     /// Returns the current page of instruments AND the total matching count (for pagination UI).
     /// sortBy: "symbol" | "name" | "exchange" | "type" — default "symbol".
+    /// universeOnly: when true, restrict to symbols active in instrument_universe (strategy context).
     /// </summary>
     Task<(IReadOnlyList<Instrument> Items, int TotalCount)> FilterPagedAsync(
         string? search, string? exchange, string? instrumentType, bool? active,
-        string sortBy, bool sortDesc, int pageSize, int offset, CancellationToken ct);
+        string sortBy, bool sortDesc, int pageSize, int offset, CancellationToken ct,
+        bool universeOnly = false);
 
     /// <summary>
     /// Loads all instruments whose InternalSymbol is in the given set — one DB round trip.

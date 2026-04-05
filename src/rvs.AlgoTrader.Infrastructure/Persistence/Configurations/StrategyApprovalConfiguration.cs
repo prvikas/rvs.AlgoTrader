@@ -36,5 +36,11 @@ public class StrategyApprovalConfiguration : IEntityTypeConfiguration<StrategyAp
 
         builder.HasIndex(a => a.StrategyInstanceId).HasDatabaseName("idx_strategy_approvals_instance");
         builder.HasIndex(a => a.CreatedAt).HasDatabaseName("idx_strategy_approvals_created").IsDescending();
+
+        builder.HasOne<StrategyInstance>()
+            .WithMany()
+            .HasForeignKey(a => a.StrategyInstanceId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

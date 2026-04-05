@@ -38,11 +38,12 @@ DO $$ BEGIN
           AND table_name   = 'forward_test_trades'
           AND column_name  = 'realized_pnl'
     ) THEN
-        -- Backfill all historical rows where realized_pnl was never written
-        UPDATE forward_test_trades SET realized_pnl = pnl WHERE realized_pnl IS NULL;
-        -- Set a safe default so future inserts that omit the column get 0
+        -- Backfill all historical rows where realized_pnl was never written.
+        -- COALESCE(pnl, 0) handles rows where pnl is also NULL (e.g. open trades).
+        UPDATE forward_test_trades SET realized_pnl = COALESCE(pnl, 0) WHERE realized_pnl IS NULL;
+        -- Set a safe default so future inserts that omit the column get 0.
         ALTER TABLE forward_test_trades ALTER COLUMN realized_pnl SET DEFAULT 0;
-        -- Now enforce NOT NULL; all rows are filled
+        -- Enforce NOT NULL — all rows are now filled via the COALESCE above.
         ALTER TABLE forward_test_trades ALTER COLUMN realized_pnl SET NOT NULL;
     END IF;
 END $$;

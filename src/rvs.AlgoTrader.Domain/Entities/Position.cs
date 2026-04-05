@@ -7,7 +7,7 @@ public class Position
     public Guid Id { get; private set; }
     public string BrokerName { get; private set; } = string.Empty;
     public string InternalSymbol { get; private set; } = string.Empty;
-    public int Quantity { get; private set; }
+    public long Quantity { get; private set; }
     public decimal AvgPrice { get; private set; }
     public decimal EntryPrice { get; private set; }
     public decimal CurrentPrice { get; private set; }
@@ -33,7 +33,7 @@ public class Position
 
     public static Position Open(
         string brokerName, string internalSymbol,
-        int quantity, decimal avgPrice,
+        long quantity, decimal avgPrice,
         decimal? stopLoss, decimal? takeProfit,
         Guid? strategyRunId, string correlationId, Instant now)
     {
@@ -69,7 +69,7 @@ public class Position
     /// P&amp;L is always computed against <see cref="AvgPrice"/>, NOT <see cref="EntryPrice"/>.
     /// EntryPrice is the first-fill price and is immutable; AvgPrice is the VWAP across all fills.
     /// </summary>
-    public void UpdateAvgPrice(int additionalQuantity, decimal fillPrice, Instant now)
+    public void UpdateAvgPrice(long additionalQuantity, decimal fillPrice, Instant now)
     {
         if (additionalQuantity <= 0) return;
         var totalQty = Quantity + additionalQuantity;

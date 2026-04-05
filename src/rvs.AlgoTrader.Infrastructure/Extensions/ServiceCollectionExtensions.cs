@@ -138,8 +138,16 @@ public static class ServiceCollectionExtensions
 
         // Backtest service stubs (replace with real implementations later)
         services.AddScoped<IBacktestService, BacktestService>();
-        // #137: Pre-market readiness check
-        services.AddScoped<IPreMarketReadinessService, PreMarketReadinessService>();
+        // #137: Pre-market readiness check — IConnectionMultiplexer is optional; use factory
+        // so DI resolves it via GetService<> (returns null) rather than failing validation
+        // when Redis is unavailable.
+        services.AddScoped<IPreMarketReadinessService>(sp => new PreMarketReadinessService(
+            sp.GetRequiredService<AlgoTraderDbContext>(),
+            sp.GetService<IConnectionMultiplexer>(),
+            sp.GetRequiredService<IMarketCalendarService>(),
+            sp.GetRequiredService<IAppBrokerSessionManager>(),
+            sp.GetRequiredService<IClock>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PreMarketReadinessService>>()));
         // #136: SLO tracker — singleton so counters accumulate across requests
         services.AddSingleton<SloTracker>();
         services.AddScoped<IBacktestReproductionService, BacktestReproductionService>();

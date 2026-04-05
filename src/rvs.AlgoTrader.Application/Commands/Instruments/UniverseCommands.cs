@@ -196,7 +196,10 @@ public class DeleteUniverseEntryHandler(IInstrumentUniverseRepository repo)
     }
 }
 
-public class SeedDefaultUniverseHandler(IInstrumentUniverseRepository repo, IClock clock)
+public class SeedDefaultUniverseHandler(
+    IInstrumentUniverseRepository repo,
+    IInstrumentRepository instruments,
+    IClock clock)
     : IRequestHandler<SeedDefaultUniverseCommand, int>
 {
     public async Task<int> Handle(SeedDefaultUniverseCommand request, CancellationToken ct)
@@ -204,8 +207,20 @@ public class SeedDefaultUniverseHandler(IInstrumentUniverseRepository repo, IClo
         var existingKeys = await repo.GetExistingKeysAsync(ct);
         var now          = clock.NowInstant();
 
-        var toAdd = UniverseDefaults.Entries
+        // Candidates: not already in universe
+        var candidates = UniverseDefaults.Entries
             .Where(d => !existingKeys.Contains($"{d.Symbol}|{d.Category}"))
+            .ToList();
+
+        if (candidates.Count == 0) return 0;
+
+        // Only insert symbols that exist in the instruments master (FK constraint).
+        var symbolsNeeded = candidates.Select(d => d.Symbol).Distinct().ToList();
+        var existing      = await instruments.GetBatchByInternalSymbolAsync(symbolsNeeded, ct);
+        var knownSymbols  = existing.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var toAdd = candidates
+            .Where(d => knownSymbols.Contains(d.Symbol))
             .Select(d => new InstrumentUniverse
             {
                 Id        = Guid.NewGuid(),
@@ -217,7 +232,9 @@ public class SeedDefaultUniverseHandler(IInstrumentUniverseRepository repo, IClo
             })
             .ToList();
 
-        await repo.AddRangeAsync(toAdd, ct);
+        if (toAdd.Count > 0)
+            await repo.AddRangeAsync(toAdd, ct);
+
         return toAdd.Count;
     }
 }

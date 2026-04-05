@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { universeApi, InstrumentUniverseEntry } from '../api/client'
+import { universeApi, instrumentsApi, InstrumentUniverseEntry } from '../api/client'
 
 // All valid category values (must match UniverseCategories.All on the backend)
 const CATEGORIES = [
@@ -152,10 +152,34 @@ export function UniversePage() {
   const [search,         setSearch]         = useState('')
 
   // add form state
-  const [newSymbol,   setNewSymbol]   = useState('')
-  const [newExchange, setNewExchange] = useState('NSE')
-  const [newCategory, setNewCategory] = useState<Category>('NSE_EQUITY')
-  const [addError,    setAddError]    = useState('')
+  const [newSymbol,       setNewSymbol]       = useState('')
+  const [newExchange,     setNewExchange]     = useState('NSE')
+  const [newCategory,     setNewCategory]     = useState<Category>('NSE_EQUITY')
+  const [addError,        setAddError]        = useState('')
+  const [symbolQuery,     setSymbolQuery]     = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const symbolInputRef = useRef<HTMLDivElement>(null)
+
+  // Typeahead: search instruments master (not universe) when user types ≥ 2 chars
+  const { data: suggestions } = useQuery({
+    queryKey: ['instrument-search-universe', symbolQuery],
+    queryFn: () =>
+      instrumentsApi
+        .list({ search: symbolQuery, pageSize: 15 })
+        .then(r => r.data.data?.items ?? []),
+    enabled: symbolQuery.length >= 2,
+    staleTime: 10_000,
+  })
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (symbolInputRef.current && !symbolInputRef.current.contains(e.target as Node))
+        setShowSuggestions(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const { data, isLoading } = useQuery({
     queryKey: ['universe', filterCategory, filterActive],
@@ -250,15 +274,58 @@ export function UniversePage() {
       <div style={S.card}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Add Symbol</div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div>
+          <div ref={symbolInputRef} style={{ position: 'relative' }}>
             <div style={{ fontSize: 11, color: '#8b8b9f', marginBottom: 4 }}>SYMBOL</div>
             <input
-              style={{ ...S.input, width: 140, textTransform: 'uppercase' }}
+              style={{ ...S.input, width: 160, textTransform: 'uppercase' }}
               placeholder="e.g. RELIANCE"
               value={newSymbol}
-              onChange={e => setNewSymbol(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && newSymbol.trim() && createMutation.mutate()}
+              onChange={e => {
+                const v = e.target.value.toUpperCase()
+                setNewSymbol(v)
+                setSymbolQuery(v)
+                setShowSuggestions(true)
+              }}
+              onFocus={() => newSymbol.length >= 2 && setShowSuggestions(true)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && newSymbol.trim()) createMutation.mutate()
+                if (e.key === 'Escape') setShowSuggestions(false)
+              }}
+              autoComplete="off"
             />
+            {showSuggestions && (suggestions?.length ?? 0) > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, zIndex: 100,
+                background: '#1a1a2e', border: '1px solid #2d2d3f', borderRadius: 6,
+                width: 280, maxHeight: 220, overflowY: 'auto', marginTop: 2,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+              }}>
+                {suggestions!.map(inst => (
+                  <div
+                    key={inst.id}
+                    style={{
+                      padding: '7px 12px', cursor: 'pointer', fontSize: 13,
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      borderBottom: '1px solid #1a1a2a',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#2d2d3f')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    onMouseDown={e => {
+                      e.preventDefault()
+                      setNewSymbol(inst.internalSymbol)
+                      setSymbolQuery(inst.internalSymbol)
+                      setShowSuggestions(false)
+                      // Auto-select exchange to match the instrument's exchange
+                      const exchAvail = EXCHANGES[newCategory] ?? ['NSE']
+                      if (exchAvail.includes(inst.exchange)) setNewExchange(inst.exchange)
+                    }}
+                  >
+                    <span style={{ fontWeight: 600, fontFamily: 'monospace' }}>{inst.internalSymbol}</span>
+                    <span style={{ fontSize: 11, color: '#8b8b9f' }}>{inst.exchange} · {inst.instrumentType}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <div style={{ fontSize: 11, color: '#8b8b9f', marginBottom: 4 }}>CATEGORY</div>

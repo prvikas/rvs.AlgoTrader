@@ -45,5 +45,11 @@ public class TradeJournalEntryConfiguration : IEntityTypeConfiguration<TradeJour
 
         builder.HasIndex(e => new { e.StrategyInstanceId, e.EntryTime });
         builder.HasIndex(e => e.InternalSymbol);
+
+        builder.HasOne<StrategyInstance>()
+            .WithMany()
+            .HasForeignKey(e => e.StrategyInstanceId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

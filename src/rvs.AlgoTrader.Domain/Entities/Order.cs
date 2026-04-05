@@ -11,7 +11,7 @@ public class Order
     public string InternalSymbol { get; private set; } = string.Empty;
     public OrderType OrderType { get; private set; }
     public OrderDirection Direction { get; private set; }
-    public int Quantity { get; private set; }
+    public long Quantity { get; private set; }
     public decimal? Price { get; private set; }
     public decimal? TriggerPrice { get; private set; }
     public OrderStatus Status { get; private set; }
@@ -19,7 +19,7 @@ public class Order
     public string IdempotencyKey { get; private set; } = string.Empty;
     public string CorrelationId { get; private set; } = string.Empty;
     public decimal? FillPrice { get; private set; }
-    public int FilledQuantity { get; private set; }
+    public long FilledQuantity { get; private set; }
     public decimal? TrailingSl { get; private set; }
     public decimal? TrailingTp { get; private set; }
     public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
@@ -35,7 +35,7 @@ public class Order
     public static Order Create(
         string brokerName, string internalSymbol,
         OrderType orderType, OrderDirection direction,
-        int quantity, decimal? price, decimal? triggerPrice,
+        long quantity, decimal? price, decimal? triggerPrice,
         string idempotencyKey, string correlationId,
         Guid? strategyRunId, Instant now)
     {
@@ -66,7 +66,7 @@ public class Order
         UpdatedAt = now;
     }
 
-    public void MarkFilled(decimal fillPrice, int filledQty, Instant now)
+    public void MarkFilled(decimal fillPrice, long filledQty, Instant now)
     {
         FillPrice = fillPrice;
         FilledQuantity = filledQty;
