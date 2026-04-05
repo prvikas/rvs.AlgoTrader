@@ -113,7 +113,14 @@ export type ScenarioStatus =
   | 'Draft' | 'Running' | 'Backtested' | 'Fwd Testing'
   | 'Live Candidate' | 'Live' | 'Archived'
 
-export type StrategyStatus = 'Draft' | 'Backtested' | 'Fwd Testing' | 'Live'
+// FIX-1: Added 'Archived' — was missing from StrategyStatus despite being in the canonical chip set
+export type StrategyStatus = 'Draft' | 'Backtested' | 'Fwd Testing' | 'Live' | 'Archived'
+
+// FIX-2: Dedicated DeploymentStatus — Deployment.status was incorrectly typed as StrategyStatus,
+// which lacks 'Running' and 'Live Candidate'. Deployments can be in those states.
+export type DeploymentStatus =
+  | 'Draft' | 'Running' | 'Backtested' | 'Fwd Testing'
+  | 'Live Candidate' | 'Live' | 'Archived'
 
 export type RunMode = 'Backtest' | 'ForwardTest'
 
@@ -176,6 +183,9 @@ export interface ExitBehaviour {
   exitAfterNBars: number | null                      // null = disabled
   exitAtStopOrTargetOnly: boolean
   combineLogic: ExitCombineLogic                     // how the above three rules combine
+  // FIX-4: tradableDays here is the backtest-level day filter.
+  // For live/forward deployments, Deployment.schedule.days takes precedence and overrides this field.
+  // During backtesting only, this field controls which days are simulated.
   tradableDays: ('Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun')[]
   sessionStart?: string                              // "09:15" IST
   sessionEnd?: string                                // "15:20" IST
@@ -315,12 +325,16 @@ export interface Deployment {
   mode: 'Backtest' | 'Forward Test' | 'Live'
   broker: 'MStock' | 'Zerodha' | 'Upstox'
   allocatedCapital: number
+  // FIX-4: schedule.days overrides ExitBehaviour.tradableDays for live/forward deployments.
+  // ExitBehaviour.tradableDays applies only during backtesting.
   schedule: {
     days: ('Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun')[]
     startTime?: string
     endTime?: string
   }
-  status: StrategyStatus
+  // FIX-2: Changed from StrategyStatus to DeploymentStatus — deployments can be
+  // 'Running' or 'Live Candidate' which were absent from StrategyStatus.
+  status: DeploymentStatus
 }
 
 // ─── RunResult ────────────────────────────────────────────────────────────────
@@ -337,7 +351,10 @@ export interface RunMetrics {
   avgRealisedRR: number
   longWinRate?: number
   shortWinRate?: number
-  btToFtDegradationRatio?: number                    // forward PF / backtest PF; undefined if no fwd run
+  // FIX-3: undefined when no forward run has been executed yet.
+  // UI rule: if undefined → render '—' with no color applied (do NOT show red).
+  // Only apply C.redBg when the value is present AND < 0.7.
+  btToFtDegradationRatio?: number
   drawdownDurationBars?: number
 }
 
@@ -644,7 +661,10 @@ Right pane (flex-1):
 Metric table rules:
 - Rows fixed (metrics), columns = selected runs
 - Delta column (Δ) shown only when ≥ 2 columns
-- `btToFtDegradationRatio < 0.7` → cell bg `C.redBg`, color `C.red`
+- FIX-3: `btToFtDegradationRatio` rendering rules:
+  - If `undefined` (no forward run yet) → render `'—'`, no background color applied
+  - If defined AND `< 0.7` → cell bg `C.redBg`, color `C.red`
+  - If defined AND `>= 0.7` → normal cell (best-value highlight still applies via `C.greenBg`)
 - Best value per row → cell bg `C.greenBg`
 - All values: `F.mono`, `tabular-nums`, right-aligned
 
@@ -661,7 +681,7 @@ Metric table columns:
 | Avg R | `avgRPerTrade` | `0.42 R` |
 | Expectancy | `expectancy` | `₹840` |
 | Realised R:R | `avgRealisedRR` | `2.1` |
-| BT→FT | `btToFtDegradationRatio` | `0.92` |
+| BT→FT | `btToFtDegradationRatio` | `0.92` or `—` |
 
 Empty state: "No scenarios have been run yet. Run a backtest to start comparing."
 
