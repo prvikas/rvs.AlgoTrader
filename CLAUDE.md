@@ -80,3 +80,12 @@ BACKTEST_WORKFLOW.md | PROMPT.md | SELF_LEARNING.md
 
 ## Post-change updates
 update: IMPLEMENTATION_STATUS.md | REQUIREMENTS_DELTA.md (if reqs changed) | STRATEGY_SPECS.md (if strategy rules changed) | SELF_LEARNING.md (if repeatable mistake)
+
+## Doc hygiene rules (token cost — enforce always)
+- CLAUDE.md: hard limit 80 lines; no inline code samples — rules only; code examples live in the relevant spec doc
+- IMPLEMENTATION_STATUS.md: hard limit 50 lines; status + one-line note only — no narrative paragraphs
+- PROMPT.md: each prompt entry must be deleted (or replaced with a one-line stub) immediately after implementation is confirmed done; stale prompts waste tokens on every read
+- dead doc references: if a file is listed in the Docs map but deleted or fully superseded, remove it from the map in the same commit
+- no duplicate content: if a rule exists in ANTI_PATTERNS.md, do not restate it verbatim in any other doc — reference the AP code only
+- no speculative docs: do not create a new doc file for a feature that has not started; use REQUIREMENTS_DELTA.md for pending decisions
+- SELF_LEARNING.md: one bullet per lesson; never exceed 30 lines; prune resolved lessons on each update
