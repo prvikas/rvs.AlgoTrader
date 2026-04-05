@@ -234,7 +234,7 @@ Replace inline expanded-div forms (Strategy Create, Backtest Run) with a right-s
     boxShadow: '-8px 0 32px rgba(0,0,0,0.6)',
     display: 'flex', flexDirection: 'column', gap: 12,
   }}>
-    <DrawerHeader title="New Strategy Instance" onClose={() => setShowForm(false)} />
+    <DrawerHeader title="New Strategy" onClose={() => setShowForm(false)} />
     {/* form fields */}
   </div>
 )}
@@ -253,30 +253,114 @@ Replace inline expanded-div forms (Strategy Create, Backtest Run) with a right-s
 
 ---
 
-## 10. Strategy Status Chips (compact)
+## 10. Strategy / Scenario / Deployment Domain Model
+
+> This is the canonical mental model for the Strategies page. Any UI that mixes these layers is incorrect.
+
+```
+Strategy (defines logic — no symbol, no broker)
+  └── Scenario (parameter overrides only — no new indicators)
+        └── Deployment (symbol + timeframe + broker + capital + schedule)
+              └── Run (backtest result | forward test result | live status)
+```
+
+### Strategy layer
+- Fields: Name, Description, StrategyType, DefaultParameters
+- No symbol. No broker. No capital.
+- Drawer title: "Create Strategy" / "Edit Strategy"
+
+### Scenario layer
+- Fields: Name, Description, ParameterOverrides (subset of parent strategy parameters)
+- Parameters list is structurally locked — same indicator set as parent strategy
+- Cannot add/remove indicators or parameters — only change values
+- Each override row shows: `[checkbox] ParamName | Base: {strategyDefault} | → {overrideValue} | type`
+- Drawer title: "New Scenario" / "Edit Scenario"
+- A read-only inherited block above overrides:
+  ```
+  INHERITED FROM: {strategyName} · {strategyType}
+  Indicators fixed. Only parameter values may differ.
+  ```
+
+### Deployment layer
+- Fields: Name, Scenario (dropdown), Symbol, Timeframe, Mode, Broker, AllocatedCapital, Schedule
+- This replaces the current "New Strategy Instance" modal
+- Drawer title: "Create Deployment" / "Edit Deployment"
+
+### Run layer
+- Created by: Run Backtest | Promote to Forward Test | Go Live
+- Stored as backtest_runs or forward_test_runs records
+- Shown in: Scenarios tab (inline result chips) + Compare tab (full metrics table)
+
+---
+
+## 11. Strategies Page — 4-Tab Layout
+
+```
+┌─ Strategy Card List (left, fixed) ──────────────────────────────┐
+│ [AlertCandleAxis]       Scheduled                               │
+│ [EM_VWAP_Axis]          Draft                                   │
+│ [test]                  Draft               [+ NEW]            │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─ Selected Strategy Detail (centre, scrollable) ─────────────────┐
+│ AlertCandleAxis — AlertCandleShort                              │
+│                                                                 │
+│  [Definition] [Scenarios] [Deployments] [Compare]              │
+│  ──────────────────────────────────────────────────            │
+│  (tab content)                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Tab: Definition** — read-only view of strategy type + all default parameters  
+**Tab: Scenarios** — list of scenarios, inline result chips, actions (Run / Edit / Fwd Test / Delete)  
+**Tab: Deployments** — list of deployments bound to this strategy  
+**Tab: Compare** — side-by-side metric table across scenarios and run types  
+
+---
+
+## 12. Compare Tab — Metric Table
+
+Minimum metrics to show per run:
+
+| Metric | Description |
+|---|---|
+| Net Return | Total % return over period |
+| Sharpe Ratio | Risk-adjusted return (annualised) |
+| Max Drawdown | Peak-to-trough % loss |
+| Win Rate | % of profitable trades |
+| Profit Factor | Gross profit / gross loss |
+| Trade Count | Number of completed trades |
+| Avg Expectancy | Avg ₹ per trade |
+| BT→FT Ratio | fwd_return / backtest_return — flag < 0.70 red |
+
+Comparison modes:
+- Scenario vs Scenario (same run type)
+- Backtest vs Forward Test (same scenario)
+- Current vs Previous run (after parameter edit)
+
+Best value per row highlighted: `background: '#0a2218'` (subtle green)  
+Worst value: `background: '#1a0a0a'` (subtle red)  
+All numbers: monospace, right-aligned, tabular-nums  
+
+---
+
+## 13. Strategy Status Chips (compact)
 
 ```tsx
-// Mode badge
-const MODE_CHIP = {
-  Live:    { bg: '#0a2218', color: '#00d07a', border: '#00d07a30' },
-  Forward: { bg: '#0a1829', color: '#3b82f6', border: '#3b82f630' },
-  Backtest:{ bg: '#1a1209', color: '#f59e0b', border: '#f59e0b30' },
+// Consistent status set across Strategy, Scenario, Deployment, Run
+const STATUS_CHIP = {
+  Draft:          { bg: '#111120', color: '#4a5568', border: '#4a556830' },
+  Running:        { bg: '#1a1209', color: '#f59e0b', border: '#f59e0b30' },  // pulse animation
+  Backtested:     { bg: '#0a1829', color: '#3b82f6', border: '#3b82f630' },
+  'Fwd Testing':  { bg: '#1a1209', color: '#f59e0b', border: '#f59e0b30' },
+  Scheduled:      { bg: '#0a1829', color: '#3b82f6', border: '#3b82f630' },
+  Live:           { bg: '#0a2218', color: '#00d07a', border: '#00d07a30' },
 }
-
-<span style={{
-  fontSize: 9, fontWeight: 800, padding: '2px 6px',
-  borderRadius: 3, letterSpacing: '0.08em',
-  background: MODE_CHIP[mode].bg,
-  color: MODE_CHIP[mode].color,
-  border: `1px solid ${MODE_CHIP[mode].border}`,
-}}>
-  {mode.toUpperCase()}
-</span>
 ```
 
 ---
 
-## 11. Color Tokens
+## 14. Color Tokens
 
 ```ts
 export const C = {
@@ -298,7 +382,7 @@ export const C = {
 
 ---
 
-## 12. Responsive Behavior
+## 15. Responsive Behavior
 
 - Minimum supported width: **1280px** (professional traders use wide monitors)
 - No mobile breakpoints needed
@@ -306,7 +390,7 @@ export const C = {
 
 ---
 
-## 13. Font Loading
+## 16. Font Loading
 
 Add to `index.html`:
 ```html
@@ -322,7 +406,7 @@ Apply globally in `index.html` or `main.tsx`:
 
 ---
 
-## 14. What NOT to Do
+## 17. What NOT to Do
 
 - ❌ No `padding: '20px'` on content areas
 - ❌ No `fontSize: 26px` on metric values
@@ -332,16 +416,23 @@ Apply globally in `index.html` or `main.tsx`:
 - ❌ No `backgroundColor: '#1e1e2e'` (too light) — use `#0d0d17`
 - ❌ No inline expanded forms — use drawers
 - ❌ No `height: 100vh` flex sidebar layout — use top nav + full-width content
+- ❌ No mixing Strategy creation with Deployment creation in one modal
+- ❌ No adding new indicators inside a Scenario drawer
+- ❌ No raw hex values in components — always reference tokens from `frontend/src/styles/tokens.ts`
 
 ---
 
-## 15. Implementation Order
+## 18. Implementation Order
 
 1. `index.html` — add font imports + CSS reset
 2. `main.tsx` — global body background `#090910`
 3. `Dashboard.tsx` — replace sidebar + header with top-nav (Section 3)
 4. `PortfolioOverview.tsx` — redesign MetricCard + StrategyTable (Sections 5–6)
 5. All other pages — apply table row padding + SectionLabel (Sections 6, 8)
-6. `StrategiesPage` — convert form to right drawer (Section 9)
-7. `BacktestPage` — convert form to right drawer (Section 9)
-8. Color token file `src/styles/tokens.ts` (Section 11)
+6. `StrategiesPage.tsx` — 4-tab layout (Section 11)
+7. `StrategyDefinitionDrawer.tsx` — CREATE (strategy logic only, no deployment fields)
+8. `ScenarioDrawer.tsx` — CREATE (parameter overrides only, locked indicator set)
+9. `DeploymentsTab.tsx` — CREATE (replaces "New Strategy Instance" modal)
+10. `CompareTab.tsx` — CREATE (first-class research surface)
+11. `ScenariosTab.tsx` — refactor with result chips and new columns
+12. Color token file `src/styles/tokens.ts` (Section 14)

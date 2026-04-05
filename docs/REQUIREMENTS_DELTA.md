@@ -5,6 +5,33 @@ Record only changed or new requirements.
 Do not restate stable architecture.
 
 
+## 2026-04-05
+
+### Strategy / Scenario / Deployment Model Redesign
+
+**Owner vision confirmed (quant research workflow):**
+- Strategy = fixed indicator stack + default parameters. No symbol. No broker.
+- Scenario = parameter overrides on existing strategy. Cannot add/remove indicators.
+- Deployment = symbol + timeframe + broker + capital + schedule bound to a scenario.
+- Compare = first-class research tab showing backtest vs forward test metrics side-by-side.
+
+**UI changes required:**
+- StrategiesPage: 4-tab layout per strategy (Definition | Scenarios | Deployments | Compare)
+- Strategy Definition Drawer: name, description, strategy type, default parameters only
+- Scenario Drawer: locked parameter list from parent strategy — override values only
+- Deployment Drawer: replaces current "New Strategy Instance" modal
+- Compare Tab: metric table with Sharpe, Max DD, Win%, Profit Factor, BT→FT ratio
+
+**Precision AI prompt for implementation:** see `docs/PROMPT.md` → PROMPT-001
+
+**Status chips standardised:** Draft | Running | Backtested | Fwd Testing | Scheduled | Live
+
+**Hard rules added:**
+- AP-023: Scenario drawer must never allow adding indicators — parameter list is structurally locked to parent strategy
+- AP-024: Strategy creation form must not include symbol, broker, capital, or schedule fields
+- AP-025: Compare tab is mandatory on Strategies page — not optional or secondary
+
+
 ## 2026-03-30
 
 ### Critical Bugs Found
