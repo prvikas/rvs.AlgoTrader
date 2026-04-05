@@ -23,6 +23,12 @@ public interface IPositionRepository
     Task<Position?> GetOpenPositionForSymbolAsync(string brokerName, string symbol, CancellationToken ct);
     Task AddAsync(Position position, CancellationToken ct);
     Task UpdateAsync(Position position, CancellationToken ct);
+    /// <summary>
+    /// Returns closed positions belonging to the given strategy runs whose
+    /// <c>ClosedAt</c> falls within <paramref name="dateIst"/> (IST calendar day).
+    /// Used by MonitoringAlertJob for same-day realized P&amp;L.
+    /// </summary>
+    Task<IReadOnlyList<Position>> GetClosedTodayAsync(IEnumerable<Guid> strategyRunIds, LocalDate dateIst, CancellationToken ct);
 }
 
 public interface IInstrumentRepository

@@ -88,12 +88,9 @@ public class MonitoringAlertJob(
             // Unrealized P&L: pre-computed on Position by LiveExecutionEngine on each price tick
             var unrealizedPnl = instanceOpenPositions.Sum(p => p.UnrealizedPnl);
 
-            // Realized P&L: closed positions for today IST.
-            // Note: ClosedAt is stored as Instant (UTC). A GetClosedTodayAsync repo method is needed to
-            // query positions closed on todayIst — add to IPositionRepository in the next iteration.
-            // For now: use unrealized P&L only. This is conservative and correct — unrealized drawdown
-            // from open positions is the most time-critical signal; realized losses are already locked in.
-            const decimal realizedPnlToday = 0m; // TODO: replace with positionRepo.GetClosedTodayAsync(instanceId, todayIst, ct)
+            // Realized P&L: positions closed today (IST calendar day) belonging to this instance's runs.
+            var closedToday = await positionRepo.GetClosedTodayAsync(runIds, todayIst, ct);
+            var realizedPnlToday = closedToday.Sum(p => p.RealizedPnl);
             var totalPnl = realizedPnlToday + unrealizedPnl;
             var openPositionCount = instanceOpenPositions.Count;
 

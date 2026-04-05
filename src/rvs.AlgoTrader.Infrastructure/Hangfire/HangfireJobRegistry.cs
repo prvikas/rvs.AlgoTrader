@@ -1,6 +1,7 @@
 using Hangfire;
 using Microsoft.Extensions.Logging;
 using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Infrastructure.Jobs;
 
 namespace rvs.AlgoTrader.Infrastructure.Hangfire;
 
@@ -41,6 +42,11 @@ public static class HangfireJobRegistry
         RecurringJob.AddOrUpdate<EodReportJob>(
             "eod-report", j => j.ExecuteAsync(CancellationToken.None),
             "15 10 * * 1-5");
+
+        // Market breadth: after market close 4:30 PM IST = 11:00 UTC (idempotent — safe to re-run)
+        RecurringJob.AddOrUpdate<BreadthCalculatorJob>(
+            "breadth-calculator", j => j.RunAsync(CancellationToken.None),
+            "0 11 * * 1-5");
 
         logger.LogInformation("[HangfireJobRegistry] All recurring jobs registered");
     }

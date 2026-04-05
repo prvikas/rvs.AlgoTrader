@@ -7,21 +7,21 @@ research -> backtest -> forward test -> approval -> live deploy
 ## Phases
 
 ### P1 Repo audit
-status: IN_PROGRESS
+status: DONE
 goals:
 - inspect current implementation
 - update IMPLEMENTATION_STATUS.md
 - identify gaps vs lifecycle goal
 
 ### P2 Backtest foundation
-status: TODO
+status: DONE
 goals:
 - verify historical data path via mStock
 - verify BacktestExecutionEngine flow
 - reproducibility, metrics, trade log output
 
 ### P3 Forward test foundation
-status: TODO
+status: DONE
 goals:
 - SimulatedExecutionEngine parity with backtest
 - same signal logic verified via parity tests

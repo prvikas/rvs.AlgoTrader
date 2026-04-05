@@ -1,6 +1,7 @@
 using FluentValidation;
 using Hangfire;
 using Hangfire.Dashboard;
+using rvs.AlgoTrader.Infrastructure.Hangfire;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using NodaTime;
@@ -111,6 +112,12 @@ app.MapHangfireDashboard("/hangfire", new DashboardOptions
 {
     Authorization = [new LocalRequestsOnlyAuthorizationFilter()]
 });
+
+// Register all recurring Hangfire jobs (instrument refresh, historical download,
+// strategy scheduler, reconciliation, monitoring alerts, EOD report, breadth calculator).
+// Must be called after UseHangfireServer / MapHangfireDashboard so that the Hangfire
+// storage is already initialised.
+HangfireJobRegistry.RegisterJobs(app.Logger);
 
 // Startup orchestration
 using (var scope = app.Services.CreateScope())

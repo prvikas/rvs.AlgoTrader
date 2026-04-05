@@ -30,11 +30,11 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Monte Carlo simulation | DONE | #97: IMonteCarloSimulator interface + MonteCarloSimulator (bootstrap resample, P5/P50/P95 drawdown+equity, ProbabilityOfRuin); POST /api/backtest/{id}/montecarlo endpoint |
 | Multi-timeframe | DONE | #94: StrategyContext gains Candles15Min/Candles1Hour/CandlesDaily; StrategyEvaluationQueue pre-fetches higher-TF from ICandleCache; IsFinerThan guard |
 | Strategy correlation | DONE | #95: IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser (Pearson + Monte Carlo 10K), CorrelationController with /matrix /portfolio /check endpoints; CorrelationPage (heatmap, risk warnings, efficient frontier, optimal weights) |
-| Forward test engine | PARTIAL | ForwardTestEngine skeleton wired; FinalCapital now persisted (#184); SL/TP close logic present; #176 risk-based sizing via IPositionSizingEngine (FixedFractional 1%); full candle-feed wiring NOT_REVIEWED |
-| Live execution engine | NOT_REVIEWED | |
+| Forward test engine | DONE | ProcessCandleAsync wired via StrategyEvaluationQueue; SL/TP mirrors BacktestEngine; risk-based sizing (#176); FinalCapital persisted (#184) |
+| Live execution engine | DONE | approval gate + kill switch + idempotency + capital reservation + broker PlaceOrderAsync; strategy-level per-order risk not integrated |
 | Broker integrations | PARTIAL | #134 Polly retry (3×, exponential) + circuit breaker (50% failure/30s) on all 6 HTTP clients; #129 ITokenStore + RedisEncryptedTokenStore (AES-256-GCM) |
 | Candle pipeline | PARTIAL | UpsertAsync: INSERT ON CONFLICT (#145); BulkInsertAsync: Npgsql COPY FROM STDIN binary protocol (#142); partial index is_closed=true (#147) |
-| Scheduling | NOT_REVIEWED | |
+| Scheduling | DONE | HangfireJobRegistry wired in Program.cs; 7 recurring jobs (instrument-refresh, historical-download, strategy-scheduler, reconciliation, monitoring-alerts, eod-report, breadth-calculator); StartupOrchestrator 11-step cold restart; IStrategyScheduler IST session windows |
 | Position sizing | DONE | #87: IPositionSizingEngine, 5 models (FixedLots, FixedFractional, AtrBased, KellyCriterion half-Kelly, VolatilityTargeting), hard caps |
 | Slippage & commission | DONE | #88: ISlippageModel (6 types incl. Almgren-Chriss VolumeImpact), ICommissionModel, IndianMarketCommissionModel (STT/GST/SEBI/stamp) |
 | Portfolio risk manager | DONE | #85/#86: PortfolioRiskManager, 6 controls, auto kill-switch on daily loss limit, Redis-backed config |

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Infrastructure.Persistence;
@@ -38,5 +39,22 @@ public class PositionRepository(AlgoTraderDbContext db) : IPositionRepository
     {
         db.Positions.Update(position);
         await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<Position>> GetClosedTodayAsync(
+        IEnumerable<Guid> strategyRunIds, LocalDate dateIst, CancellationToken ct = default)
+    {
+        var tz = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
+        var startInstant = dateIst.AtStartOfDayInZone(tz).ToInstant();
+        var endInstant   = dateIst.PlusDays(1).AtStartOfDayInZone(tz).ToInstant();
+        var ids = strategyRunIds.ToList();
+
+        return await db.Positions
+            .Where(p => !p.IsOpen
+                     && p.StrategyRunId.HasValue
+                     && ids.Contains(p.StrategyRunId!.Value)
+                     && p.ClosedAt >= startInstant
+                     && p.ClosedAt < endInstant)
+            .ToListAsync(ct);
     }
 }
