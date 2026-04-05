@@ -7,7 +7,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Solution structure | PARTIAL | repo, backend, frontend, tests, Claude kit |
 | Claude docs | DONE | compressed CLAUDE.md, ANTI_PATTERNS.md extracted |
 | Strategy abstraction | DONE | StrategyFactory + GetSchema(); 10 strategies registered (3 equity + 7 options) |
-| Strategies (6) | DONE | STRAT-001 VCP (#77), STRAT-002 Fib spread (#78), STRAT-003 PCR (#79), Iron Condor (#80), Straddle/Strangle (#81), Calendar (#82) |
+| Strategies (6) | DONE | STRAT-001 VCP: +breadth filter (BreadthPct200Sma≥40%); STRAT-002 Fib: fixed entry→1.618 zone, +IVP filter, +event exclusion, stop at 0.786; STRAT-003 PCR: uses PutCallRatioChangeOI, session-based stop, configurable observation window |
 | Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
 | Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report; position sizing fixed; SharpeRatio daily-grouped+annualised (#180); WarmupBars=strategy.MinWarmupBars (#187); zero-alloc hash (#182); ExitTime=candle.OpenTime for SL/TP (#39); SkippedSignalCount logged+surfaced (#46) |
 | Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007; Version field (migration 015) auto-increments on param change |

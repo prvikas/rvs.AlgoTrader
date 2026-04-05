@@ -36,6 +36,14 @@ public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
         var lows    = candles.Select(c => c.Low).ToArray();
         var current = candles[^1];
 
+        // ── Market breadth filter (STRAT-001 spec: % above SMA) ───────────
+        if (config.BreadthFilterEnabled && context.BreadthPct200Sma.HasValue)
+        {
+            if (context.BreadthPct200Sma.Value < config.MinBreadthPct200Sma)
+                return Task.FromResult(SignalResult.Hold(
+                    $"Market breadth {context.BreadthPct200Sma:F1}% < {config.MinBreadthPct200Sma}% — broad market weak, no VCP entries"));
+        }
+
         // ── SMA200 trend filter ────────────────────────────────────────────
         decimal sma200 = closes.TakeLast(config.Sma200Period).Average();
         if (current.Close <= sma200)
@@ -186,6 +194,11 @@ public class VcpSwingConfig
     public decimal BreakoutVolumeMultiple  { get; set; } = 1.5m;
     public decimal RiskRewardRatio         { get; set; } = 2.0m;
 
+    /// <summary>If true, requires market breadth (% above SMA200) ≥ MinBreadthPct200Sma before entering.</summary>
+    public bool    BreadthFilterEnabled  { get; set; } = true;
+    /// <summary>Minimum % of NSE equities above their 200-day SMA. 40 = broad market in reasonable shape.</summary>
+    public decimal MinBreadthPct200Sma   { get; set; } = 40m;
+
     public static VcpSwingConfig FromJson(string json)
         => JsonSerializer.Deserialize<VcpSwingConfig>(json) ?? new();
 
@@ -200,5 +213,7 @@ public class VcpSwingConfig
         new("EntryBufferPct",         "Entry Buffer %",             "decimal", 0.5m,  Min: 0.1m, Max: 3.0m, Step: 0.1m),
         new("BreakoutVolumeMultiple", "Breakout Volume Multiple",   "decimal", 1.5m,  Min: 1.0m, Max: 5.0m, Step: 0.5m),
         new("RiskRewardRatio",        "Risk:Reward Ratio",          "decimal", 2.0m,  Min: 1.0m, Max: 10.0m, Step: 0.5m),
+        new("BreadthFilterEnabled",   "Enable Breadth Filter",      "bool",    true,  Hint: "Skip entries when broad market breadth is below MinBreadthPct200Sma"),
+        new("MinBreadthPct200Sma",    "Min Breadth % (above SMA200)","decimal",40m,   Min: 20m,  Max: 80m,  Step: 5m,  Hint: "% of NSE stocks above 200-day SMA required to enable entries"),
     ];
 }

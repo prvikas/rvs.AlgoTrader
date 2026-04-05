@@ -8,6 +8,7 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -38,6 +39,9 @@ public class StrategyEvaluationQueue(
     ISignalJournalRepository signalJournal,
     IPublishEndpoint bus,
     IClock clock,
+    IMarketBreadthService breadthService,
+    IOptionIvRankService ivRankService,
+    IEventCalendarService eventCalendarService,
     ILogger<StrategyEvaluationQueue> logger) : IConsumer<CandleClosedEvent>
 {
     // Per-instance channels to ensure sequential evaluation
@@ -93,6 +97,44 @@ public class StrategyEvaluationQueue(
                 ? await candleCache.GetAsync(instance.InternalSymbol, Timeframes.Daily, HigherTfBarCount, ct)
                 : null;
 
+            // ── Pre-fetch market-context for strategy filters ─────────────────
+            // Each fetch is best-effort; failure returns null (strategy skips optional filter).
+            var todayIst = clock.NowInstant()
+                .InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])
+                .Date;
+
+            decimal? breadthPct200Sma = null;
+            try
+            {
+                var breadthDto = await breadthService.GetLatestAsync(ct);
+                breadthPct200Sma = breadthDto?.Pct200Sma;
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[EvalQueue] BreadthService unavailable for {Instance}", instance.Name);
+            }
+
+            IvRankSnapshot? symbolIvRank = null;
+            try
+            {
+                symbolIvRank = await ivRankService.GetAsync(instance.InternalSymbol, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[EvalQueue] IvRankService unavailable for {Instance}", instance.Name);
+            }
+
+            var hasUpcomingEvent = false;
+            try
+            {
+                hasUpcomingEvent = await eventCalendarService.HasHighImpactEventAsync(
+                    todayIst, windowDays: 3, symbol: instance.InternalSymbol, ct: ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[EvalQueue] EventCalendarService unavailable for {Instance}", instance.Name);
+            }
+
             var strategy = strategyFactory.Create(instance.StrategyName, instance.ParametersJson);
             var strategyContext = new StrategyContext(
                 instance.Id,
@@ -101,10 +143,13 @@ public class StrategyEvaluationQueue(
                 candles,
                 instance.ParametersJson ?? "{}",
                 correlationId,
-                OptionChain:  null,          // populated by IOptionChainService when wired
-                Candles15Min: candles15Min,
-                Candles1Hour: candles1Hour,
-                CandlesDaily: candlesDaily);
+                OptionChain:       null,          // populated by IOptionChainService when wired
+                Candles15Min:      candles15Min,
+                Candles1Hour:      candles1Hour,
+                CandlesDaily:      candlesDaily,
+                BreadthPct200Sma:  breadthPct200Sma,
+                SymbolIvRank:      symbolIvRank,
+                HasUpcomingEvent:  hasUpcomingEvent);
 
             SignalResult result;
             try

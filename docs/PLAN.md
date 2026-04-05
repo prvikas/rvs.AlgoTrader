@@ -41,7 +41,7 @@ goals:
 - capital controls, kill switch, idempotent orders
 
 ### P6 Strategy implementation
-status: TODO
+status: DONE
 goals:
 - STRAT-001 VCP
 - STRAT-002 Fibonacci option spread

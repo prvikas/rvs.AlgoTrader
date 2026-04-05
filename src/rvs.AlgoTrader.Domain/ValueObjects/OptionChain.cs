@@ -148,6 +148,22 @@ public record OptionChainSnapshot(
     /// Bullish = PCR below 0.8 (heavy CE writing = market expects upside) OR
     ///           spot well above max pain (momentum driving price up).
     /// </summary>
+    /// <summary>
+    /// Put-Call Ratio by Change in Open Interest (intraday or day-over-day OI build).
+    /// PCR = total PE OI change / total CE OI change (signed; 0 when CE side is not building).
+    /// Preferred over PutCallRatioOI for intraday directional bias (STRAT-003).
+    /// Returns 0 (neutral) when CE OI change is ≤ 0 to avoid division-by-zero / inverted ratios.
+    /// </summary>
+    public decimal PutCallRatioChangeOI
+    {
+        get
+        {
+            var ceChange = Options.Where(o => o.OptionType == "CE").Sum(o => (decimal)o.OiChange);
+            var peChange = Options.Where(o => o.OptionType == "PE").Sum(o => (decimal)o.OiChange);
+            return ceChange > 0 ? peChange / ceChange : 0m;
+        }
+    }
+
     public bool IsBullishBias => PutCallRatioOI < 0.8m || SpotPrice > MaxPainStrike + (MaxPainStrike * 0.005m);
 
     /// <summary>

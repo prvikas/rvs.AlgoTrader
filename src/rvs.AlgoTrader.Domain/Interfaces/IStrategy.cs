@@ -1,4 +1,5 @@
 using NodaTime;
+using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.ValueObjects;
 
@@ -65,7 +66,24 @@ public record StrategyContext(
     // Strategies use these for higher-TF trend confirmation only — no I/O inside EvaluateAsync.
     IReadOnlyList<ClosedCandle>? Candles15Min = null,
     IReadOnlyList<ClosedCandle>? Candles1Hour = null,
-    IReadOnlyList<ClosedCandle>? CandlesDaily = null
+    IReadOnlyList<ClosedCandle>? CandlesDaily = null,
+
+    // ── Pre-fetched market-context data for strategy filters ─────────────────
+    // Populated by StrategyEvaluationQueue; null when data not yet available.
+
+    // % of NSE equities above 200-day SMA (latest EOD snapshot).
+    // VCP strategy uses this to avoid entries in bear-market regimes.
+    // Null when breadth data has not yet been computed.
+    decimal? BreadthPct200Sma = null,
+
+    // IV Percentile (0-100) for the underlying symbol vs 52-week IV history.
+    // STRAT-002 uses this to ensure elevated IV premium before entering spreads.
+    // Null when fewer than 60 days of IV history are available (warmup requirement).
+    IvRankSnapshot? SymbolIvRank = null,
+
+    // True when EventCalendarService detects a high-impact event within the
+    // configured exclusion window. STRAT-002 skips entry when true.
+    bool HasUpcomingEvent = false
 );
 
 /// <summary>
