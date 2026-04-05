@@ -31,7 +31,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Multi-timeframe | DONE | #94: StrategyContext gains Candles15Min/Candles1Hour/CandlesDaily; StrategyEvaluationQueue pre-fetches higher-TF from ICandleCache; IsFinerThan guard |
 | Strategy correlation | DONE | #95: IStrategyCorrelationAnalyser, StrategyCorrelationAnalyser (Pearson + Monte Carlo 10K), CorrelationController with /matrix /portfolio /check endpoints; CorrelationPage (heatmap, risk warnings, efficient frontier, optimal weights) |
 | Forward test engine | DONE | ProcessCandleAsync wired via StrategyEvaluationQueue; SL/TP mirrors BacktestEngine; risk-based sizing (#176); FinalCapital persisted (#184) |
-| Live execution engine | DONE | approval gate + kill switch + idempotency + capital reservation + broker PlaceOrderAsync; strategy-level per-order risk not integrated |
+| Live execution engine | DONE | 8-gate sequence: approval → kill-switch → idempotency → position sizing (IPositionSizingEngine, FixedFractional, matches ForwardTestEngine) → RiskProfile checks (MaxCapitalPerTradePct, MaxTradesPerDay) → portfolio risk (6 controls) → capital reservation → broker order |
 | Broker integrations | PARTIAL | #134 Polly retry (3×, exponential) + circuit breaker (50% failure/30s) on all 6 HTTP clients; #129 ITokenStore + RedisEncryptedTokenStore (AES-256-GCM) |
 | Candle pipeline | PARTIAL | UpsertAsync: INSERT ON CONFLICT (#145); BulkInsertAsync: Npgsql COPY FROM STDIN binary protocol (#142); partial index is_closed=true (#147) |
 | Scheduling | DONE | HangfireJobRegistry wired in Program.cs; 7 recurring jobs (instrument-refresh, historical-download, strategy-scheduler, reconciliation, monitoring-alerts, eod-report, breadth-calculator); StartupOrchestrator 11-step cold restart; IStrategyScheduler IST session windows |
@@ -41,7 +41,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Paper trading | DONE | #92: ExecutionMode enum on StrategyInstance, IPaperOrderSimulator, 5bps slippage, persists to forward_test_trades |
 | Trailing stop manager | DONE | #93: ITrailingStopManager, all 7 StopType variants, ratchet enforcement, TimeStop bar-counting |
 | Scaling/pyramid manager | DONE | IScalingManager, ScalingMode/TrancheTrigger enums, EmaBounce/PriceMoveUp/Down triggers |
-| Risk controls | PARTIAL | portfolio-level wired; strategy-level per-order not integrated into LiveExecutionEngine |
+| Risk controls | DONE | portfolio-level (PortfolioRiskManager 6 controls) + per-strategy RiskProfile (MaxCapitalPerTradePct, MaxTradesPerDay) both enforced in LiveExecutionEngine |
 | Approval Gate (P4) | DONE | migration 018, StrategyApproval entity, IApprovalService, ApprovalService (CAGR/DD/fwd checks), ApprovalController (checks/status/approve/revoke), LiveExecutionEngine guard, StrategyCard badge + ApprovalDrawer |
 | UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added; scenario multi-select + batch backtest (#2); consolidated lifecycle commands with ICurrentUser audit logging (#9); #128 6-tier RBAC policies (Viewer/Analyst/Trader/RiskManager/Admin/SuperAdmin) + controller attributes |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |

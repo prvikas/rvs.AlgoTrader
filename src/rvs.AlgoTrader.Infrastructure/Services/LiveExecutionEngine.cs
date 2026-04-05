@@ -13,8 +13,19 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 
 /// <summary>
 /// Converts strategy signals into broker orders.
-/// Checks: kill switch → capital reservation → idempotency → risk limits → order placement.
-/// Publishes OrderPlaced domain event on success.
+///
+/// Gate sequence (in order):
+///   0. Approval gate   — active live-trading approval required
+///   1. Kill switch      — system-wide or strategy-wide halt
+///   2. Idempotency      — de-duplicate signals within a short window
+///   3. Position sizing  — compute quantity via IPositionSizingEngine (FixedFractional default)
+///                         mirrors ForwardTestEngine exactly (AP-002 execution parity)
+///   4. Per-strategy risk profile — MaxCapitalPerTradePct, MaxTradesPerDay,
+///                         MaxOpenTradesPerSymbol (loaded once from IRiskProfileRepository)
+///   5. Portfolio risk   — 6-control portfolio-level check via IPortfolioRiskManager
+///   6. Capital reservation — atomic Redis Lua (AP-005)
+///   7. Broker order     — Polly-wrapped HTTP via IBrokerClientFactory (AP-010)
+///   8. Persist + event  — order record + OrderPlaced domain event
 /// </summary>
 public class LiveExecutionEngine(
     IBrokerClientFactory brokerFactory,
@@ -22,11 +33,16 @@ public class LiveExecutionEngine(
     IIdempotencyService idempotency,
     IKillSwitchService killSwitch,
     IOrderRepository orderRepo,
+    IPortfolioRiskManager portfolioRisk,
+    IPositionSizingEngine sizingEngine,
+    IRiskProfileRepository riskProfileRepo,
+    IStrategyRunRepository strategyRunRepo,
     IPublishEndpoint bus,
     IClock clock,
     IApprovalService approvalService,
     ILogger<LiveExecutionEngine> logger) : ILiveExecutionEngine
 {
+    private const SizingModel DefaultSizingModel = SizingModel.FixedFractional;
 
     public async Task ExecuteSignalAsync(
         StrategyInstance instance,
@@ -52,7 +68,7 @@ public class LiveExecutionEngine(
             return;
         }
 
-        // 2. Idempotency key = hash of instance + signal + candle timestamp
+        // 2. Idempotency key = instance + signal direction + candle timestamp (ms)
         var idempotencyKey = $"{instance.Id}:{signal.Signal.ToString().ToUpperInvariant()}:{clock.NowInstant().ToUnixTimeMilliseconds()}";
         var idempotencyCheck = await idempotency.CheckAsync(idempotencyKey, ct);
         if (idempotencyCheck.IsDuplicate)
@@ -61,13 +77,49 @@ public class LiveExecutionEngine(
             return;
         }
 
-        // 3. Determine direction and quantity
-        var direction = signal.Signal == SignalType.Buy ? OrderDirection.Buy : OrderDirection.Sell;
-        var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
-        var quantity = credential.LotSize > 0 ? credential.LotSize : 1;
+        var direction   = signal.Signal == SignalType.Buy ? OrderDirection.Buy : OrderDirection.Sell;
+        var credential  = instance.Credential ?? throw new InvalidOperationException(
+            $"BrokerCredential not found for instance {instance.Id}");
+        var entryPrice  = signal.EntryPrice ?? 0m;
 
-        // 4. Capital reservation
-        var orderValue = (signal.EntryPrice ?? 0) * quantity;
+        // 3. Position sizing — identical logic to ForwardTestEngine (AP-002 execution parity)
+        //    FixedFractional: risk 1% of allocated capital per trade using signal.StopLoss as risk anchor.
+        //    Falls back to FixedLots (credential.LotSize) when no stop-loss is provided.
+        var (quantity, sizingRationale) = sizingEngine.Compute(
+            DefaultSizingModel,
+            instance.AllocatedCapital > 0 ? instance.AllocatedCapital : entryPrice,
+            entryPrice,
+            signal.StopLoss,
+            atr: null,
+            new PositionSizingConfig(FixedLots: credential.LotSize > 0 ? credential.LotSize : 1));
+
+        quantity = Math.Max(1, quantity);
+        logger.LogDebug("[LiveExecution] Sizing for {Instance}: {Rationale}", instance.Name, sizingRationale);
+
+        var orderValue = entryPrice * quantity;
+
+        // 4. Per-strategy risk profile checks
+        if (instance.RiskProfileId.HasValue)
+        {
+            var riskCheck = await CheckRiskProfileAsync(instance, orderValue, ct);
+            if (!riskCheck.Allowed)
+            {
+                logger.LogWarning("[LiveExecution] Risk profile blocked order for {Instance}: {Reason}",
+                    instance.Name, riskCheck.BlockReason);
+                return;
+            }
+        }
+
+        // 5. Portfolio-level risk controls (6 controls: daily loss, positions, deployment, symbol, margin, delta)
+        var portfolioCheck = await portfolioRisk.CheckOrderAsync(instance, orderValue, ct);
+        if (!portfolioCheck.Allowed)
+        {
+            logger.LogWarning("[LiveExecution] Portfolio risk blocked order for {Instance}: {Reason}",
+                instance.Name, portfolioCheck.BlockReason);
+            return;
+        }
+
+        // 6. Capital reservation (atomic Redis Lua — AP-005)
         var reserved = await capitalAllocator.TryReserveAsync(instance.Id, orderValue, ct);
         if (!reserved)
         {
@@ -75,7 +127,7 @@ public class LiveExecutionEngine(
             return;
         }
 
-        // 5. Place order
+        // 7. Place order via broker
         var brokerClient = brokerFactory.GetOrderClient(instance.BrokerName ?? BrokerNames.Zerodha);
         var orderRequest = new OrderRequest(
             instance.InternalSymbol,
@@ -94,7 +146,7 @@ public class LiveExecutionEngine(
         var brokerResult = await brokerClient.PlaceOrderAsync(orderRequest, ct);
         var now = clock.NowInstant();
 
-        // 6. Save order record using the entity factory method
+        // 8. Persist order record
         var order = Order.Create(
             instance.BrokerName ?? BrokerNames.Zerodha,
             instance.InternalSymbol,
@@ -124,15 +176,50 @@ public class LiveExecutionEngine(
                 quantity, signal.EntryPrice,
                 instance.RuntimeState?.CurrentRunId, correlationId, clock.NowIst()), ct);
 
-            logger.LogInformation("[LiveExecution] Order placed: {OrderId} for {Instance} ({Signal})",
-                brokerResult.BrokerOrderId, instance.Name, signal.Signal.ToString().ToUpperInvariant());
+            logger.LogInformation("[LiveExecution] Order placed: {OrderId} for {Instance} ({Signal}) qty={Qty}",
+                brokerResult.BrokerOrderId, instance.Name,
+                signal.Signal.ToString().ToUpperInvariant(), quantity);
         }
         else
         {
-            // Release capital on rejection
+            // Release capital on rejection (AP-005 compensating release)
             await capitalAllocator.ReleaseAsync(instance.Id, orderValue, ct);
             logger.LogError("[LiveExecution] Order rejected for {Instance}: {Reason}",
                 instance.Name, brokerResult.RejectionReason);
         }
+    }
+
+    // ── Per-strategy risk profile enforcement ────────────────────────────────
+
+    private async Task<RiskCheckResult> CheckRiskProfileAsync(
+        StrategyInstance instance, decimal orderValue, CancellationToken ct)
+    {
+        var profile = await riskProfileRepo.GetByIdAsync(instance.RiskProfileId!.Value, ct);
+        if (profile == null) return new RiskCheckResult(true, null); // profile deleted — allow
+
+        // MaxCapitalPerTradePct: order value must not exceed this % of allocated capital
+        if (instance.AllocatedCapital > 0 && profile.MaxCapitalPerTradePct > 0)
+        {
+            var tradePct = orderValue / instance.AllocatedCapital * 100m;
+            if (tradePct > profile.MaxCapitalPerTradePct)
+                return new RiskCheckResult(false,
+                    $"Trade size {tradePct:F1}% exceeds MaxCapitalPerTradePct {profile.MaxCapitalPerTradePct}%");
+        }
+
+        // MaxTradesPerDay: count today's orders for this instance's runs
+        if (profile.MaxTradesPerDay > 0)
+        {
+            var runs = await strategyRunRepo.GetByInstanceAsync(instance.Id, ct);
+            var runIds = runs.Select(r => r.Id);
+            var todayIst = clock.NowInstant()
+                .InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])
+                .Date;
+            var todayCount = await orderRepo.CountTodayByRunIdsAsync(runIds, todayIst, ct);
+            if (todayCount >= profile.MaxTradesPerDay)
+                return new RiskCheckResult(false,
+                    $"MaxTradesPerDay {profile.MaxTradesPerDay} reached ({todayCount} placed today)");
+        }
+
+        return new RiskCheckResult(true, null);
     }
 }

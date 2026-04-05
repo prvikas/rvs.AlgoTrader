@@ -12,6 +12,11 @@ public interface IOrderRepository
     Task<IReadOnlyList<Order>> GetRecentAsync(int count, CancellationToken ct);
     Task AddAsync(Order order, CancellationToken ct);
     Task UpdateAsync(Order order, CancellationToken ct);
+    /// <summary>
+    /// Count placed orders belonging to any of <paramref name="strategyRunIds"/> placed on
+    /// <paramref name="dateIst"/> (IST calendar day).  Used for MaxTradesPerDay enforcement.
+    /// </summary>
+    Task<int> CountTodayByRunIdsAsync(IEnumerable<Guid> strategyRunIds, LocalDate dateIst, CancellationToken ct);
 }
 
 public interface IPositionRepository
@@ -290,4 +295,9 @@ public interface ITradeJournalRepository
     Task UpdateNotesAndTagsAsync(Guid id, string? notes, string[] tags, CancellationToken ct);
     Task<DTOs.TradeJournal.PnlAttributionDto> GetAttributionAsync(
         Guid? strategyInstanceId, string? symbol, DateOnly? fromDate, DateOnly? toDate, CancellationToken ct);
+}
+
+public interface IRiskProfileRepository
+{
+    Task<Domain.Entities.RiskProfile?> GetByIdAsync(Guid id, CancellationToken ct);
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NodaTime;
+using NodaTime.Extensions;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
@@ -51,4 +52,19 @@ public class OrderRepository(AlgoTraderDbContext db) : IOrderRepository
 
     public async Task<bool> ExistsAsync(string idempotencyKey, CancellationToken ct = default)
         => await db.Orders.AnyAsync(o => o.IdempotencyKey == idempotencyKey, ct);
+
+    public async Task<int> CountTodayByRunIdsAsync(
+        IEnumerable<Guid> strategyRunIds, LocalDate dateIst, CancellationToken ct = default)
+    {
+        var tz = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
+        var startInstant = dateIst.AtStartOfDayInZone(tz).ToInstant();
+        var endInstant   = dateIst.PlusDays(1).AtStartOfDayInZone(tz).ToInstant();
+        var ids = strategyRunIds.ToList();
+
+        return await db.Orders
+            .CountAsync(o => o.StrategyRunId.HasValue
+                          && ids.Contains(o.StrategyRunId!.Value)
+                          && o.PlacedAt >= startInstant
+                          && o.PlacedAt < endInstant, ct);
+    }
 }

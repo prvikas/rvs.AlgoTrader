@@ -206,6 +206,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IStrategyApprovalRepository, StrategyApprovalRepository>();
         services.AddScoped<IApprovalService, ApprovalService>();
 
+        // ── Risk profiles ─────────────────────────────────────────────────────
+        services.AddScoped<IRiskProfileRepository, RiskProfileRepository>();
+
         // ── Risk & Execution Engine (#85, #86, #87, #88, #92, #93, #100) ──
         services.AddSingleton<IPositionSizingEngine, PositionSizingEngine>();
         services.AddSingleton<ISlippageModel, SlippageModel>();

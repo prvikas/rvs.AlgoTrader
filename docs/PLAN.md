@@ -35,7 +35,7 @@ goals:
 - block live deployment without approval record
 
 ### P5 Live deployment
-status: TODO
+status: DONE
 goals:
 - LiveExecutionEngine with mStock broker
 - capital controls, kill switch, idempotent orders
