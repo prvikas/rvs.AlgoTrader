@@ -1,3 +1,4 @@
+using FluentValidation;
 using Hangfire;
 using Hangfire.Dashboard;
 using MassTransit;
@@ -54,8 +55,17 @@ builder.Services.AddHealthChecks()
 builder.Services.AddApiServices(builder.Configuration);
 
 // MediatR — scans Application assembly
+// #130: Add ValidationBehavior so every command/query with a registered validator
+// is automatically validated before the handler runs.
 builder.Services.AddMediatR(cfg =>
-    cfg.RegisterServicesFromAssembly(typeof(rvs.AlgoTrader.Application.Commands.Orders.PlaceOrderCommand).Assembly));
+{
+    cfg.RegisterServicesFromAssembly(typeof(rvs.AlgoTrader.Application.Commands.Orders.PlaceOrderCommand).Assembly);
+    cfg.AddBehavior(typeof(MediatR.IPipelineBehavior<,>),
+                    typeof(rvs.AlgoTrader.Application.Behaviours.ValidationBehavior<,>));
+});
+// Register all FluentValidation validators in the Application assembly.
+builder.Services.AddValidatorsFromAssembly(
+    typeof(rvs.AlgoTrader.Application.Commands.Orders.PlaceOrderCommand).Assembly);
 
 var app = builder.Build();
 

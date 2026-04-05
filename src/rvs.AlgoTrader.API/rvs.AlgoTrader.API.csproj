@@ -27,6 +27,7 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="FluentValidation.AspNetCore" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
     <PackageReference Include="NodaTime.Serialization.SystemTextJson" />
   </ItemGroup>
 </Project>

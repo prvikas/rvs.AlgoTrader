@@ -138,6 +138,10 @@ public static class ServiceCollectionExtensions
 
         // Backtest service stubs (replace with real implementations later)
         services.AddScoped<IBacktestService, BacktestService>();
+        // #137: Pre-market readiness check
+        services.AddScoped<IPreMarketReadinessService, PreMarketReadinessService>();
+        // #136: SLO tracker — singleton so counters accumulate across requests
+        services.AddSingleton<SloTracker>();
         services.AddScoped<IBacktestReproductionService, BacktestReproductionService>();
 
         // Secrets + Token Store

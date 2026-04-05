@@ -11,10 +11,10 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Vertical Spreads | DONE | #83: all 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs, chain bias; SignalResult.SpreadEntry() routes to ISpreadOrderManager |
 | Backtest engine | DONE | async jobs, SignalR streaming, extended stats, chart markers, PDF report; position sizing fixed; SharpeRatio daily-grouped+annualised (#180); WarmupBars=strategy.MinWarmupBars (#187); zero-alloc hash (#182); ExitTime=candle.OpenTime for SL/TP (#39); SkippedSignalCount logged+surfaced (#46) |
 | Scenarios | DONE | StrategyScenario entity, ScenarioStatus enum, partial override merge, parallel run, promotion gate, comparison grid, ScenariosPanel + ScenarioEditorDrawer, migration 007; Version field (migration 015) auto-increments on param change |
-| DB migrations | DONE | DatabaseMigrationRunner auto-discovers *.sql; migrations 001–025 applied; 024 fixes #202/#203/#212 + 020 idempotency; 025 fixes #170 (audit_log missing columns), #171 (drop signal_journal), #147 (candle partial index) |
+| DB migrations | DONE | 001–027 applied; 025 fixes #170/#171/#147; 026 fixes #173/#174 (FK backtest↔scenario, DEFERRABLE); 027 TimescaleDB hypertable + compression + 3yr retention for candles (#138) |
 | Trade Journal | DONE | TradeJournalEntry entity, EF config, EfTradeJournalRepository, P&L attribution by symbol/month/DOW/exit-type, TaxLotReportService (ITR-3), TradeJournalController; frontend TradeJournalPage + PortfolioAnalysisPage (bar charts + tax lot export) |
-| Health checks | DONE | DbHealthCheck (SELECT 1), RedisHealthCheck (PING Degraded not Unhealthy), /health (JSON report) + /healthz (liveness) endpoints registered in Program.cs |
-| Infra quality | DONE | FluentValidation (#17), DTOs extracted (#16), EF Core repos (#18), BrokerNames constants (#27), SRP refactoring (#7: StrategyInstance split into RuntimeState + Credential) |
+| Health checks | DONE | DbHealthCheck + RedisHealthCheck + /health + /healthz; #137 pre-market readiness (DB/Redis/calendar/broker-token/capital checks) at GET /api/readiness/pre-market; #136 SLO target registry at GET /api/health/slo + SloTracker (.NET Meters → Prometheus) |
+| Infra quality | DONE | FluentValidation (#17); #130 MediatR ValidationBehavior auto-validates all commands; validators for PlaceOrder/CreateStrategy/BacktestRequest; ValidationException→HTTP 422; docs: SECURITY.md (#131), BACKUP_STRATEGY.md (#133), SLO.md (#136), rollback scripts (#135) |
 | Market breadth | DONE | #99: MarketBreadthSnapshot entity, IMarketBreadthService, single-SQL CTE computation, BreadthCalculatorJob, MarketBreadthController |
 | Event calendar | DONE | #90: MarketEvent entity, IEventCalendarService, F&O expiry seeder, EventCalendarController |
 | Historical data mgr | DONE | #91: IHistoricalDataManager, quality reports, gap detection, CSV bulk import, DataManagerController |
@@ -33,7 +33,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Forward test engine | PARTIAL | ForwardTestEngine skeleton wired; FinalCapital now persisted (#184); SL/TP close logic present; #176 risk-based sizing via IPositionSizingEngine (FixedFractional 1%); full candle-feed wiring NOT_REVIEWED |
 | Live execution engine | NOT_REVIEWED | |
 | Broker integrations | PARTIAL | #134 Polly retry (3×, exponential) + circuit breaker (50% failure/30s) on all 6 HTTP clients; #129 ITokenStore + RedisEncryptedTokenStore (AES-256-GCM) |
-| Candle pipeline | NOT_REVIEWED | CandleRepository.UpsertAsync now uses INSERT ON CONFLICT (#145); partial index on is_closed=true (#147 via migration 025) |
+| Candle pipeline | PARTIAL | UpsertAsync: INSERT ON CONFLICT (#145); BulkInsertAsync: Npgsql COPY FROM STDIN binary protocol (#142); partial index is_closed=true (#147) |
 | Scheduling | NOT_REVIEWED | |
 | Position sizing | DONE | #87: IPositionSizingEngine, 5 models (FixedLots, FixedFractional, AtrBased, KellyCriterion half-Kelly, VolatilityTargeting), hard caps |
 | Slippage & commission | DONE | #88: ISlippageModel (6 types incl. Almgren-Chriss VolumeImpact), ICommissionModel, IndianMarketCommissionModel (STT/GST/SEBI/stamp) |

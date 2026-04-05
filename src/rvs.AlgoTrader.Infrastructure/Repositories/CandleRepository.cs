@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
+using NpgsqlTypes;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
@@ -38,28 +40,30 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
         return candles.Select(ToClosedCandle).ToList();
     }
 
+    // #142: Replace EF Core batched INSERT with a single PostgreSQL COPY FROM STDIN.
+    // COPY streams rows directly into the server without per-row round-trips — roughly
+    // 10–20× faster than batched INSERT for large historical downloads (10K+ bars).
+    //
+    // Idempotency: a single range-query fetches existing open_time keys, then new rows
+    // are filtered before the COPY so there are no PK conflicts.  Re-downloading the
+    // same date range is safe.
     public async Task BulkInsertAsync(IEnumerable<ClosedCandle> candles, CancellationToken ct = default)
     {
         var entities = candles.Select(ToEntity).ToList();
         if (entities.Count == 0) return;
 
-        // Idempotent insert: skip rows that already exist in the DB.
-        // This makes re-downloading the same date range safe — no PK violations.
-        if (entities.Count > 0)
-        {
-            var symbol    = entities[0].InternalSymbol;
-            var timeframe = entities[0].Timeframe;
-            var minTime   = entities.Min(e => e.OpenTime);
-            var maxTime   = entities.Max(e => e.OpenTime);
+        var symbol    = entities[0].InternalSymbol;
+        var timeframe = entities[0].Timeframe;
+        var minTime   = entities.Min(e => e.OpenTime);
+        var maxTime   = entities.Max(e => e.OpenTime);
 
-            var existingKeys = await db.Candles
-                .Where(c => c.InternalSymbol == symbol && c.Timeframe == timeframe
-                            && c.OpenTime >= minTime && c.OpenTime <= maxTime)
-                .Select(c => c.OpenTime)
-                .ToHashSetAsync(ct);
+        var existingKeys = await db.Candles
+            .Where(c => c.InternalSymbol == symbol && c.Timeframe == timeframe
+                        && c.OpenTime >= minTime && c.OpenTime <= maxTime)
+            .Select(c => c.OpenTime)
+            .ToHashSetAsync(ct);
 
-            entities = entities.Where(e => !existingKeys.Contains(e.OpenTime)).ToList();
-        }
+        entities = entities.Where(e => !existingKeys.Contains(e.OpenTime)).ToList();
 
         if (entities.Count == 0)
         {
@@ -67,16 +71,41 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
             return;
         }
 
-        const int BatchSize = 500;
-        for (int i = 0; i < entities.Count; i += BatchSize)
+        var conn = (NpgsqlConnection)db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync(ct);
+        try
         {
-            var batch = entities.Skip(i).Take(BatchSize).ToList();
-            await db.Candles.AddRangeAsync(batch, ct);
-            await db.SaveChangesAsync(ct);
-            db.ChangeTracker.Clear(); // prevent memory bloat on large downloads
+            const string CopySql =
+                "COPY candles " +
+                "(internal_symbol, timeframe, open_time, close_time, " +
+                " open, high, low, close, volume, is_closed) " +
+                "FROM STDIN (FORMAT BINARY)";
+
+            await using var writer = await conn.BeginBinaryImportAsync(CopySql, ct);
+
+            foreach (var e in entities)
+            {
+                await writer.StartRowAsync(ct);
+                await writer.WriteAsync(e.InternalSymbol,             NpgsqlDbType.Varchar,      ct);
+                await writer.WriteAsync(e.Timeframe,                  NpgsqlDbType.Varchar,      ct);
+                await writer.WriteAsync(e.OpenTime,                   NpgsqlDbType.TimestampTz,  ct);
+                await writer.WriteAsync(e.CloseTime,                  NpgsqlDbType.TimestampTz,  ct);
+                await writer.WriteAsync(e.Open,                       NpgsqlDbType.Numeric,      ct);
+                await writer.WriteAsync(e.High,                       NpgsqlDbType.Numeric,      ct);
+                await writer.WriteAsync(e.Low,                        NpgsqlDbType.Numeric,      ct);
+                await writer.WriteAsync(e.Close,                      NpgsqlDbType.Numeric,      ct);
+                await writer.WriteAsync(e.Volume,                     NpgsqlDbType.Bigint,       ct);
+                await writer.WriteAsync(e.IsClosed,                   NpgsqlDbType.Boolean,      ct);
+            }
+
+            await writer.CompleteAsync(ct);
+        }
+        finally
+        {
+            db.Database.CloseConnection();
         }
 
-        logger.LogDebug("[CandleRepo] BulkInsert: {Count} new candles written", entities.Count);
+        logger.LogDebug("[CandleRepo] BulkInsert: {Count} candles written via COPY", entities.Count);
     }
 
     // ── Additional methods used by Infrastructure internally ─────────────────
