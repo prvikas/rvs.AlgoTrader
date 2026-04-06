@@ -4,8 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
+import { StrategiesPage } from './pages/StrategiesPage'
 import { useAppStore } from './stores/appStore'
 import { C } from './styles/tokens'
+import { EnumsProvider } from './context/EnumsContext'
 
 // ── Dev-only preview token ────────────────────────────────────────────────────
 // Injected before React mounts so the Zustand store reads it on first init.
@@ -79,14 +81,18 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<ProtectedRoute element={<Dashboard />} />} />
-          <Route path="/dashboard" element={<Navigate to="/" replace />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <EnumsProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<ProtectedRoute element={<Dashboard />} />} />
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/strategies" element={<ProtectedRoute element={<StrategiesPage />} />} />
+            <Route path="/strategies/new" element={<ProtectedRoute element={<StrategiesPage />} />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </EnumsProvider>
     </QueryClientProvider>
     </ErrorBoundary>
   </React.StrictMode>

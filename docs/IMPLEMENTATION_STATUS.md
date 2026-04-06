@@ -44,6 +44,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Risk controls | DONE | portfolio-level (PortfolioRiskManager 6 controls) + per-strategy RiskProfile (MaxCapitalPerTradePct, MaxTradesPerDay) both enforced in LiveExecutionEngine |
 | Approval Gate (P4) | DONE | migration 018, StrategyApproval entity, IApprovalService, ApprovalService (CAGR/DD/fwd checks), ApprovalController (checks/status/approve/revoke), LiveExecutionEngine guard, StrategyCard badge + ApprovalDrawer |
 | UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added; scenario multi-select + batch backtest (#2); consolidated lifecycle commands with ICurrentUser audit logging (#9); #128 6-tier RBAC policies (Viewer/Analyst/Trader/RiskManager/Admin/SuperAdmin) + controller attributes |
+| Strategy domain model (PROMPT-001) | DONE | migration 032 enum_values + GET /api/enums; types/strategy.ts; EnumsContext/useEnums; StrategiesPage 5-tab; StrategyDefinitionPage 3-sub-tab; ScenariosTab/Drawer; DeploymentsTab/Drawer; ResultsTab; CompareTab; IndicatorModal; RuleGroupEditor/ConditionRow/WindowExpressionEditor; RightDrawer; mock API; tsc passes |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; integration factory wired |
 

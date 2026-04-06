@@ -1032,3 +1032,157 @@ export const correlationApi = {
       candidateSeries, liveStrategySeries, highCorrThreshold,
     }),
 }
+
+// ── Strategy domain API (PROMPT-001) ─────────────────────────────────────────
+// TODO: API — routes not yet implemented on the backend.
+// These functions return mock data shaped to the interfaces in types/strategy.ts.
+import type {
+  Strategy, Scenario, Deployment, RunResult,
+} from '../types/strategy'
+import {
+  Timeframe, TradingStyle, StrategyStatus, IndicatorType, IndicatorRole,
+  ScenarioStatus, Broker,
+  ExitCombineLogic, StopType, TrailingType, StartCondition, DayOfWeek,
+} from '../types/strategy'
+
+const MOCK_STRATEGIES: Strategy[] = [
+  {
+    id: 'strat-001',
+    name: 'VCP Swing',
+    description: 'Volatility Contraction Pattern daily equity swing',
+    primaryTimeframe: Timeframe.D1,
+    instruments: ['NSE:AXISBANK', 'NSE:HDFCBANK'],
+    tradingStyle: TradingStyle.Swing,
+    status: StrategyStatus.Backtested,
+    indicators: [
+      {
+        id: 'ind-ema50', type: IndicatorType.EMA, timeframe: Timeframe.D1,
+        role: IndicatorRole.EntryFilter,
+        baseParams: { period: 50 },
+        allowedParamRanges: { period: { min: 20, max: 100 } },
+      },
+      {
+        id: 'ind-atr', type: IndicatorType.ATR, timeframe: Timeframe.D1,
+        role: IndicatorRole.StopLoss,
+        baseParams: { period: 14 },
+        allowedParamRanges: { period: { min: 7, max: 28 } },
+      },
+    ],
+    longEntry: {
+      enabled: true, groupOperator: ExitCombineLogic.AND,
+      groups: [{
+        id: 'grp-1', label: 'Long Entry Group 1',
+        logicalOperator: ExitCombineLogic.AND,
+        conditions: [],
+      }],
+    },
+    shortEntry: { enabled: false, groupOperator: ExitCombineLogic.AND, groups: [] },
+    longExit: { enabled: true, groupOperator: ExitCombineLogic.OR, groups: [] },
+    shortExit: { enabled: false, groupOperator: ExitCombineLogic.OR, groups: [] },
+    exitBehaviour: {
+      exitEndOfSession: false,
+      exitAfterNBars: null,
+      exitAtStopOrTargetOnly: true,
+      combineLogic: ExitCombineLogic.OR,
+      tradableDays: [DayOfWeek.Mon, DayOfWeek.Tue, DayOfWeek.Wed, DayOfWeek.Thu, DayOfWeek.Fri],
+      sessionStart: '09:15',
+      sessionEnd: '15:20',
+    },
+    stopLoss: { type: StopType.ATRMultiple, baseValue: 2, allowedRange: { min: 1, max: 4 } },
+    profitTarget: { type: StopType.ATRMultiple, baseValue: 4, allowedRange: { min: 2, max: 8 } },
+    rrConfig: { rrMin: 2, rrMax: 4, deriveTargetFromSL: true },
+    trailing: {
+      enabled: false, trailingType: TrailingType.ATRMultiple,
+      trailingParams: { multiplier: 1.5 },
+      startCondition: StartCondition.Immediately,
+      partialExits: [],
+    },
+    riskControls: { maxRiskPerTradePercent: 1, maxTradesPerDay: 3 },
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-03-01T00:00:00Z',
+  },
+]
+
+const MOCK_SCENARIOS: Record<string, Scenario[]> = {
+  'strat-001': [
+    {
+      id: 'scen-001',
+      strategyId: 'strat-001',
+      name: 'Base scenario',
+      capital: 500000,
+      brokerAccount: Broker.MStock,
+      backtestRange: { from: '2023-01-01', to: '2025-12-31' },
+      parameterOverrides: [],
+      status: ScenarioStatus.Backtested,
+      lastRunAt: '2026-03-15T10:00:00Z',
+      lastMetrics: {
+        returnPct: 22.4, maxDrawdownPct: 8.1, sharpe: 1.82,
+        winRate: 54, profitFactor: 1.9, tradeCount: 142,
+        avgRPerTrade: 0.42, expectancy: 840, avgRealisedRR: 2.1,
+      },
+    },
+  ],
+}
+
+const MOCK_DEPLOYMENTS: Record<string, Deployment[]> = {}
+const MOCK_RUNS: Record<string, RunResult[]> = {}
+
+export const strategyDomainApi = {
+  // TODO: API — replace with real endpoints when implemented
+  listStrategies: (): Promise<Strategy[]> => Promise.resolve(MOCK_STRATEGIES),
+  getStrategy: (id: string): Promise<Strategy | null> =>
+    Promise.resolve(MOCK_STRATEGIES.find(s => s.id === id) ?? null),
+  createStrategy: (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>): Promise<Strategy> => {
+    const created: Strategy = { ...s, id: `strat-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    MOCK_STRATEGIES.push(created)
+    return Promise.resolve(created)
+  },
+  updateStrategy: (id: string, s: Partial<Strategy>): Promise<Strategy> => {
+    const idx = MOCK_STRATEGIES.findIndex(x => x.id === id)
+    if (idx >= 0) { MOCK_STRATEGIES[idx] = { ...MOCK_STRATEGIES[idx], ...s, updatedAt: new Date().toISOString() } }
+    return Promise.resolve(MOCK_STRATEGIES[idx])
+  },
+  deleteStrategy: (id: string): Promise<void> => {
+    const idx = MOCK_STRATEGIES.findIndex(x => x.id === id)
+    if (idx >= 0) MOCK_STRATEGIES.splice(idx, 1)
+    return Promise.resolve()
+  },
+
+  listScenarios: (strategyId: string): Promise<Scenario[]> =>
+    Promise.resolve(MOCK_SCENARIOS[strategyId] ?? []),
+  createScenario: (strategyId: string, s: Omit<Scenario, 'id' | 'strategyId'>): Promise<Scenario> => {
+    const created: Scenario = { ...s, id: `scen-${Date.now()}`, strategyId }
+    if (!MOCK_SCENARIOS[strategyId]) MOCK_SCENARIOS[strategyId] = []
+    MOCK_SCENARIOS[strategyId].push(created)
+    return Promise.resolve(created)
+  },
+  updateScenario: (strategyId: string, scenarioId: string, s: Partial<Scenario>): Promise<Scenario> => {
+    const list = MOCK_SCENARIOS[strategyId] ?? []
+    const idx = list.findIndex(x => x.id === scenarioId)
+    if (idx >= 0) list[idx] = { ...list[idx], ...s }
+    return Promise.resolve(list[idx])
+  },
+  deleteScenario: (strategyId: string, scenarioId: string): Promise<void> => {
+    if (MOCK_SCENARIOS[strategyId])
+      MOCK_SCENARIOS[strategyId] = MOCK_SCENARIOS[strategyId].filter(x => x.id !== scenarioId)
+    return Promise.resolve()
+  },
+  runScenario: (_strategyId: string, _scenarioId: string): Promise<void> => Promise.resolve(),
+
+  listDeployments: (strategyId: string): Promise<Deployment[]> =>
+    Promise.resolve(MOCK_DEPLOYMENTS[strategyId] ?? []),
+  createDeployment: (strategyId: string, d: Omit<Deployment, 'id' | 'strategyId'>): Promise<Deployment> => {
+    const created: Deployment = { ...d, id: `dep-${Date.now()}`, strategyId }
+    if (!MOCK_DEPLOYMENTS[strategyId]) MOCK_DEPLOYMENTS[strategyId] = []
+    MOCK_DEPLOYMENTS[strategyId].push(created)
+    return Promise.resolve(created)
+  },
+  deleteDeployment: (strategyId: string, deploymentId: string): Promise<void> => {
+    if (MOCK_DEPLOYMENTS[strategyId])
+      MOCK_DEPLOYMENTS[strategyId] = MOCK_DEPLOYMENTS[strategyId].filter(x => x.id !== deploymentId)
+    return Promise.resolve()
+  },
+
+  listRuns: (strategyId: string): Promise<RunResult[]> =>
+    Promise.resolve(MOCK_RUNS[strategyId] ?? []),
+}

@@ -52,6 +52,9 @@ public class AlgoTraderDbContext : DbContext
     // Strategy approvals (P4 Approval Gate)
     public DbSet<StrategyApproval> StrategyApprovals => Set<StrategyApproval>();
 
+    // Domain enum lookup table — single source of truth for UI dropdowns
+    public DbSet<EnumValue> EnumValues => Set<EnumValue>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
