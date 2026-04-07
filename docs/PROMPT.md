@@ -11,7 +11,7 @@
 
 ---
 
-## PROMPT-006 — Active — Full Source Review (BacktestEngine + ForwardTestEngine + 7 Strategies)
+## PROMPT-006 — DONE — Full Source Review + Bug Fixes (BacktestEngine + ForwardTestEngine + AlertCandleShort)
 
 > Source files read this session:
 > - `BacktestEngine.cs` (39 KB)

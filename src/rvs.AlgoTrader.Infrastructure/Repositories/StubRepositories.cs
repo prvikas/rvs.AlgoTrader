@@ -332,6 +332,11 @@ public class ForwardTestSessionRepository(AlgoTraderDbContext db) : IForwardTest
             .OrderByDescending(s => s.StartedAt)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<ForwardTestSession>> GetRunningAsync(CancellationToken ct)
+        => await db.ForwardTestSessions
+            .Where(s => s.Status == "Running")
+            .ToListAsync(ct);
+
     public async Task AddAsync(ForwardTestSession session, CancellationToken ct)
     {
         await db.ForwardTestSessions.AddAsync(session, ct);

@@ -33,6 +33,7 @@ public class StartupOrchestrator(
     ICandleRepository candleRepo,
     IBrokerClientFactory brokerFactory,
     IAppBrokerSessionManager sessions,
+    IForwardTestEngine forwardTestEngine,
     IPublishEndpoint bus,
     IAuditService audit,
     IClock clock,
@@ -48,6 +49,9 @@ public class StartupOrchestrator(
 
         // Step 6: Reload strategy instances
         await Step6_RestoreStrategyInstancesAsync(killSwitchWasActive, ct);
+
+        // Step 6b: Recover ForwardTestEngine in-memory state for sessions that were Running at crash
+        await forwardTestEngine.RecoverActiveSessionsAsync(ct);
 
         // Step 7: Re-authenticate brokers (restore tokens from Redis into broker clients)
         await Step7_ReAuthBrokersAsync(ct);

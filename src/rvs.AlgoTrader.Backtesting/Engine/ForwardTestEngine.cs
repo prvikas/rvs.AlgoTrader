@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NodaTime;
@@ -30,8 +31,8 @@ public class ForwardTestEngine(
     ILogger<ForwardTestEngine> logger) : IForwardTestEngine
 {
     // Keyed by strategy instance ID; holds in-memory position/P&L state.
-    // ConcurrentDictionary not needed — MassTransit consumer serialises access per instance.
-    private readonly Dictionary<Guid, ForwardTestState> _activeStates = new();
+    // ConcurrentDictionary guards against concurrent Start/Stop vs ProcessCandle races.
+    private readonly ConcurrentDictionary<Guid, ForwardTestState> _activeStates = new();
 
     // ── IForwardTestEngine ───────────────────────────────────────────────────
 
@@ -130,6 +131,11 @@ public class ForwardTestEngine(
         // a fixed lot size, so position size scales with account equity and respects stop distance.
         var allocatedCapital = instance.AllocatedCapital > 0 ? instance.AllocatedCapital
                              : credential.LotSize > 0 ? credential.LotSize * entryPrice : entryPrice;
+        if (allocatedCapital < 100)
+        {
+            logger.LogWarning("[ForwardTest] AllocatedCapital not configured for {Instance} — skipping signal", instance.Name);
+            return;
+        }
         var (lots, sizingRationale) = sizingEngine.Compute(
             FixedFractional,
             allocatedCapital,
@@ -164,7 +170,7 @@ public class ForwardTestEngine(
             Status = "Running"
         };
         await sessionRepo.AddAsync(session, ct);
-        _activeStates[instance.Id] = new ForwardTestState(session.Id, initialCapital);
+        _activeStates[instance.Id] = new ForwardTestState(session.Id, initialCapital); // ConcurrentDictionary indexer is thread-safe
 
         logger.LogInformation("[ForwardTest] Session started for {Instance} (capital={Capital})",
             instance.Name, initialCapital);
@@ -173,8 +179,7 @@ public class ForwardTestEngine(
 
     public async Task StopSessionAsync(Guid instanceId, CancellationToken ct)
     {
-        if (!_activeStates.TryGetValue(instanceId, out var state)) return;
-        _activeStates.Remove(instanceId);
+        if (!_activeStates.TryRemove(instanceId, out var state)) return;
 
         using var scope = scopeFactory.CreateScope();
         var sessionRepo = scope.ServiceProvider.GetRequiredService<IForwardTestSessionRepository>();
@@ -197,6 +202,34 @@ public class ForwardTestEngine(
             instanceId, state.ClosedTradeCount, state.TotalPnl);
     }
 
+    public async Task RecoverActiveSessionsAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var sessionRepo = scope.ServiceProvider.GetRequiredService<IForwardTestSessionRepository>();
+
+        var runningSessions = await sessionRepo.GetRunningAsync(ct);
+        var recovered = 0;
+
+        foreach (var session in runningSessions)
+        {
+            // Re-hydrate in-memory state from last known session values.
+            // Open position is NOT restored here (Phase 2 requires persisted open position columns).
+            // Any open trade is treated as closed at session stop price — the engine resumes tracking
+            // from a flat position, which is the safe default.
+            var state = new ForwardTestState(session.Id, session.InitialCapital);
+            if (_activeStates.TryAdd(session.StrategyInstanceId, state))
+            {
+                recovered++;
+                logger.LogInformation(
+                    "[ForwardTest] Recovered session {SessionId} for instance {InstanceId}",
+                    session.Id, session.StrategyInstanceId);
+            }
+        }
+
+        logger.LogInformation("[ForwardTest] Session recovery complete — {Recovered} of {Total} running sessions restored",
+            recovered, runningSessions.Count);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static PositionCloseResult? TryClosePosition(ForwardTestOpenTrade trade, ClosedCandle candle)
@@ -206,8 +239,8 @@ public class ForwardTestEngine(
 
         if (trade.Direction == "BUY")
         {
-            if (candle.Open <= trade.StopLoss)
             // Gap-fill: bar opened below SL — fill at open
+            if (candle.Open <= trade.StopLoss)
             { exitPrice = candle.Open; reason = "STOP_LOSS"; }
             else if (candle.Low <= trade.StopLoss && candle.High >= trade.TakeProfit)
             {
@@ -226,8 +259,8 @@ public class ForwardTestEngine(
         }
         else // SELL / short
         {
-            if (candle.Open >= trade.StopLoss)
             // Gap-fill: bar opened above SL
+            if (candle.Open >= trade.StopLoss)
             { exitPrice = candle.Open; reason = "STOP_LOSS"; }
             else if (candle.High >= trade.StopLoss && candle.Low <= trade.TakeProfit)
             {

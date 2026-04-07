@@ -237,6 +237,8 @@ public interface IForwardTestSessionRepository
 {
     Task<Domain.Entities.ForwardTestSession?> GetByIdAsync(Guid id, CancellationToken ct);
     Task<IReadOnlyList<Domain.Entities.ForwardTestSession>> GetByInstanceAsync(Guid instanceId, CancellationToken ct);
+    /// <summary>Returns all sessions with Status = 'Running' (used for crash recovery on startup).</summary>
+    Task<IReadOnlyList<Domain.Entities.ForwardTestSession>> GetRunningAsync(CancellationToken ct);
     Task AddAsync(Domain.Entities.ForwardTestSession session, CancellationToken ct);
     Task UpdateAsync(Domain.Entities.ForwardTestSession session, CancellationToken ct);
 }

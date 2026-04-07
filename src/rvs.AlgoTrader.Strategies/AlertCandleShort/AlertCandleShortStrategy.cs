@@ -61,10 +61,13 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
     {
         var candles = context.Candles;
 
-        // Minimum data: EMA warm-up requires EmaPeriod candles + at least 2 today for pattern
-        if (candles.Count < config.EmaPeriod + 1)
+        // Minimum data: both the fast EMA and the trend EMA need enough bars to warm up.
+        // TrendFilterPeriod=20 requires 20 candles before emaTrend[i] is non-zero.
+        // Using only EmaPeriod+1 silently bypasses the trend filter for the first 20 bars.
+        var minRequired = Math.Max(config.EmaPeriod, config.TrendFilterPeriod > 0 ? config.TrendFilterPeriod : 0) + 1;
+        if (candles.Count < minRequired)
             return Task.FromResult(SignalResult.Skip(SkippedReason.InsufficientData,
-                $"Need at least {config.EmaPeriod + 1} candles for EMA warm-up; have {candles.Count}"));
+                $"Need {minRequired} candles for EMA warm-up; have {candles.Count}"));
 
         // ── Step 1: Compute EMAs over the full candle array (aligned by index) ──
 
@@ -124,9 +127,18 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
 
         int? shortAlertIdx = null, shortBreakoutIdx = null;
         int? longAlertIdx  = null, longBreakoutIdx  = null;
+        // Track whether any alert+breakout pair already fired today (for one-trade-per-day).
+        bool anyPastShortBreakout = false;
+        bool anyPastLongBreakout  = false;
 
         int scanStart = todayStart + config.SessionStartBufferBars;
 
+        // Scan ALL of today's candles (not just the first match) so a later alert candle whose
+        // breakout bar IS the most recent closed bar is never missed because an earlier non-live
+        // setup caused a premature break.
+        // Rule: only record a live breakout (nextI == candles.Count - 1).
+        //       If a past breakout is found (nextI < candles.Count - 1), track it for
+        //       one-trade-per-day but keep scanning for a live setup.
         for (int i = scanStart; i < candles.Count - 1; i++)
         {
             if (ema[i] == 0m) continue;
@@ -134,59 +146,72 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
             int nextI     = i + 1;
 
             // ── SHORT alert candle: low floats ABOVE the EMA ─────────────
-            if (shortAlertIdx == null && candidate.Low > ema[i])
+            if (candidate.Low > ema[i])
             {
                 // Trend filter: only short below the trend EMA
                 bool trendOkShort = emaTrend == null || emaTrend[i] == 0m || candidate.Close < emaTrend[i];
                 if (trendOkShort && candles[nextI].Low < candidate.Low)
                 {
-                    shortAlertIdx    = i;
-                    shortBreakoutIdx = nextI;
+                    if (nextI == candles.Count - 1)
+                    {
+                        // Live breakout on the current bar — emit signal (if not already one-trade'd)
+                        shortAlertIdx    = i;
+                        shortBreakoutIdx = nextI;
+                    }
+                    else
+                    {
+                        // Past breakout — one-trade-per-day has already been used for shorts
+                        anyPastShortBreakout = true;
+                    }
                 }
             }
 
             // ── LONG alert candle: high floats BELOW the EMA ─────────────
-            if (config.AllowLong && longAlertIdx == null && candidate.High < ema[i])
+            if (config.AllowLong && candidate.High < ema[i])
             {
                 // Trend filter: only long above the trend EMA
                 bool trendOkLong = emaTrend == null || emaTrend[i] == 0m || candidate.Close > emaTrend[i];
                 if (trendOkLong && candles[nextI].High > candidate.High)
                 {
-                    longAlertIdx    = i;
-                    longBreakoutIdx = nextI;
+                    if (nextI == candles.Count - 1)
+                    {
+                        longAlertIdx    = i;
+                        longBreakoutIdx = nextI;
+                    }
+                    else
+                    {
+                        anyPastLongBreakout = true;
+                    }
                 }
             }
-
-            // Stop after both are found
-            if (shortAlertIdx != null && (longAlertIdx != null || !config.AllowLong))
-                break;
         }
 
         // ── Step 5: No pattern found today → wait ────────────────────────────
 
+        if (shortAlertIdx == null && longAlertIdx == null && !anyPastShortBreakout && !anyPastLongBreakout)
+            return Task.FromResult(SignalResult.Hold(
+                "No Alert Candle + breakout pattern found in today's session yet",
+                indicatorValues: indicators));
+
+        // ── Step 6: One-trade-per-day — did a breakout already fire earlier today? ────
+
+        // A past breakout means the trade was already triggered (or would have been); suppress today.
+        if (anyPastShortBreakout || anyPastLongBreakout)
+            return Task.FromResult(SignalResult.Hold(
+                "Alert Candle signal already triggered earlier today — one trade per day rule",
+                indicatorValues: indicators));
+
+        // No live pattern found but past scan exhausted
         if (shortAlertIdx == null && longAlertIdx == null)
             return Task.FromResult(SignalResult.Hold(
                 "No Alert Candle + breakout pattern found in today's session yet",
                 indicatorValues: indicators));
 
-        // ── Step 6: One-trade-per-day — did earliest pattern already fire? ────
-
-        // Find whichever breakout occurred first chronologically
-        int? earliestBreakout = null;
-        if (shortBreakoutIdx.HasValue) earliestBreakout = shortBreakoutIdx;
-        if (longBreakoutIdx.HasValue  && (earliestBreakout == null || longBreakoutIdx < earliestBreakout))
-            earliestBreakout = longBreakoutIdx;
-
-        if (earliestBreakout!.Value < candles.Count - 1)
-            return Task.FromResult(SignalResult.Hold(
-                "Alert Candle signal already triggered earlier today — one trade per day rule",
-                indicatorValues: indicators));
-
         // ── Step 7: Breakout bar is the current bar → generate signal ─────────
 
-        // Determine which pattern fires on this bar
-        bool shortFires = shortBreakoutIdx.HasValue && shortBreakoutIdx.Value == candles.Count - 1;
-        bool longFires  = longBreakoutIdx.HasValue  && longBreakoutIdx.Value  == candles.Count - 1;
+        // Determine which pattern fires on this bar (both are already confirmed live)
+        bool shortFires = shortBreakoutIdx.HasValue;
+        bool longFires  = longBreakoutIdx.HasValue;
 
         // If both fire simultaneously (rare — very wide bar), prefer neither (ambiguous)
         if (shortFires && longFires)

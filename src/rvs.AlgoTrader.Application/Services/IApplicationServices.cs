@@ -729,6 +729,12 @@ public interface IForwardTestEngine
     Task<Guid> StartSessionAsync(Domain.Entities.StrategyInstance instance, decimal initialCapital, CancellationToken ct);
     /// <summary>Stop a running forward-test session and persist final metrics.</summary>
     Task StopSessionAsync(Guid instanceId, CancellationToken ct);
+    /// <summary>
+    /// Re-hydrates _activeStates from the DB on startup. Queries all forward_test_sessions
+    /// with Status='Running' and restores in-memory state so candle events are not orphaned
+    /// after a pod restart or crash. Called from StartupOrchestrator.
+    /// </summary>
+    Task RecoverActiveSessionsAsync(CancellationToken ct);
 }
 
 /// <summary>

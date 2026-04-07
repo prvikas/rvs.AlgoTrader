@@ -243,9 +243,14 @@ public class BacktestEngine(
             if (positionSize <= 0)
             {
                 skippedSignals++;
-                logger.LogDebug(
-                    "[Backtest] Signal skipped (size=0) bar={Bar} signal={Signal} entry={Entry} sl={SL} equity={Equity}",
-                    i, signal.Signal, signal.EntryPrice, signal.StopLoss, equity);
+                // Distinguish capital floor (equity too low to afford 1 share) from stop-too-tight
+                var maxByCapital = signal.EntryPrice > 0 ? (int)(equity * 0.25m / signal.EntryPrice.Value) : 0;
+                if (maxByCapital <= 0)
+                    logger.LogDebug("[Backtest] Signal skipped: capital floor reached (equity={Equity} entry={Entry})",
+                        equity, signal.EntryPrice);
+                else
+                    logger.LogDebug("[Backtest] Signal skipped (size=0) bar={Bar} signal={Signal} entry={Entry} sl={SL} equity={Equity}",
+                        i, signal.Signal, signal.EntryPrice, signal.StopLoss, equity);
                 continue;
             }
 
@@ -504,6 +509,11 @@ public class BacktestEngine(
 
         // Cap position to 25% of equity to prevent over-leverage on tight stops
         var maxByCapital = (int)(equity * 0.25m / entryPrice);
+        if (maxByCapital <= 0)
+        {
+            // Equity too low to afford even 1 share at 25% cap — stop trading, not sizeByRisk issue
+            return 0;
+        }
         return Math.Min(sizeByRisk, maxByCapital);
     }
 
@@ -551,14 +561,16 @@ public class BacktestEngine(
         var totalReturn = (finalEquity - request.InitialCapital) / request.InitialCapital;
         var calmar      = maxDrawdown == 0 ? 0 : totalReturn / maxDrawdown;
 
-        // Daily Sharpe (group trades by exit date, compute daily P&L)
-        var dailySharpe  = ComputeGroupedSharpe(trades, t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date.ToString());
-        // Monthly Sharpe (group by year-month)
+        // Daily Sharpe: annualise by √252 (252 trading days per year)
+        var dailySharpe  = ComputeGroupedSharpe(trades,
+            t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date.ToString(),
+            annualisationFactor: 252);
+        // Monthly Sharpe: annualise by √12 (12 months per year, not √252)
         var monthlySharpe = ComputeGroupedSharpe(trades, t =>
         {
             var d = t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date;
             return $"{d.Year:D4}-{d.Month:D2}";
-        });
+        }, annualisationFactor: 12);
 
         // Monthly breakdown
         var monthlyGroups = trades
@@ -720,7 +732,9 @@ public class BacktestEngine(
         return (rating, rationale);
     }
 
-    private static decimal ComputeGroupedSharpe(List<BacktestTrade> trades, Func<BacktestTrade, string> keySelector)
+    private static decimal ComputeGroupedSharpe(
+        List<BacktestTrade> trades, Func<BacktestTrade, string> keySelector,
+        double annualisationFactor = 252)
     {
         var groups = trades.GroupBy(keySelector)
             .Select(g => (double)g.Sum(t => t.NetPnl))
@@ -729,7 +743,7 @@ public class BacktestEngine(
         var avg    = groups.Average();
         var stdDev = Math.Sqrt(groups.Select(r => Math.Pow(r - avg, 2)).Average());
         if (stdDev == 0) return 0m;
-        return (decimal)(avg / stdDev * Math.Sqrt(252));
+        return (decimal)(avg / stdDev * Math.Sqrt(annualisationFactor));
     }
 
     private static int ComputeDrawdownRecovery(List<BacktestTrade> trades, decimal initialCapital)
@@ -801,6 +815,8 @@ public class BacktestEngine(
 
     private static string ComputeReproducibilityHash(IReadOnlyList<ClosedCandle> candles, BacktestRequest request)
     {
+        try
+        {
         // Stream directly into SHA256 — zero large-string allocations even for 200k+ candle runs.
         using var sha = SHA256.Create();
         using var cs  = new System.Security.Cryptography.CryptoStream(
@@ -845,6 +861,13 @@ public class BacktestEngine(
 
         cs.FlushFinalBlock();
         return Convert.ToHexString(sha.Hash!).ToLowerInvariant();
+        }
+        catch
+        {
+            // If any decimal serialisation throws (e.g. corrupt candle data), return a sentinel
+            // rather than crashing the whole backtest. Hash mismatch will be visible in results.
+            return "hash-error";
+        }
     }
 
     /// <summary>
