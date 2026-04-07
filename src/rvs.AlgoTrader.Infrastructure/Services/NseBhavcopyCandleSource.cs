@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 

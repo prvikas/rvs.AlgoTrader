@@ -157,7 +157,14 @@
       "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src -name *.cs -path */Strategies/* -type f)",
       "Bash(grep -r \"Zerodha\\\\|Polly\\\\|AddHttpClient\\\\|BreadthCalculatorJob\\\\|HangfireJobRegistry\" C:UsersprvikDownloadsalgotrader-claude-kitsrc --include=*.cs -l)",
       "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrcrvs.AlgoTrader.InfrastructureExtensions -name *.cs)",
-      "Bash(grep -rn BulkInsertAsync C:UsersprvikDownloadsalgotrader-claude-kitsrc --include=*.cs)"
+      "Bash(grep -rn BulkInsertAsync C:UsersprvikDownloadsalgotrader-claude-kitsrc --include=*.cs)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Services -name *Clock*.cs -o -name *System*.cs)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit -name *ForwardTest* -type f)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application -name *Mapping* -o -name *Mapper*)",
+      "Bash(grep -r DateTime. /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application --include=*.cs)",
+      "Bash(grep -n \"DateTime\\\\.\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Commands/ForwardTest/*.cs)",
+      "Bash(grep -n \"DateTime\\\\.\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Queries/ForwardTest/*.cs)",
+      "Bash(grep -rn DateTime. /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Backtesting --include=*.cs)"
     ]
   }
 }

@@ -111,8 +111,4 @@ public sealed class NseEventCalendarImporter(
     }
 }
 
-/// <summary>Imports NSE corporate action events from CSV into the event calendar.</summary>
-public interface INseEventCalendarImporter
-{
-    Task<int> ImportCsvAsync(string csvText, CancellationToken ct);
-}
+// INseEventCalendarImporter is defined in rvs.AlgoTrader.Application.Services

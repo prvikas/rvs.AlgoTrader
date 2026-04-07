@@ -1,4 +1,3 @@
-using Hangfire;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NodaTime;
@@ -6,7 +5,6 @@ using NodaTime.Text;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.DTOs.MarketData;
 using rvs.AlgoTrader.Application.Services;
-using rvs.AlgoTrader.Infrastructure.Jobs;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -17,7 +15,7 @@ namespace rvs.AlgoTrader.API.Controllers;
 [ApiController]
 [Route("api/market-breadth")]
 [Authorize]
-public class MarketBreadthController(IMarketBreadthService breadth) : ControllerBase
+public class MarketBreadthController(IMarketBreadthService breadth, IBreadthJobDispatcher jobDispatcher) : ControllerBase
 {
     /// <summary>Latest available breadth snapshot (today or most recent trading day).</summary>
     [HttpGet("latest")]
@@ -64,7 +62,7 @@ public class MarketBreadthController(IMarketBreadthService breadth) : Controller
         if (date is not null && !LocalDatePattern.Iso.Parse(date).Success)
             return BadRequest(ApiResponse<string>.Fail("date must be ISO format: yyyy-MM-dd"));
 
-        var jobId = BackgroundJob.Enqueue<BreadthCalculatorJob>(j => j.RunAsync(CancellationToken.None));
+        var jobId = jobDispatcher.Enqueue();
         return Accepted(ApiResponse<string>.Ok(jobId));
     }
 }

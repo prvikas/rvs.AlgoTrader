@@ -78,7 +78,8 @@ public class PriceActionBreakoutStrategyTests
             AtrStopMultiple = 1.5m,
             RiskRewardRatio = 2.0m,
             VolumeMultiple = 1.0m,   // easy volume filter
-            MinAtrMultiple = 0.1m    // easy ATR filter
+            MinAtrMultiple = 0.1m,   // easy ATR filter
+            TrendEmaPeriod = 0       // disable trend filter — 31 candles not enough for EMA-50 warmup
         };
         var strategy = new PriceActionBreakoutStrategy(config);
 

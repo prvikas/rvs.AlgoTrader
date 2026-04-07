@@ -23,6 +23,7 @@ using rvs.AlgoTrader.Infrastructure.Secrets;
 using rvs.AlgoTrader.Infrastructure.Messaging.Consumers;
 using rvs.AlgoTrader.Infrastructure.Persistence;
 using rvs.AlgoTrader.Infrastructure.Redis;
+using rvs.AlgoTrader.Infrastructure.Jobs;
 using rvs.AlgoTrader.Infrastructure.Repositories;
 using rvs.AlgoTrader.Infrastructure.Services;
 namespace rvs.AlgoTrader.Infrastructure.Extensions;
@@ -119,6 +120,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISymbolDataPreferencesService, SymbolDataPreferencesService>();
         services.AddScoped<IMarketCalendarService, MarketCalendarService>();
         services.AddScoped<IMarketBreadthService, MarketBreadthService>();
+        services.AddScoped<IEnumValuesService, EfEnumValuesService>();
+        services.AddScoped<IBreadthJobDispatcher, HangfireBreadthJobDispatcher>();
         services.AddScoped<INseBhavcopyCandleSource, NseBhavcopyCandleSource>();
         services.AddScoped<IEventCalendarService, EventCalendarService>();
         services.AddScoped<INseEventCalendarImporter, NseEventCalendarImporter>();

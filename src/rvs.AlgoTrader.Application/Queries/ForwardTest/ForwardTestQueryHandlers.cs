@@ -1,5 +1,6 @@
 using MediatR;
 using NodaTime;
+using NodaTime.Text;
 using rvs.AlgoTrader.Application.DTOs.ForwardTest;
 using rvs.AlgoTrader.Application.Services;
 
@@ -77,7 +78,8 @@ internal static class ForwardTestSessionMapper
                 {
                     acc.equity += t.Pnl;
                     acc.list.Add(new ForwardEquityPoint(
-                        t.ExitTime!.Value.ToDateTimeUtc().ToString("O"),
+                        // AP-001: no DateTime — use NodaTime InstantPattern for ISO 8601 formatting
+                        InstantPattern.ExtendedIso.Format(t.ExitTime!.Value),
                         acc.equity,
                         t.Pnl));
                     return acc;
