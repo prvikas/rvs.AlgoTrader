@@ -19,11 +19,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Event calendar | DONE | #90: MarketEvent entity, IEventCalendarService, F&O expiry seeder, EventCalendarController |
 | Historical data mgr | DONE | #91: IHistoricalDataManager, quality reports, gap detection, CSV bulk import, DataManagerController |
 | Data-feed health | DONE | #96: IDataFeedHealthMonitor singleton, ConcurrentDictionary FeedState, exponential backoff in CandleAggregatorService, DataFeedController |
-| Greeks engine | DONE | #68: IBlackScholesEngine, BlackScholesEngine (B-S with Abramowitz normal approx), GreeksSnapshot value object |
-| Option leg selector | DONE | #65: IOptionLegSelector, OptionsLegSpec on SignalResult, StrikeSelectionMode enum, delta-based selection via BS engine |
-| Order state machine | DONE | #73: IOrderManager, OrderManager with increasing-interval polling + WebSocket fill integration, OrderManagerState enum |
-| IV Rank service | DONE | #72: IOptionIvRankService, OptionIvHistory entity, IvRankSnapshot value object, IvRegime enum, migration 012 |
-| Currency on instrument | DONE | #64: QuoteCurrency/SettlementCurrency/PriceMultiplier on Instrument, IFxRateProvider, FxRate entity, migration 013 |
+| Options engines | DONE | #68 IBlackScholesEngine (B-S, GreeksSnapshot); #65 IOptionLegSelector (delta-based, OptionsLegSpec); #73 IOrderManager (poll+WS); #72 IOptionIvRankService (IvRankSnapshot, IvRegime); #64 QuoteCurrency/FxRate (migration 013) |
 | Multi-leg spreads | DONE | #84: SpreadLeg/SpreadSignalResult types, ISpreadOrderManager, SpreadOrderManager, SpreadPosition entities, migration 012 |
 | Standards cleanup | DONE | #21-#26 (prev); #27 BrokerNames.cs constants — 11 infra/API files updated; #28 TradingDefaults.EmptyJson; #29 EmaSmoothing const; #30 InMemoryKillSwitchService lock(_statusLock) thread safety |
 | Performance analytics | DONE | #89: VaR95, CVaR95, OmegaRatio, Skewness, Kurtosis, DeploymentRating/Rationale in BacktestResult/Dto; MAE/MFE in BacktestTradeDto; persisted in ExtendedStatsJson; restored in ToDto; BacktestService.MapToDto synced (ChartSample, CircuitBreaker, all analytics) |
@@ -44,7 +40,9 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Risk controls | DONE | portfolio-level (PortfolioRiskManager 6 controls) + per-strategy RiskProfile (MaxCapitalPerTradePct, MaxTradesPerDay) both enforced in LiveExecutionEngine |
 | Approval Gate (P4) | DONE | migration 018, StrategyApproval entity, IApprovalService, ApprovalService (CAGR/DD/fwd checks), ApprovalController (checks/status/approve/revoke), LiveExecutionEngine guard, StrategyCard badge + ApprovalDrawer |
 | UI workflow | PARTIAL | top-nav, drawers, backtest replay; Trade Journal + P&L Analysis + Risk Dashboard pages added; scenario multi-select + batch backtest (#2); consolidated lifecycle commands with ICurrentUser audit logging (#9); #128 6-tier RBAC policies (Viewer/Analyst/Trader/RiskManager/Admin/SuperAdmin) + controller attributes |
-| Strategy domain model (PROMPT-001) | DONE | migration 032 enum_values + GET /api/enums; types/strategy.ts; EnumsContext/useEnums; StrategiesPage 5-tab; StrategyDefinitionPage 3-sub-tab; ScenariosTab/Drawer; DeploymentsTab/Drawer; ResultsTab; CompareTab; IndicatorModal; RuleGroupEditor/ConditionRow/WindowExpressionEditor; RightDrawer; mock API; tsc passes |
+| PROMPT-001 strategy domain | DONE | migration 032 enum_values; StrategiesPage 5-tab; StrategyDefinitionPage 3-sub-tab; ScenariosTab/Drawer/CompareTab/ResultsTab/DeploymentsTab; IndicatorModal; RuleGroupEditor/ConditionRow; mock API; tsc passes |
+| PROMPT-002 quant research | DONE | migration 033; SignalLayer cards + Entry Execution + Position Sizing + Stop SM + Signal Waterfall in StrategyDefinitionPage; ConditionRow (absence/percentile/slope/sessionState); ScenarioDrawer hypothesis; ScenariosTab sweep groups + PromotionChecklistModal; CompareTab robustness + funnel + regime; ResultsTab 5 trade charts; tsc zero errors |
+| UX improvements | DONE | Grouped nav (Research/Data/Analytics dropdowns); instrument field uses SymbolSearchInput live search; IndicatorModal inherits primaryTimeframe by default + all DEFAULT_PARAMS filled; HelpTooltip on every strategy field; ProfitBookingRule type + Trailing Profit Booking UI block; tsc clean |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
 | Tests | PARTIAL | PriceActionBreakout unit tests pass; integration factory wired |
 

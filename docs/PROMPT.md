@@ -9,8 +9,7 @@
 
 ---
 
-## PROMPT-002 — Advanced Quant Research Features
-**Status:** PENDING
+## PROMPT-002 — DONE — Advanced Quant Research Features
 
 **Context:**
 PROMPT-001 delivered the base Strategy / Scenario / Deployment / RunResult domain model with full-page

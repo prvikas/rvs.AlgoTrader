@@ -28,6 +28,9 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
 
   const [name, setName] = useState(existing?.name ?? '')
   const [description, setDescription] = useState(existing?.description ?? '')
+  const [hypothesis, setHypothesis] = useState(existing?.hypothesis ?? '')
+  const [hypothesisTag, setHypothesisTag] = useState(existing?.hypothesisTag ?? '')
+  const [isBaseline, setIsBaseline] = useState(existing?.isBaseline ?? false)
   const [capital, setCapital] = useState(existing?.capital ?? 100000)
   const [broker, setBroker] = useState<Broker>(existing?.brokerAccount ?? Broker.MStock)
   const [fromDate, setFromDate] = useState(existing?.backtestRange.from ?? '2023-01-01')
@@ -65,6 +68,9 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
     return {
       name: name.trim(),
       description: description.trim() || undefined,
+      hypothesis: hypothesis.trim() || undefined,
+      hypothesisTag: hypothesisTag.trim() || undefined,
+      isBaseline,
       capital,
       brokerAccount: broker,
       backtestRange: { from: fromDate, to: toDate },
@@ -124,6 +130,43 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
         Indicators, rules, and exit structure are fixed. Only parameter values may be overridden
         within the ranges set by the strategy.
       </div>
+
+      {/* Hypothesis context (PROMPT-002) */}
+      <section>
+        <SectionLabel>HYPOTHESIS</SectionLabel>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: SP.sm }}>
+          <Field label="Hypothesis (what are you testing?)">
+            <textarea
+              value={hypothesis}
+              onChange={e => setHypothesis(e.target.value)}
+              placeholder="e.g. Shortening the EMA period will improve win rate in trending regimes…"
+              rows={3}
+              style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: SP.sm, alignItems: 'end' }}>
+            <Field label="Tag">
+              <input
+                value={hypothesisTag}
+                onChange={e => setHypothesisTag(e.target.value)}
+                placeholder="e.g. ema-sensitivity"
+                style={inputStyle}
+              />
+            </Field>
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+              padding: '6px 0', fontSize: 12, color: isBaseline ? C.green : C.textMuted,
+            }}>
+              <input
+                type="checkbox"
+                checked={isBaseline}
+                onChange={e => setIsBaseline(e.target.checked)}
+              />
+              Mark as baseline
+            </label>
+          </div>
+        </div>
+      </section>
 
       {/* Inherited indicators read-only */}
       <section>

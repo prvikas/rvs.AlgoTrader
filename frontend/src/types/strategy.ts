@@ -147,6 +147,49 @@ export enum MoveStopTo {
   Custom        = 'custom',
 }
 
+export enum SignalLayer {
+  HTFBias            = 'HTFBias',
+  MTFContext         = 'MTFContext',
+  PrimarySignal      = 'PrimarySignal',
+  ConfirmationFilter = 'ConfirmationFilter',
+  EntryTrigger       = 'EntryTrigger',
+  Invalidation       = 'Invalidation',
+}
+
+export enum EntryOrderType {
+  MarketNextOpen  = 'MarketNextOpen',
+  LimitAtClose    = 'LimitAtClose',
+  LimitAtRetest   = 'LimitAtRetest',
+  StopEntryOffset = 'StopEntryOffset',
+}
+
+export enum EntryTiming {
+  Immediately        = 'immediately',
+  WaitForCandleClose = 'waitForCandleClose',
+  FirstNBarsOnly     = 'firstNBarsOnly',
+}
+
+export enum ScalingModel {
+  FullImmediately = 'FullImmediately',
+  ScaleIn2        = 'ScaleIn2',
+  Pyramid         = 'Pyramid',
+}
+
+export enum SizingMethod {
+  FixedRiskPct   = 'FixedRiskPct',
+  KellyFraction  = 'KellyFraction',
+  VolatilityNorm = 'VolatilityNorm',
+  FixedLots      = 'FixedLots',
+  FixedCapital   = 'FixedCapital',
+}
+
+export enum SessionStateProperty {
+  IsFirstSignalOfSession = 'IsFirstSignalOfSession',
+  BarsSinceSessionOpen   = 'BarsSinceSessionOpen',
+  PreviousTradeWasLoss   = 'PreviousTradeWasLoss',
+  OpenPositionCount      = 'OpenPositionCount',
+}
+
 export enum StartCondition {
   Immediately         = 'immediately',
   AfterKR             = 'afterKR',
@@ -187,6 +230,8 @@ export interface IndicatorConfig {
   type: IndicatorType
   timeframe: Timeframe
   role: IndicatorRole
+  signalLayer: SignalLayer
+  layerOrder: number
   baseParams: Record<string, number | string | boolean>
   allowedParamRanges: Record<string, ParamRange | string[]>
 }
@@ -201,9 +246,13 @@ export interface WindowExpression {
 }
 
 export type ConditionOperand =
-  | { kind: 'indicator'; indicatorId: string; field?: string }
-  | { kind: 'window';    expr: WindowExpression }
-  | { kind: 'value';     value: number }
+  | { kind: 'indicator';    indicatorId: string; field?: string }
+  | { kind: 'window';       expr: WindowExpression }
+  | { kind: 'value';        value: number }
+  | { kind: 'absence';      indicatorId: string; lookbackBars: number }
+  | { kind: 'percentile';   indicatorId: string; lookbackBars: number; pct: number }
+  | { kind: 'slope';        indicatorId: string; lookbackBars: number }
+  | { kind: 'sessionState'; property: SessionStateProperty }
 
 export interface Condition {
   id: string
@@ -267,6 +316,116 @@ export interface RRConfig {
   deriveTargetFromSL: boolean
 }
 
+// ─── Entry Execution ─────────────────────────────────────────────────────────
+
+export interface EntryExecutionModel {
+  orderType: EntryOrderType
+  timing: EntryTiming
+  firstNBars?: number
+  maxSlippagePoints?: number
+  scalingModel: ScalingModel
+  pyramidIntervalR?: number
+}
+
+// ─── Position Sizing ──────────────────────────────────────────────────────────
+
+export interface DrawdownScaling {
+  enabled: boolean
+  reduceSizeAtDrawdownPct: number
+  minSizeMultiplier: number
+}
+
+export interface RegimeScaling {
+  enabled: boolean
+  indicatorId: string
+  conditionForIncrease: Condition
+  increaseSizeMultiplier: number
+}
+
+export interface PositionSizingModel {
+  method: SizingMethod
+  baseRiskPct?: number
+  kellyFraction?: number
+  fixedLots?: number
+  fixedCapital?: number
+  maxPositionPct: number
+  liquidityCapPctADV?: number
+  drawdownScaling: DrawdownScaling
+  regimeScaling?: RegimeScaling
+}
+
+// ─── Stop State Machine ───────────────────────────────────────────────────────
+
+export interface StopState {
+  id: string
+  label: string
+  stopType: StopType
+  value: number
+  activationCondition?: {
+    triggerR?: number
+    triggerBars?: number
+    triggerPct?: number
+  }
+  moveStopTo?: MoveStopTo
+  customLevel?: number
+}
+
+export interface StopStateMachine {
+  states: StopState[]
+  allowedRanges: Record<string, ParamRange>
+}
+
+// ─── Profit Booking Rule ──────────────────────────────────────────────────────
+// Book a % of the position at a target R and optionally trail the remainder.
+
+export interface ProfitBookingRule {
+  enabled: boolean
+  triggerR: number          // book when profit reaches this R multiple
+  bookPct: number           // % of position to close at trigger (1–99)
+  continueTrailing: boolean // trail remaining position after booking
+  trailType?: TrailingType  // which trailing method for the remainder
+  trailMultiplier?: number  // ATR multiplier or points for trail
+}
+
+// ─── Parameter Sweep ──────────────────────────────────────────────────────────
+
+export interface ParameterSweep {
+  id: string
+  strategyId: string
+  label: string
+  hypothesis: string
+  paramKey: string
+  indicatorId?: string
+  section: OverrideSection
+  from: number
+  to: number
+  step: number
+  otherOverrides: ParameterOverride[]
+  generatedScenarioIds: string[]
+}
+
+// ─── Trade Record ─────────────────────────────────────────────────────────────
+
+export interface TradeRecord {
+  id: string
+  scenarioId: string
+  runId: string
+  entryTime: string
+  exitTime: string
+  direction: 'Long' | 'Short'
+  entryPrice: number
+  exitPrice: number
+  stopPrice: number
+  targetPrice: number
+  mae: number
+  mfe: number
+  pnlR: number
+  pnlAbsolute: number
+  barsHeld: number
+  exitReason: 'StopHit' | 'TargetHit' | 'TrailingStop' | 'SessionEnd' | 'Manual'
+  regime?: string
+}
+
 // ─── Risk controls ────────────────────────────────────────────────────────────
 
 export interface RiskControls {
@@ -313,6 +472,11 @@ export interface Strategy {
   killSwitch?: KillSwitch
   regimeDefinitions?: RegimeDefinition[]
   allowedRegimes?: string[]
+  // PROMPT-002 additions
+  entryExecution?: EntryExecutionModel
+  positionSizing?: PositionSizingModel
+  stopStateMachine?: StopStateMachine
+  profitBooking?: ProfitBookingRule
   createdAt: string
   updatedAt: string
 }
@@ -339,6 +503,12 @@ export interface Scenario {
   status: ScenarioStatus
   lastRunAt?: string
   lastMetrics?: RunMetrics
+  // PROMPT-002 additions
+  hypothesis?: string
+  hypothesisTag?: string
+  isBaseline?: boolean
+  sweepGroupId?: string
+  promotionNotes?: string
 }
 
 // ─── Deployment ───────────────────────────────────────────────────────────────
@@ -377,6 +547,14 @@ export interface RunMetrics {
   shortWinRate?: number
   btToFtDegradationRatio?: number
   drawdownDurationBars?: number
+  // Robustness metrics (PROMPT-002)
+  walkForwardEfficiency?: number
+  parameterStabilityScore?: number
+  monteCarloMedianReturn?: number
+  monteCarloPct5Return?: number
+  overfitScore?: number
+  degreesFreedomRatio?: number
+  regimeBreakdown?: Record<string, RunMetrics>
 }
 
 export interface RunResult {
@@ -398,25 +576,32 @@ export interface RunResult {
 //   3. Unit tests
 
 export const ENUM_VALUES = {
-  timeframe:        Object.values(Timeframe),
-  tradingStyle:     Object.values(TradingStyle),
-  indicatorType:    Object.values(IndicatorType),
-  indicatorRole:    Object.values(IndicatorRole),
-  conditionOp:      Object.values(ConditionOperator),
-  aggregationType:  Object.values(AggregationType),
-  stopType:         Object.values(StopType),
-  trailingType:     Object.values(TrailingType),
-  scenarioStatus:   Object.values(ScenarioStatus),
-  strategyStatus:   Object.values(StrategyStatus),
-  deploymentStatus: Object.values(DeploymentStatus),
-  runMode:          Object.values(RunMode),
-  exitCombineLogic: Object.values(ExitCombineLogic),
-  dayOfWeek:        Object.values(DayOfWeek),
-  moveStopTo:       Object.values(MoveStopTo),
-  startCondition:   Object.values(StartCondition),
-  deploymentMode:   Object.values(DeploymentMode),
-  broker:           Object.values(Broker),
-  overrideSection:  Object.values(OverrideSection),
+  timeframe:              Object.values(Timeframe),
+  tradingStyle:           Object.values(TradingStyle),
+  indicatorType:          Object.values(IndicatorType),
+  indicatorRole:          Object.values(IndicatorRole),
+  conditionOp:            Object.values(ConditionOperator),
+  aggregationType:        Object.values(AggregationType),
+  stopType:               Object.values(StopType),
+  trailingType:           Object.values(TrailingType),
+  scenarioStatus:         Object.values(ScenarioStatus),
+  strategyStatus:         Object.values(StrategyStatus),
+  deploymentStatus:       Object.values(DeploymentStatus),
+  runMode:                Object.values(RunMode),
+  exitCombineLogic:       Object.values(ExitCombineLogic),
+  dayOfWeek:              Object.values(DayOfWeek),
+  moveStopTo:             Object.values(MoveStopTo),
+  startCondition:         Object.values(StartCondition),
+  deploymentMode:         Object.values(DeploymentMode),
+  broker:                 Object.values(Broker),
+  overrideSection:        Object.values(OverrideSection),
+  // PROMPT-002
+  signalLayer:            Object.values(SignalLayer),
+  entryOrderType:         Object.values(EntryOrderType),
+  entryTiming:            Object.values(EntryTiming),
+  scalingModel:           Object.values(ScalingModel),
+  sizingMethod:           Object.values(SizingMethod),
+  sessionStateProperty:   Object.values(SessionStateProperty),
 } as const
 
 // validateEnumResponse: called inside EnumsContext after fetch.

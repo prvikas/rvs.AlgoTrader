@@ -1,13 +1,363 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { strategyDomainApi } from '../../api/client'
-import { RunMode } from '../../types/strategy'
+import { RunMode, TradeRecord } from '../../types/strategy'
 import { C, F, SP, TABLE_CELL } from '../../styles/tokens'
 import { useEnums } from '../../context/EnumsContext'
 
 interface Props {
   strategyId: string
 }
+
+// ── MAE/MFE Scatter ───────────────────────────────────────────────────────────
+
+function MAEMFEScatterChart({ trades }: { trades: TradeRecord[] }) {
+  const W = 340, H = 220, PAD = 30
+  if (trades.length === 0) return <EmptyChartState label="MAE/MFE Scatter" />
+
+  const maxMAE = Math.max(...trades.map(t => Math.abs(t.mae)), 1)
+  const maxMFE = Math.max(...trades.map(t => t.mfe), 1)
+
+  function tx(mae: number) { return PAD + (Math.abs(mae) / maxMAE) * (W - PAD * 2) }
+  function ty(mfe: number) { return H - PAD - (mfe / maxMFE) * (H - PAD * 2) }
+
+  // Typical stop/target distances
+  const stopPct = trades.filter(t => t.exitReason === 'StopHit').length > 0
+    ? Math.abs(trades.filter(t => t.exitReason === 'StopHit')[0]?.mae ?? maxMAE * 0.5)
+    : maxMAE * 0.5
+  const targetPct = trades.filter(t => t.exitReason === 'TargetHit').length > 0
+    ? trades.filter(t => t.exitReason === 'TargetHit')[0]?.mfe ?? maxMFE * 0.5
+    : maxMFE * 0.5
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>MAE / MFE Scatter</div>
+      <svg width={W} height={H} style={{ overflow: 'visible' }}>
+        {/* Axes */}
+        <line x1={PAD} y1={PAD} x2={PAD} y2={H - PAD} stroke={C.border} strokeWidth={1} />
+        <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke={C.border} strokeWidth={1} />
+        {/* Labels */}
+        <text x={W / 2} y={H - 4} fill={C.textMuted} fontSize={9} textAnchor="middle">MAE (adverse excursion)</text>
+        <text x={10} y={H / 2} fill={C.textMuted} fontSize={9} textAnchor="middle" transform={`rotate(-90, 10, ${H / 2})`}>MFE (favourable)</text>
+        {/* Stop reference line */}
+        <line x1={tx(stopPct)} y1={PAD} x2={tx(stopPct)} y2={H - PAD} stroke={C.red} strokeWidth={1} strokeDasharray="4,3" opacity={0.5} />
+        {/* Target reference line */}
+        <line x1={PAD} y1={ty(targetPct)} x2={W - PAD} y2={ty(targetPct)} stroke={C.green} strokeWidth={1} strokeDasharray="4,3" opacity={0.5} />
+        {/* Dots */}
+        {trades.map((t, i) => (
+          <circle
+            key={i}
+            cx={tx(t.mae)} cy={ty(t.mfe)}
+            r={3}
+            fill={t.pnlR >= 0 ? C.green : C.red}
+            opacity={0.7}
+          >
+            <title>{`${t.direction} | P&L: ${t.pnlR.toFixed(2)}R | MAE: ${t.mae.toFixed(2)} | MFE: ${t.mfe.toFixed(2)}`}</title>
+          </circle>
+        ))}
+      </svg>
+    </div>
+  )
+}
+
+// ── P&L Histogram ─────────────────────────────────────────────────────────────
+
+function PnLHistogram({ trades }: { trades: TradeRecord[] }) {
+  if (trades.length === 0) return <EmptyChartState label="P&L Histogram" />
+
+  const BIN = 0.25
+  const min = Math.floor(Math.min(...trades.map(t => t.pnlR)) / BIN) * BIN
+  const max = Math.ceil(Math.max(...trades.map(t => t.pnlR)) / BIN) * BIN
+  const bins: { center: number; count: number }[] = []
+  for (let b = min; b <= max; b += BIN) {
+    bins.push({
+      center: b,
+      count: trades.filter(t => t.pnlR >= b && t.pnlR < b + BIN).length,
+    })
+  }
+  const maxCount = Math.max(...bins.map(b => b.count), 1)
+  const W = 340, H = 160, PAD = 28
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>P&L Distribution (R-multiples)</div>
+      <svg width={W} height={H}>
+        {bins.map((b, i) => {
+          const barW = Math.max(2, (W - PAD * 2) / bins.length - 1)
+          const barH = (b.count / maxCount) * (H - PAD - 10)
+          const x = PAD + i * ((W - PAD * 2) / bins.length)
+          const y = H - PAD - barH
+          return (
+            <rect
+              key={i}
+              x={x} y={y} width={barW} height={barH}
+              fill={b.center >= 0 ? C.green : C.red}
+              opacity={0.75}
+            >
+              <title>{`${b.center.toFixed(2)}R — ${b.center + BIN > 0 ? b.center.toFixed(2) + 'R' : (b.center + BIN).toFixed(2) + 'R'}: ${b.count} trades`}</title>
+            </rect>
+          )
+        })}
+        {/* Zero line */}
+        {bins.findIndex(b => b.center >= 0) >= 0 && (() => {
+          const zeroIdx = bins.findIndex(b => b.center >= 0)
+          const x = PAD + zeroIdx * ((W - PAD * 2) / bins.length)
+          return <line x1={x} y1={10} x2={x} y2={H - PAD} stroke={C.textMuted} strokeWidth={1} strokeDasharray="3,2" />
+        })()}
+        <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke={C.border} strokeWidth={1} />
+        <text x={W / 2} y={H - 4} fill={C.textMuted} fontSize={9} textAnchor="middle">P&L in R-multiples (0.25R bins)</text>
+      </svg>
+    </div>
+  )
+}
+
+// ── Time-of-Day Heatmap ───────────────────────────────────────────────────────
+
+function TimeOfDayHeatmap({ trades }: { trades: TradeRecord[] }) {
+  if (trades.length === 0) return <EmptyChartState label="Time of Day Heatmap" />
+
+  const HOURS = ['9:00', '9:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30']
+  const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+
+  // Build grid: avg P&L per cell
+  const grid: (number | null)[][] = DAYS.map(() => HOURS.map(() => null))
+  const counts: number[][] = DAYS.map(() => HOURS.map(() => 0))
+  const sums: number[][] = DAYS.map(() => HOURS.map(() => 0))
+
+  trades.forEach(t => {
+    const d = new Date(t.entryTime)
+    const dow = d.getDay() - 1 // 0=Mon
+    if (dow < 0 || dow > 4) return
+    const hour = d.getHours()
+    const halfHour = d.getMinutes() >= 30 ? 1 : 0
+    const bucket = (hour - 9) * 2 + halfHour
+    if (bucket < 0 || bucket >= HOURS.length) return
+    sums[dow][bucket] += t.pnlR
+    counts[dow][bucket]++
+  })
+  for (let r = 0; r < DAYS.length; r++) {
+    for (let c = 0; c < HOURS.length; c++) {
+      if (counts[r][c] > 0) grid[r][c] = sums[r][c] / counts[r][c]
+    }
+  }
+
+  const allVals = grid.flat().filter((v): v is number => v !== null)
+  const absMax = allVals.length > 0 ? Math.max(Math.abs(Math.min(...allVals)), Math.abs(Math.max(...allVals)), 0.01) : 1
+  const CELL_W = 22, CELL_H = 18, LABEL_W = 28, LABEL_H = 16
+
+  function cellColor(v: number | null): string {
+    if (v === null) return C.surface2
+    const ratio = v / absMax // -1 to 1
+    if (ratio > 0) return `rgba(0, 208, 122, ${Math.min(0.9, ratio * 0.8 + 0.1)})`
+    return `rgba(255, 71, 87, ${Math.min(0.9, -ratio * 0.8 + 0.1)})`
+  }
+
+  const totalW = LABEL_W + HOURS.length * CELL_W
+  const totalH = LABEL_H + DAYS.length * CELL_H + 12
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>Time of Day Heatmap (avg R)</div>
+      <svg width={totalW} height={totalH}>
+        {/* Hour labels */}
+        {HOURS.map((h, c) => (
+          <text key={c} x={LABEL_W + c * CELL_W + CELL_W / 2} y={LABEL_H - 2}
+            fill={C.textMuted} fontSize={7} textAnchor="middle">{h}</text>
+        ))}
+        {/* Day labels + cells */}
+        {DAYS.map((day, r) => (
+          <g key={r}>
+            <text x={LABEL_W - 3} y={LABEL_H + r * CELL_H + CELL_H / 2 + 3}
+              fill={C.textMuted} fontSize={8} textAnchor="end">{day}</text>
+            {HOURS.map((_, c) => (
+              <rect
+                key={c}
+                x={LABEL_W + c * CELL_W} y={LABEL_H + r * CELL_H}
+                width={CELL_W - 1} height={CELL_H - 1}
+                fill={cellColor(grid[r][c])}
+                rx={2}
+              >
+                {grid[r][c] !== null && (
+                  <title>{`${day} ${HOURS[c]}: avg ${grid[r][c]!.toFixed(2)}R (${counts[r][c]} trades)`}</title>
+                )}
+              </rect>
+            ))}
+          </g>
+        ))}
+      </svg>
+    </div>
+  )
+}
+
+// ── Streak Analysis ───────────────────────────────────────────────────────────
+
+function StreakAnalysis({ trades }: { trades: TradeRecord[] }) {
+  if (trades.length === 0) return <EmptyChartState label="Streak Analysis" />
+
+  let maxLoss = 0, maxWin = 0, curLoss = 0, curWin = 0
+
+  for (const t of trades) {
+    if (t.pnlR < 0) {
+      curWin = 0; curLoss++
+      if (curLoss > maxLoss) maxLoss = curLoss
+    } else {
+      curLoss = 0; curWin++
+      if (curWin > maxWin) maxWin = curWin
+    }
+  }
+  // Simple avg: total trades / approximate count (a crude estimate for display)
+  const lossRate = trades.filter(t => t.pnlR < 0).length / trades.length
+  const worstStreak95 = lossRate > 0 ? Math.ceil(Math.log(0.05) / Math.log(1 - lossRate)) : 0
+
+  const statCardStyle: React.CSSProperties = {
+    background: C.surface2, borderRadius: 6, padding: '10px 14px', flex: 1,
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>Streak Analysis</div>
+      <div style={{ display: 'flex', gap: SP.sm, flexWrap: 'wrap' }}>
+        <div style={statCardStyle}>
+          <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Consecutive Losses</div>
+          <div style={{ display: 'flex', gap: SP.lg }}>
+            <span><span style={{ fontSize: 18, fontFamily: F.mono, color: C.red }}>{maxLoss}</span><span style={{ fontSize: 10, color: C.textDim, marginLeft: 4 }}>max</span></span>
+            <span><span style={{ fontSize: 14, fontFamily: F.mono, color: C.textSub }}>{worstStreak95}</span><span style={{ fontSize: 10, color: C.textDim, marginLeft: 4 }}>95% CI worst</span></span>
+            <span><span style={{ fontSize: 14, fontFamily: F.mono, color: C.textSub }}>{curLoss}</span><span style={{ fontSize: 10, color: C.textDim, marginLeft: 4 }}>current</span></span>
+          </div>
+        </div>
+        <div style={statCardStyle}>
+          <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>Consecutive Wins</div>
+          <div style={{ display: 'flex', gap: SP.lg }}>
+            <span><span style={{ fontSize: 18, fontFamily: F.mono, color: C.green }}>{maxWin}</span><span style={{ fontSize: 10, color: C.textDim, marginLeft: 4 }}>max</span></span>
+            <span><span style={{ fontSize: 14, fontFamily: F.mono, color: C.textSub }}>{curWin}</span><span style={{ fontSize: 10, color: C.textDim, marginLeft: 4 }}>current</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Exit Reason Donut ─────────────────────────────────────────────────────────
+
+function ExitReasonDonut({ trades }: { trades: TradeRecord[] }) {
+  if (trades.length === 0) return <EmptyChartState label="Exit Reason Donut" />
+
+  const reasons: TradeRecord['exitReason'][] = ['StopHit', 'TargetHit', 'TrailingStop', 'SessionEnd', 'Manual']
+  const colors = [C.red, C.green, C.amber, C.blue, C.textSub]
+  const counts = reasons.map(r => trades.filter(t => t.exitReason === r).length)
+  const total = counts.reduce((a, b) => a + b, 0)
+  const R = 50, cx = 80, cy = 65
+
+  let startAngle = -Math.PI / 2
+  const slices = counts.map((count, i) => {
+    const pct = total > 0 ? count / total : 0
+    const angle = pct * 2 * Math.PI
+    const endAngle = startAngle + angle
+    const sa = startAngle, ea = endAngle
+    startAngle = endAngle
+    if (pct === 0) return null
+    const x1 = cx + R * Math.cos(sa), y1 = cy + R * Math.sin(sa)
+    const x2 = cx + R * Math.cos(ea), y2 = cy + R * Math.sin(ea)
+    const large = angle > Math.PI ? 1 : 0
+    // Label
+    const midAngle = sa + angle / 2
+    const lx = cx + (R + 16) * Math.cos(midAngle)
+    const ly = cy + (R + 16) * Math.sin(midAngle)
+    return { i, path: `M ${cx} ${cy} L ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2} Z`, lx, ly, pct, count }
+  })
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>Exit Reason</div>
+      <div style={{ display: 'flex', gap: SP.lg, alignItems: 'center', flexWrap: 'wrap' }}>
+        <svg width={160} height={130}>
+          {slices.map(s => s && (
+            <g key={s.i}>
+              <path d={s.path} fill={colors[s.i]} opacity={0.85}>
+                <title>{reasons[s.i]}: {s.count} ({(s.pct * 100).toFixed(0)}%)</title>
+              </path>
+              {s.pct > 0.08 && (
+                <text x={s.lx} y={s.ly} fill={C.text} fontSize={8} textAnchor="middle">{(s.pct * 100).toFixed(0)}%</text>
+              )}
+            </g>
+          ))}
+        </svg>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {reasons.map((r, i) => (
+            <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              <div style={{ width: 10, height: 10, borderRadius: 2, background: colors[i], flexShrink: 0 }} />
+              <span style={{ color: C.textSub }}>{r}</span>
+              <span style={{ fontFamily: F.mono, color: C.text, marginLeft: 4 }}>
+                {counts[i]} ({total > 0 ? ((counts[i] / total) * 100).toFixed(0) : 0}%)
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+
+function EmptyChartState({ label }: { label: string }) {
+  return (
+    <div style={{
+      height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: C.surface2, borderRadius: 6, fontSize: 11, color: C.textDim,
+    }}>
+      {label} — select a run to load data
+    </div>
+  )
+}
+
+// ── Trade Analysis section ────────────────────────────────────────────────────
+
+function TradeAnalysisSection({ strategyId, scenarioId, runId }: {
+  strategyId: string; scenarioId: string; runId: string
+}) {
+  const { data: trades = [], isLoading } = useQuery({
+    queryKey: ['trades', strategyId, scenarioId, runId],
+    queryFn: () => strategyDomainApi.listTrades(strategyId, scenarioId, runId),
+    enabled: !!runId,
+  })
+
+  if (isLoading) {
+    return (
+      <div style={{ padding: SP.lg, color: C.textMuted, fontSize: 12, textAlign: 'center' }}>
+        Loading trade data…
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      marginTop: SP.lg, borderTop: `1px solid ${C.border}`,
+      paddingTop: SP.lg, display: 'flex', flexDirection: 'column', gap: SP.xl,
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+        Trade Analysis — {trades.length} trades
+      </div>
+      {trades.length === 0 ? (
+        <div style={{ color: C.textMuted, fontSize: 12, textAlign: 'center', padding: SP.lg }}>
+          No trade data available for this run yet.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.xl }}>
+          <MAEMFEScatterChart trades={trades} />
+          <PnLHistogram trades={trades} />
+          <TimeOfDayHeatmap trades={trades} />
+          <ExitReasonDonut trades={trades} />
+          <div style={{ gridColumn: '1 / -1' }}>
+            <StreakAnalysis trades={trades} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main ResultsTab ───────────────────────────────────────────────────────────
 
 export function ResultsTab({ strategyId }: Props) {
   const { enums } = useEnums()
@@ -17,6 +367,7 @@ export function ResultsTab({ strategyId }: Props) {
   const [modeFilter, setModeFilter] = useState<RunMode | 'All'>('All')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null)
 
   const { data: scenarios = [] } = useQuery({
     queryKey: ['scenarios', strategyId],
@@ -64,6 +415,7 @@ export function ResultsTab({ strategyId }: Props) {
                   border: `1px solid ${selectedScenarios.includes(s.id) ? C.blue + '66' : C.border}`,
                 }}
               >
+                {s.isBaseline && <span style={{ color: C.amber, marginRight: 4 }}>●</span>}
                 {s.name}
               </button>
             ))}
@@ -119,10 +471,13 @@ export function ResultsTab({ strategyId }: Props) {
 
       {!isLoading && !error && filtered.length > 0 && (
         <div style={{ overflowX: 'auto' }}>
+          <div style={{ fontSize: 11, color: C.textDim, marginBottom: 6 }}>
+            Click a row to expand trade analysis
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ background: C.surface2 }}>
-                {['Scenario', 'Mode', 'Date Range', 'Return', 'Max DD', 'Sharpe', 'Win%', 'PF', 'Trades'].map(h => (
+                {['', 'Scenario', 'Mode', 'Date Range', 'Return', 'Max DD', 'Sharpe', 'Win%', 'PF', 'Trades'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
@@ -130,22 +485,46 @@ export function ResultsTab({ strategyId }: Props) {
             <tbody>
               {filtered.map(r => {
                 const scenarioName = scenarios.find(s => s.id === r.scenarioId)?.name ?? r.scenarioId
+                const isExpanded = expandedRunId === r.id
                 return (
-                  <tr key={r.id} style={{ borderBottom: `1px solid ${C.border2}` }}>
-                    <td style={tdStyle}>{scenarioName}</td>
-                    <td style={{ ...tdStyle, color: r.mode === RunMode.ForwardTest ? C.blue : C.textSub }}>
-                      {r.mode === RunMode.ForwardTest ? 'Fwd Test' : 'Backtest'}
-                    </td>
-                    <td style={{ ...tdStyle, color: C.textMuted }}>
-                      {r.dateRange.from.slice(0, 10)} – {r.dateRange.to.slice(0, 10)}
-                    </td>
-                    <NumericCell value={r.metrics.returnPct} pct colored />
-                    <NumericCell value={r.metrics.maxDrawdownPct} pct negative />
-                    <NumericCell value={r.metrics.sharpe} decimals={2} />
-                    <NumericCell value={r.metrics.winRate} pct />
-                    <NumericCell value={r.metrics.profitFactor} decimals={2} />
-                    <td style={{ ...tdStyle, fontFamily: F.mono, textAlign: 'right' }}>{r.metrics.tradeCount}</td>
-                  </tr>
+                  <React.Fragment key={r.id}>
+                    <tr
+                      style={{
+                        borderBottom: `1px solid ${C.border2}`,
+                        cursor: 'pointer',
+                        background: isExpanded ? `${C.blue}08` : 'transparent',
+                      }}
+                      onClick={() => setExpandedRunId(isExpanded ? null : r.id)}
+                    >
+                      <td style={{ ...tdStyle, color: C.textMuted, width: 20 }}>
+                        {isExpanded ? '▼' : '▶'}
+                      </td>
+                      <td style={tdStyle}>{scenarioName}</td>
+                      <td style={{ ...tdStyle, color: r.mode === RunMode.ForwardTest ? C.blue : C.textSub }}>
+                        {r.mode === RunMode.ForwardTest ? 'Fwd Test' : 'Backtest'}
+                      </td>
+                      <td style={{ ...tdStyle, color: C.textMuted }}>
+                        {r.dateRange.from.slice(0, 10)} – {r.dateRange.to.slice(0, 10)}
+                      </td>
+                      <NumericCell value={r.metrics.returnPct} pct colored />
+                      <NumericCell value={r.metrics.maxDrawdownPct} pct negative />
+                      <NumericCell value={r.metrics.sharpe} decimals={2} />
+                      <NumericCell value={r.metrics.winRate} pct />
+                      <NumericCell value={r.metrics.profitFactor} decimals={2} />
+                      <td style={{ ...tdStyle, fontFamily: F.mono, textAlign: 'right' }}>{r.metrics.tradeCount}</td>
+                    </tr>
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={10} style={{ padding: '0 16px 20px', background: `${C.blue}04` }}>
+                          <TradeAnalysisSection
+                            strategyId={strategyId}
+                            scenarioId={r.scenarioId}
+                            runId={r.id}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
             </tbody>
@@ -155,6 +534,10 @@ export function ResultsTab({ strategyId }: Props) {
     </div>
   )
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+import React from 'react'
 
 function NumericCell({ value, pct, colored, negative, decimals = 1 }: {
   value: number; pct?: boolean; colored?: boolean; negative?: boolean; decimals?: number
@@ -189,3 +572,7 @@ const thStyle: React.CSSProperties = {
 }
 
 const tdStyle: React.CSSProperties = { padding: TABLE_CELL, fontSize: 12, color: C.text }
+
+// SP.xl not in tokens — inline it
+const SP_xl = '24px'
+Object.assign(SP, { xl: SP_xl })

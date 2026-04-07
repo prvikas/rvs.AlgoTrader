@@ -1037,12 +1037,13 @@ export const correlationApi = {
 // TODO: API — routes not yet implemented on the backend.
 // These functions return mock data shaped to the interfaces in types/strategy.ts.
 import type {
-  Strategy, Scenario, Deployment, RunResult,
+  Strategy, Scenario, Deployment, RunResult, ParameterSweep, TradeRecord,
 } from '../types/strategy'
 import {
   Timeframe, TradingStyle, StrategyStatus, IndicatorType, IndicatorRole,
   ScenarioStatus, Broker,
   ExitCombineLogic, StopType, TrailingType, StartCondition, DayOfWeek,
+  SignalLayer,
 } from '../types/strategy'
 
 const MOCK_STRATEGIES: Strategy[] = [
@@ -1058,12 +1059,14 @@ const MOCK_STRATEGIES: Strategy[] = [
       {
         id: 'ind-ema50', type: IndicatorType.EMA, timeframe: Timeframe.D1,
         role: IndicatorRole.EntryFilter,
+        signalLayer: SignalLayer.PrimarySignal, layerOrder: 1,
         baseParams: { period: 50 },
         allowedParamRanges: { period: { min: 20, max: 100 } },
       },
       {
         id: 'ind-atr', type: IndicatorType.ATR, timeframe: Timeframe.D1,
         role: IndicatorRole.StopLoss,
+        signalLayer: SignalLayer.EntryTrigger, layerOrder: 1,
         baseParams: { period: 14 },
         allowedParamRanges: { period: { min: 7, max: 28 } },
       },
@@ -1126,6 +1129,8 @@ const MOCK_SCENARIOS: Record<string, Scenario[]> = {
 
 const MOCK_DEPLOYMENTS: Record<string, Deployment[]> = {}
 const MOCK_RUNS: Record<string, RunResult[]> = {}
+const MOCK_TRADES: Record<string, TradeRecord[]> = {}
+const MOCK_SWEEPS: ParameterSweep[] = []
 
 export const strategyDomainApi = {
   // TODO: API — replace with real endpoints when implemented
@@ -1185,4 +1190,45 @@ export const strategyDomainApi = {
 
   listRuns: (strategyId: string): Promise<RunResult[]> =>
     Promise.resolve(MOCK_RUNS[strategyId] ?? []),
+
+  // PROMPT-002
+  listTrades: (_strategyId: string, _scenarioId: string, _runId: string): Promise<TradeRecord[]> =>
+    Promise.resolve(MOCK_TRADES[_runId] ?? []),
+
+  createParameterSweep: (
+    strategyId: string,
+    sweep: Omit<ParameterSweep, 'id' | 'strategyId' | 'generatedScenarioIds'>
+  ): Promise<ParameterSweep & { generatedCount: number }> => {
+    const steps = Math.floor((sweep.to - sweep.from) / sweep.step) + 1
+    const ids: string[] = []
+    if (!MOCK_SCENARIOS[strategyId]) MOCK_SCENARIOS[strategyId] = []
+    for (let i = 0; i < steps; i++) {
+      const val = sweep.from + i * sweep.step
+      const sid = `scen-sweep-${Date.now()}-${i}`
+      ids.push(sid)
+      MOCK_SCENARIOS[strategyId].push({
+        id: sid,
+        strategyId,
+        name: `${sweep.paramKey} ${val}`,
+        capital: 100000,
+        brokerAccount: Broker.MStock,
+        backtestRange: { from: '2023-01-01', to: '2025-12-31' },
+        parameterOverrides: [...sweep.otherOverrides, {
+          section: sweep.section,
+          indicatorId: sweep.indicatorId,
+          paramKey: sweep.paramKey,
+          baseValue: sweep.from,
+          overrideValue: val,
+        }],
+        status: 'Draft' as import('../types/strategy').ScenarioStatus,
+        sweepGroupId: `sweep-${Date.now()}`,
+        hypothesis: sweep.hypothesis,
+      })
+    }
+    const created: ParameterSweep = {
+      ...sweep, id: `psweep-${Date.now()}`, strategyId, generatedScenarioIds: ids,
+    }
+    MOCK_SWEEPS.push(created)
+    return Promise.resolve({ ...created, generatedCount: steps })
+  },
 }

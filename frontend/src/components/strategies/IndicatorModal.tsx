@@ -2,13 +2,14 @@ import { useState } from 'react'
 import { C, SP } from '../../styles/tokens'
 import {
   IndicatorConfig, IndicatorRole, IndicatorType,
-  ParamRange, Timeframe,
+  ParamRange, SignalLayer, Timeframe,
 } from '../../types/strategy'
 import { useEnums } from '../../context/EnumsContext'
 
 interface Props {
   indicatorId?: string
   strategyIndicators: IndicatorConfig[]
+  primaryTimeframe?: Timeframe   // inherit default from strategy Basic Details
   onSave: (i: IndicatorConfig) => void
   onClose: () => void
 }
@@ -16,31 +17,53 @@ interface Props {
 let _indicatorId = 0
 function newId() { return `ind-${Date.now()}-${_indicatorId++}` }
 
+// Default parameters for every registered IndicatorType
 const DEFAULT_PARAMS: Record<string, Record<string, number>> = {
-  EMA: { period: 20 },
-  SMA: { period: 20 },
-  HullMA: { period: 20 },
-  RSI: { period: 14 },
-  MACD: { fast: 12, slow: 26, signal: 9 },
-  ATR: { period: 14 },
-  BollingerBands: { period: 20, stdDev: 2 },
-  CCI: { period: 20 },
-  Stochastics: { kPeriod: 14, dPeriod: 3 },
-  ADX: { period: 14 },
-  DonchianChannel: { period: 20 },
-  SuperTrend: { period: 10, multiplier: 3 },
-  VolumeSpike: { threshold: 2 },
-  RangePercentile: { period: 20 },
-  ATRPercentile: { period: 20, lookback: 100 },
+  // Trend
+  EMA:              { period: 20 },
+  SMA:              { period: 20 },
+  HullMA:           { period: 20 },
+  DonchianChannel:  { period: 20 },
+  SuperTrend:       { period: 10, multiplier: 3 },
+  // Momentum
+  RSI:              { period: 14 },
+  CCI:              { period: 20 },
+  Stochastics:      { kPeriod: 14, dPeriod: 3 },
+  MACD:             { fast: 12, slow: 26, signal: 9 },
+  // Volatility
+  ATR:              { period: 14 },
+  BollingerBands:   { period: 20, stdDev: 2 },
+  RangePercentile:  { period: 20 },
+  ATRPercentile:    { period: 20, lookback: 100 },
+  // Volume
+  Volume:           { maPeriod: 20 },
+  VolumeSpike:      { threshold: 2, maPeriod: 20 },
+  VWAP:             { bands: 1 },
+  // Price Action
+  SwingHighLow:     { lookback: 20, swing: 3 },
+  InsideBar:        { lookback: 5 },
+  Engulfing:        { lookback: 5 },
+  PrevHighLowBreak: { lookback: 20 },
+  // Session / Time
+  SessionFilter:    { startHour: 9, startMinute: 15, endHour: 15, endMinute: 20 },
+  DayOfWeekFilter:  { mon: 1, tue: 1, wed: 1, thu: 1, fri: 1 },
+  // Regime
+  ADX:              { period: 14, threshold: 20 },
 }
 
-export function IndicatorModal({ indicatorId, strategyIndicators, onSave, onClose }: Props) {
+export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimeframe, onSave, onClose }: Props) {
   const existing = strategyIndicators.find(i => i.id === indicatorId)
   const { enums } = useEnums()
 
   const [step, setStep] = useState(1)
   const [type, setType] = useState<IndicatorType>(existing?.type ?? IndicatorType.EMA)
-  const [timeframe, setTimeframe] = useState<Timeframe>(existing?.timeframe ?? Timeframe.D1)
+  // Default: inherit strategy primary timeframe (user can override)
+  const [timeframe, setTimeframe] = useState<Timeframe>(
+    existing?.timeframe ?? primaryTimeframe ?? Timeframe.D1
+  )
+  const [inheritTf, setInheritTf] = useState<boolean>(
+    !existing && !!primaryTimeframe   // auto-inherit when adding new indicator
+  )
   const [role, setRole] = useState<IndicatorRole>(existing?.role ?? IndicatorRole.EntryTrigger)
   const [baseParams, setBaseParams] = useState<Record<string, number | string | boolean>>(
     existing?.baseParams ?? (DEFAULT_PARAMS[type] ?? { period: 14 })
@@ -48,6 +71,8 @@ export function IndicatorModal({ indicatorId, strategyIndicators, onSave, onClos
   const [allowedRanges, setAllowedRanges] = useState<Record<string, ParamRange | string[]>>(
     existing?.allowedParamRanges ?? {}
   )
+  const [signalLayer, setSignalLayer] = useState<SignalLayer>(existing?.signalLayer ?? SignalLayer.PrimarySignal)
+  const [layerOrder, setLayerOrder] = useState<number>(existing?.layerOrder ?? 0)
 
   const tfOptions = enums.timeframe ?? []
   const typeOptions = enums.indicatorType ?? []
@@ -67,6 +92,8 @@ export function IndicatorModal({ indicatorId, strategyIndicators, onSave, onClos
       role,
       baseParams,
       allowedParamRanges: allowedRanges,
+      signalLayer,
+      layerOrder,
     })
     onClose()
   }
@@ -99,7 +126,25 @@ export function IndicatorModal({ indicatorId, strategyIndicators, onSave, onClos
               </select>
             </Field>
             <Field label="Timeframe *">
-              <select value={timeframe} onChange={e => setTimeframe(e.target.value as Timeframe)} style={selectStyle}>
+              {primaryTimeframe && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, cursor: 'pointer', fontSize: 11, color: C.textSub }}>
+                  <input
+                    type="checkbox"
+                    checked={inheritTf}
+                    onChange={e => {
+                      setInheritTf(e.target.checked)
+                      if (e.target.checked) setTimeframe(primaryTimeframe)
+                    }}
+                  />
+                  Inherit from strategy ({primaryTimeframe})
+                </label>
+              )}
+              <select
+                value={timeframe}
+                disabled={inheritTf}
+                onChange={e => { setTimeframe(e.target.value as Timeframe); setInheritTf(false) }}
+                style={{ ...selectStyle, opacity: inheritTf ? 0.5 : 1 }}
+              >
                 {tfOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
@@ -107,6 +152,17 @@ export function IndicatorModal({ indicatorId, strategyIndicators, onSave, onClos
               <select value={role} onChange={e => setRole(e.target.value as IndicatorRole)} style={selectStyle}>
                 {roleOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+            </Field>
+            <Field label="Signal layer">
+              <select value={signalLayer} onChange={e => setSignalLayer(e.target.value as SignalLayer)} style={selectStyle}>
+                {Object.values(SignalLayer).map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </Field>
+            <Field label="Layer order (within layer)">
+              <input type="number" min={0}
+                value={layerOrder}
+                onChange={e => setLayerOrder(Number(e.target.value))}
+                style={{ ...inputStyle, width: 80 }} />
             </Field>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: SP.sm, marginTop: SP.sm }}>
               <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>

@@ -1,19 +1,16 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  strategiesApi, brokerApi, ordersApi, backtestApi, killSwitchApi, settingsApi,
-  CreateStrategyCommand, BrokerStatus, Order, StrategyInstance,
+  strategiesApi, ordersApi, backtestApi, killSwitchApi, settingsApi,
+  Order, StrategyInstance,
   BacktestResult, BacktestTradeResult, BacktestJobStatus, BacktestChartBar,
 } from '../api/client'
 import { EquityCurveChart } from '../components/Backtest/EquityCurveChart'
 import { KillSwitchBanner } from '../components/Dashboard/KillSwitchBanner'
 import { ColdRestartBanner } from '../components/Dashboard/ColdRestartBanner'
-import { StrategyCard } from '../components/Strategy/StrategyCard'
 import { BrokerStatusBar } from '../components/Broker/BrokerStatusBar'
 import { SymbolSearchInput } from '../components/Strategy/SymbolSearchInput'
-import { ScheduleEditor, ScheduleConfig, defaultScheduleJson } from '../components/Strategy/ScheduleEditor'
 import { StrategyParamsEditor, paramsToJson } from '../components/Strategy/StrategyParamsEditor'
-import { FailureBehaviorEditor, FailureBehaviorConfig, defaultFailureBehavior, failureBehaviorToJson } from '../components/Strategy/FailureBehaviorEditor'
 import { InstrumentsPage } from './InstrumentsPage'
 import { ForwardTestPage } from './ForwardTestPage'
 import { StrategyLabPage } from './StrategyLabPage'
@@ -25,6 +22,7 @@ import { PortfolioAnalysisPage } from './PortfolioAnalysisPage'
 import { RiskDashboardPage } from './RiskDashboardPage'
 import { CorrelationPage } from './CorrelationPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
+import { StrategiesPage as NewStrategiesPage } from './StrategiesPage'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { formatInr, formatIst, isMarketHours } from '../utils/datetime'
 import { useStrategyStream } from '../hooks/useSignalR'
@@ -53,7 +51,6 @@ export function Dashboard() {
   const [backtestPreset, setBacktestPreset] = useState<StrategyInstance | null>(null)
   const [scenarioJobId, setScenarioJobId] = useState<string | null>(null)
   const [openResultId, setOpenResultId] = useState<string | null>(null)
-  const activeBrokerName = localStorage.getItem('active_broker') || 'MStock'
 
   // ── Data Queries ──────────────────────────────────────────────────────────
   // Prefetch registered strategies so they're cached for child pages
@@ -63,11 +60,6 @@ export function Dashboard() {
     staleTime: 5 * 60 * 1000, // rarely changes — cache for 5 min
   })
 
-  const { data: brokerStatus } = useQuery({
-    queryKey: ['broker-status'],
-    queryFn: () => brokerApi.status().then(r => Array.isArray(r.data.data) ? r.data.data : []),
-    refetchInterval: 15_000,
-  })
 
   const { data: orders } = useQuery({
     queryKey: ['orders'],
@@ -91,74 +83,150 @@ export function Dashboard() {
 
   const { isConnected: signalRConnected, coldRestartPaused } = useStrategyStream()
 
-  const NAV_TABS: Array<{ id: Page; label: string }> = [
-    { id: 'portfolio', label: 'Portfolio' },
+  // ── Grouped nav definition ────────────────────────────────────────────────
+  type NavGroup = { id: Page; label: string } | {
+    label: string
+    items: Array<{ id: Page; label: string }>
+  }
+  const NAV_GROUPS: NavGroup[] = [
+    { id: 'portfolio',  label: 'Portfolio' },
     { id: 'strategies', label: 'Strategies' },
-    { id: 'orders', label: 'Orders' },
-    { id: 'lab', label: 'Lab' },
-    { id: 'backtest', label: 'Backtest' },
-    { id: 'forwardtest', label: 'Fwd Test' },
-    { id: 'instruments', label: 'Instruments' },
-    { id: 'universe', label: 'Universe' },
-    { id: 'instrument-types', label: 'Inst. Types' },
-    { id: 'master-data', label: 'Master Data' },
-    { id: 'journal', label: 'Journal' },
-    { id: 'portfolio-analysis', label: 'P&L Analysis' },
-    { id: 'risk', label: 'Risk' },
-    { id: 'correlation', label: 'Correlation' },
+    { id: 'orders',     label: 'Orders' },
+    {
+      label: 'Research',
+      items: [
+        { id: 'lab',         label: 'Strategy Lab' },
+        { id: 'backtest',    label: 'Backtest' },
+        { id: 'forwardtest', label: 'Fwd Test' },
+      ],
+    },
+    {
+      label: 'Data',
+      items: [
+        { id: 'instruments',       label: 'Instruments' },
+        { id: 'universe',          label: 'Universe' },
+        { id: 'instrument-types',  label: 'Inst. Types' },
+        { id: 'master-data',       label: 'Master Data' },
+      ],
+    },
+    {
+      label: 'Analytics',
+      items: [
+        { id: 'journal',            label: 'Trade Journal' },
+        { id: 'portfolio-analysis', label: 'P&L Analysis' },
+        { id: 'risk',               label: 'Risk' },
+        { id: 'correlation',        label: 'Correlation' },
+      ],
+    },
     { id: 'settings', label: 'Settings' },
   ]
 
+  const [openNavGroup, setOpenNavGroup] = useState<string | null>(null)
+
+  // Which group label is currently active (for highlight)
+  function activeGroupLabel(): string | null {
+    for (const g of NAV_GROUPS) {
+      if ('items' in g && g.items.some(i => i.id === activePage)) return g.label
+    }
+    return null
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', minWidth: 1280, backgroundColor: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div
+      style={{ display: 'flex', flexDirection: 'column', height: '100vh', minWidth: 1280, backgroundColor: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}
+      onClick={() => setOpenNavGroup(null)}   // close any open dropdown on page click
+    >
       {/* Top Navigation Bar */}
       <header style={{
         height: NAV_HEIGHT, flexShrink: 0, background: C.navBg,
         borderBottom: `1px solid ${C.navBorder}`,
         display: 'flex', alignItems: 'center',
         paddingLeft: 16, paddingRight: 16, gap: 0,
-        minWidth: 0,
+        position: 'relative', zIndex: 100,   // keeps dropdowns above content
       }}>
-        {/* Brand — fixed width, never shrinks */}
+        {/* Brand */}
         <span style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: '0.05em', marginRight: 16, flexShrink: 0 }}>
           RVS
         </span>
 
-        {/* Nav Tabs — scrollable, never shrinks the right cluster */}
-        <div style={{
-          flex: 1, display: 'flex', alignItems: 'center',
-          overflowX: 'auto', overflowY: 'hidden',
-          // hide scrollbar cross-browser
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-          minWidth: 0,
-        } as React.CSSProperties}>
-          {NAV_TABS.map(tab => {
-            const isActive = activePage === tab.id
+        {/* Grouped Nav */}
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', height: '100%' }}>
+          {NAV_GROUPS.map(group => {
+            if ('id' in group) {
+              // Direct tab
+              const isActive = activePage === group.id
+              return (
+                <button
+                  key={group.id}
+                  onClick={e => { e.stopPropagation(); setActivePage(group.id); setOpenNavGroup(null) }}
+                  style={{
+                    height: NAV_HEIGHT, padding: '0 11px',
+                    background: 'transparent', border: 'none', borderRadius: 0,
+                    borderBottom: isActive ? `2px solid ${C.navActive}` : '2px solid transparent',
+                    color: isActive ? C.text : C.navMuted,
+                    cursor: 'pointer', fontSize: 11, fontWeight: isActive ? 700 : 500,
+                    letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {group.label}
+                </button>
+              )
+            }
+            // Dropdown group
+            const isGroupActive = activeGroupLabel() === group.label
+            const isOpen = openNavGroup === group.label
             return (
-              <button
-                key={tab.id}
-                onClick={() => setActivePage(tab.id)}
-                style={{
-                  flexShrink: 0,
-                  height: NAV_HEIGHT,
-                  padding: '0 10px',
-                  background: 'transparent',
-                  color: isActive ? C.text : C.navMuted,
-                  borderBottom: isActive ? `2px solid ${C.navActive}` : '2px solid transparent',
-                  border: 'none',
-                  borderRadius: 0,
-                  cursor: 'pointer',
-                  fontSize: 11,
-                  fontWeight: isActive ? 700 : 500,
-                  letterSpacing: '0.04em',
-                  textTransform: 'uppercase',
-                  whiteSpace: 'nowrap',
-                  transition: 'color 0.1s',
-                }}
-              >
-                {tab.label}
-              </button>
+              <div key={group.label} style={{ position: 'relative', height: '100%', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <button
+                  onClick={e => { e.stopPropagation(); setOpenNavGroup(isOpen ? null : group.label) }}
+                  style={{
+                    height: NAV_HEIGHT, padding: '0 11px',
+                    background: 'transparent', border: 'none', borderRadius: 0,
+                    borderBottom: (isGroupActive || isOpen) ? `2px solid ${C.navActive}` : '2px solid transparent',
+                    color: (isGroupActive || isOpen) ? C.text : C.navMuted,
+                    cursor: 'pointer', fontSize: 11, fontWeight: isGroupActive ? 700 : 500,
+                    letterSpacing: '0.04em', textTransform: 'uppercase', whiteSpace: 'nowrap',
+                    display: 'flex', alignItems: 'center', gap: 4,
+                  }}
+                >
+                  {group.label}
+                  <span style={{ fontSize: 8, opacity: 0.6 }}>{isOpen ? '▲' : '▼'}</span>
+                </button>
+                {isOpen && (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      position: 'absolute', top: NAV_HEIGHT, left: 0,
+                      background: C.surface, border: `1px solid ${C.border3}`,
+                      borderRadius: '0 0 6px 6px', minWidth: 160,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                      zIndex: 200,
+                    }}
+                  >
+                    {group.items.map(item => {
+                      const isActive = activePage === item.id
+                      return (
+                        <button
+                          key={item.id}
+                          onClick={() => { setActivePage(item.id); setOpenNavGroup(null) }}
+                          style={{
+                            width: '100%', padding: '9px 14px',
+                            background: isActive ? C.surface2 : 'transparent',
+                            border: 'none', borderLeft: isActive ? `2px solid ${C.navActive}` : '2px solid transparent',
+                            color: isActive ? C.text : C.textSub,
+                            cursor: 'pointer', fontSize: 12, textAlign: 'left',
+                            fontWeight: isActive ? 600 : 400,
+                            display: 'block', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             )
           })}
         </div>
@@ -180,26 +248,14 @@ export function Dashboard() {
       <ColdRestartBanner coldRestartPaused={coldRestartPaused} />
 
       {/* Main Content Area */}
-      <main style={{ flex: 1, overflowY: 'auto', padding: CONTENT_PAD, background: C.bg }}>
+      <main style={{
+        flex: 1, overflowY: activePage === 'strategies' ? 'hidden' : 'auto',
+        padding: activePage === 'strategies' ? 0 : CONTENT_PAD,
+        background: C.bg,
+        display: 'flex', flexDirection: 'column',
+      }}>
         {activePage === 'portfolio' && <PortfolioOverview />}
-        {activePage === 'strategies' && (
-          <StrategiesPage
-            activeBroker={activeBrokerName}
-            brokerStatus={brokerStatus ?? []}
-            onPromoteToForward={(instance) => {
-              setBacktestPreset(instance)
-              setActivePage('backtest')
-            }}
-            onScenarioJobStarted={(jobId) => {
-              setScenarioJobId(jobId)
-              setActivePage('backtest')
-            }}
-            onOpenBacktestResult={(runId) => {
-              setOpenResultId(runId)
-              setActivePage('backtest')
-            }}
-          />
-        )}
+        {activePage === 'strategies' && <NewStrategiesPage />}
         {activePage === 'orders' && <OrdersPage orders={orders ?? []} />}
         {activePage === 'lab' && <StrategyLabPage />}
         {activePage === 'backtest' && (
@@ -237,477 +293,6 @@ export function Dashboard() {
 
 // OverviewPage replaced by PortfolioOverview component (imported from components/Portfolio)
 
-// ──────────────────────────────────────────────────────────────────────────────
-// STRATEGIES PAGE
-// ──────────────────────────────────────────────────────────────────────────────
-
-function StrategiesPage({ activeBroker, brokerStatus, onPromoteToForward, onScenarioJobStarted, onOpenBacktestResult }: {
-  activeBroker: string
-  brokerStatus: BrokerStatus[]
-  onPromoteToForward?: (instance: StrategyInstance) => void
-  onScenarioJobStarted?: (jobId: string) => void
-  onOpenBacktestResult?: (runId: string) => void
-}) {
-  const qc = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
-  const [selectedStrategy, setSelectedStrategy] = useState('AlertCandleShort')
-  const [formData, setFormData] = useState({
-    name: '',
-    internalSymbol: '',
-    timeframe: '5m',
-    mode: 'Backtest' as 'Live' | 'Forward' | 'Backtest',
-    brokerName: activeBroker,
-    allocatedCapital: 50000,
-  })
-  const [strategyParams, setStrategyParams] = useState<Record<string, unknown>>({})
-  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig | undefined>(undefined)
-  const [failureBehavior, setFailureBehavior] = useState<FailureBehaviorConfig>(defaultFailureBehavior())
-  const [errorMsg, setErrorMsg] = useState('')
-  const [successMsg, setSuccessMsg] = useState('')
-  const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
-  const [pendingCmd, setPendingCmd] = useState<CreateStrategyCommand | null>(null)
-
-  const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
-
-  const { data: strategies } = useQuery({
-    queryKey: ['strategies'],
-    queryFn: () => strategiesApi.list().then(r => Array.isArray(r.data.data) ? r.data.data : []),
-    refetchInterval: 10_000,
-  })
-
-  const { data: registeredStrategies } = useQuery({
-    queryKey: ['registered-strategies'],
-    queryFn: () => strategiesApi.getRegisteredNames().then(r => r.data.data ?? []),
-    staleTime: 5 * 60 * 1000,
-  })
-
-  // Auto-select first strategy when list loads
-  useEffect(() => {
-    if (!selectedInstanceId && strategies && strategies.length > 0) {
-      setSelectedInstanceId(strategies[0].id)
-    }
-  }, [strategies, selectedInstanceId])
-
-  const selectedInstance = strategies?.find(s => s.id === selectedInstanceId) ?? null
-
-  const createMutation = useMutation({
-    mutationFn: (cmd: CreateStrategyCommand) => strategiesApi.create(cmd),
-    onSuccess: () => {
-      setSuccessMsg('Strategy created successfully!')
-      setShowForm(false)
-      qc.invalidateQueries({ queryKey: ['strategies'] })
-      setTimeout(() => setSuccessMsg(''), 3000)
-    },
-    onError: (err: any) => {
-      setErrorMsg(err.response?.data?.error || 'Failed to create strategy')
-    }
-  })
-
-  const handleSelectStrategy = (name: string) => {
-    setSelectedStrategy(name)
-    setStrategyParams({})
-  }
-
-  const handleCreateStrategy = () => {
-    if (!formData.name.trim()) {
-      setErrorMsg('Instance name is required')
-      return
-    }
-    if (!formData.internalSymbol) {
-      setErrorMsg('Symbol is required')
-      return
-    }
-    if (!selectedStrategy) {
-      setErrorMsg('Strategy type is required')
-      return
-    }
-
-    // Broker-auth guard: warn if Live mode selected but no broker is authenticated
-    if (formData.mode === 'Live') {
-      const selectedBroker = brokerStatus.find(b => b.brokerName === formData.brokerName)
-      if (!selectedBroker?.isAuthenticated) {
-        setErrorMsg(`Broker "${formData.brokerName}" is not authenticated. Please connect it in the broker settings before creating a Live instance.`)
-        return
-      }
-    }
-
-    const cmd: CreateStrategyCommand = {
-      name: formData.name,
-      strategyType: selectedStrategy,
-      internalSymbol: formData.internalSymbol,
-      timeframe: formData.timeframe,
-      mode: formData.mode,
-      brokerName: formData.brokerName,
-      parametersJson: paramsToJson(strategyParams),
-      scheduleJson: scheduleConfig ? JSON.stringify(scheduleConfig) : defaultScheduleJson(),
-      failureBehaviorJson: failureBehaviorToJson(failureBehavior),
-      allocatedCapital: formData.allocatedCapital,
-    }
-
-    // Live mode: require explicit confirmation before creating
-    if (formData.mode === 'Live') {
-      setPendingCmd(cmd)
-      setLiveConfirmOpen(true)
-      return
-    }
-
-    createMutation.mutate(cmd)
-  }
-
-  const handleLiveConfirm = () => {
-    if (pendingCmd) {
-      createMutation.mutate(pendingCmd)
-    }
-    setLiveConfirmOpen(false)
-    setPendingCmd(null)
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 6, borderBottom: `1px solid ${C.border}` }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          Strategies
-        </span>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          style={{
-            padding: '6px 12px',
-            backgroundColor: C.blue,
-            color: '#fff',
-            border: 'none',
-            borderRadius: 4,
-            cursor: 'pointer',
-            fontSize: 12,
-            fontWeight: 600,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-          }}
-        >
-          {showForm ? '✕ Close' : '+ New'}
-        </button>
-      </div>
-
-      {/* Right-side Drawer Overlay */}
-      {showForm && (
-        <div onClick={() => setShowForm(false)} style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 199,
-        }} />
-      )}
-
-      {/* Right-side Drawer */}
-      {showForm && (
-        <div style={{
-          position: 'fixed', top: NAV_HEIGHT, right: 0, bottom: 0,
-          width: 520, background: C.surface,
-          borderLeft: `1px solid ${C.border}`,
-          zIndex: 200, overflowY: 'auto',
-          padding: '16px 20px',
-          boxShadow: '-8px 0 32px rgba(0,0,0,0.6)',
-          display: 'flex', flexDirection: 'column', gap: 12,
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
-            <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.text, textTransform: 'uppercase', letterSpacing: '0.05em' }}>New Strategy Instance</h3>
-            <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.textMuted }}>✕</button>
-          </div>
-
-          {errorMsg && <div style={{ backgroundColor: C.redBg, color: C.red, padding: '10px 12px', borderRadius: 4, marginBottom: '8px', fontSize: 12, border: `1px solid ${C.red}30` }}>{errorMsg}</div>}
-          {successMsg && <div style={{ backgroundColor: C.greenBg, color: C.green, padding: '10px 12px', borderRadius: 4, marginBottom: '8px', fontSize: 12, border: `1px solid ${C.green}30` }}>{successMsg}</div>}
-
-          {/* Form fields — scrollable within drawer */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, overflowY: 'auto' }}>
-            <FormField
-              label="Instance Name"
-              value={formData.name}
-              onChange={(v) => setFormData({ ...formData, name: v })}
-              placeholder="e.g., RELIANCE Breakout #1"
-            />
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Strategy Type</label>
-              <div style={{ display: 'grid', gap: 6, maxHeight: '180px', overflowY: 'auto' }}>
-                {(registeredStrategies ?? []).map(name => (
-                  <button
-                    key={name}
-                    onClick={() => handleSelectStrategy(name)}
-                    style={{
-                      padding: '10px 12px',
-                      backgroundColor: selectedStrategy === name ? C.blue : C.surface2,
-                      color: C.text,
-                      border: selectedStrategy === name ? `1px solid ${C.blue}` : `1px solid ${C.border}`,
-                      borderRadius: 4,
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontSize: 12,
-                      transition: 'all 0.15s',
-                    }}
-                  >
-                    <div style={{ fontWeight: 600 }}>{name}</div>
-                    {STRATEGY_DESCS[name] && (
-                      <div style={{ fontSize: 11, color: C.textSub, marginTop: 3 }}>{STRATEGY_DESCS[name]}</div>
-                    )}
-                  </button>
-                ))}
-                {!registeredStrategies && (
-                  <div style={{ fontSize: 12, color: C.textMuted, padding: '8px 0' }}>Loading strategies…</div>
-                )}
-              </div>
-            </div>
-
-            <SymbolSearchInput
-              value={formData.internalSymbol}
-              onChange={(sym) => setFormData({ ...formData, internalSymbol: sym })}
-            />
-
-            <FormField
-              label="Timeframe"
-              type="select"
-              value={formData.timeframe}
-              onChange={(v) => setFormData({ ...formData, timeframe: v })}
-              options={[
-                { value: '1m', label: '1 min' },
-                { value: '5m', label: '5 min' },
-                { value: '15m', label: '15 min' },
-                { value: '30m', label: '30 min' },
-                { value: '60m', label: '60 min' },
-              ]}
-            />
-
-            <FormField
-              label="Mode"
-              type="select"
-              value={formData.mode}
-              onChange={(v) => setFormData({ ...formData, mode: v as 'Live' | 'Forward' | 'Backtest' })}
-              options={[
-                { value: 'Live', label: 'Live Trading' },
-                { value: 'Forward', label: 'Forward Test' },
-                { value: 'Backtest', label: 'Backtest' },
-              ]}
-            />
-
-            <FormField
-              label="Broker"
-              type="select"
-              value={formData.brokerName}
-              onChange={(v) => setFormData({ ...formData, brokerName: v })}
-              options={
-                brokerStatus.length > 0
-                  ? brokerStatus.map(b => ({ value: b.brokerName, label: b.brokerName }))
-                  : [
-                      { value: 'MStock', label: 'MStock' },
-                      { value: 'Zerodha', label: 'Zerodha' },
-                      { value: 'Upstox', label: 'Upstox' },
-                    ]
-              }
-            />
-
-            <FormField
-              label="Allocated Capital (₹)"
-              type="number"
-              value={formData.allocatedCapital.toString()}
-              onChange={(v) => setFormData({ ...formData, allocatedCapital: parseInt(v) || 50000 })}
-            />
-
-            <div style={{ paddingTop: 4, borderTop: `1px solid ${C.border}` }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Schedule</label>
-              <ScheduleEditor
-                value={scheduleConfig}
-                onChange={setScheduleConfig}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Strategy Parameters</label>
-              <StrategyParamsEditor
-                strategyName={selectedStrategy}
-                value={strategyParams}
-                onChange={setStrategyParams}
-              />
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Failure Behavior</label>
-              <FailureBehaviorEditor
-                value={failureBehavior}
-                onChange={setFailureBehavior}
-              />
-            </div>
-
-            {/* Live mode broker-auth warning */}
-            {formData.mode === 'Live' && brokerStatus.length > 0 && !brokerStatus.find(b => b.brokerName === formData.brokerName)?.isAuthenticated && (
-              <div style={{ background: C.redBg, border: `1px solid ${C.red}30`, borderRadius: 4, padding: '10px 12px', fontSize: 12, color: C.red, display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                <span style={{ fontSize: 13, flexShrink: 0 }}>⚠</span>
-                <span>
-                  <strong>{formData.brokerName}</strong> is not authenticated. Live trading requires an active broker session.
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Action buttons — sticky at bottom */}
-          <div style={{ display: 'flex', gap: 8, paddingTop: 12, borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
-            <button
-              onClick={() => setShowForm(false)}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: C.surface2,
-                color: C.text,
-                border: `1px solid ${C.border}`,
-                borderRadius: 4,
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 600,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreateStrategy}
-              disabled={createMutation.isPending}
-              style={{
-                flex: 1,
-                padding: '8px 12px',
-                backgroundColor: formData.mode === 'Live' ? C.red : C.blue,
-                color: '#fff',
-                border: 'none',
-                borderRadius: 4,
-                cursor: createMutation.isPending ? 'not-allowed' : 'pointer',
-                fontSize: 12,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                opacity: createMutation.isPending ? 0.7 : 1,
-              }}
-            >
-              {createMutation.isPending ? 'Creating...' : 'Create'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Live Start Confirmation Modal */}
-      {liveConfirmOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}>
-          <div style={{
-            backgroundColor: C.surface, border: `2px solid ${C.red}`, borderRadius: 6,
-            padding: 20, maxWidth: 420, width: '90%',
-          }}>
-            <h3 style={{ color: C.red, fontSize: 14, fontWeight: 700, marginTop: 0, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Live Trading — Real Money
-            </h3>
-            <p style={{ color: C.text, fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}>
-              You are about to create a <strong>Live trading instance</strong> for{' '}
-              <strong>{pendingCmd?.name}</strong>.
-            </p>
-            <p style={{ color: C.red, fontSize: 12, lineHeight: 1.6, marginBottom: 16 }}>
-              This will place <strong>real orders</strong> with {pendingCmd?.brokerName} using up to{' '}
-              <strong>₹{pendingCmd?.allocatedCapital?.toLocaleString()}</strong> of allocated capital.
-              <br />Losses are real. Please confirm you intend to trade live.
-            </p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => { setLiveConfirmOpen(false); setPendingCmd(null) }}
-                style={{ padding: '6px 14px', background: C.surface2, color: C.text, border: `1px solid ${C.border}`, borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleLiveConfirm}
-                style={{ padding: '6px 14px', background: C.red, color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}
-              >
-                Confirm Live
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Master-detail: left list + right detail */}
-      <div style={{ display: 'flex', gap: 0, marginTop: 8 }}>
-
-        {/* Left: compact strategy list */}
-        <div style={{
-          width: 260, flexShrink: 0,
-          borderRight: `1px solid ${C.border}`,
-          position: 'sticky', top: 0, alignSelf: 'flex-start',
-          maxHeight: 'calc(100vh - 80px)', overflowY: 'auto',
-        }}>
-          {!strategies || strategies.length === 0 ? (
-            <div style={{ padding: '20px 14px', color: C.textMuted, fontSize: 13 }}>
-              No strategies yet. Click <strong style={{ color: C.text }}>+ New</strong> to create one.
-            </div>
-          ) : (
-            strategies.map(strat => {
-              const isSelected = strat.id === selectedInstanceId
-              const statusColor: Record<string, { bg: string; text: string; dot: string }> = {
-                Draft:     { bg: '#1e293b', text: '#94a3b8', dot: '#94a3b8' },
-                Running:   { bg: '#14532d', text: '#86efac', dot: '#16a34a' },
-                Paused:    { bg: '#422006', text: '#fde68a', dot: '#f59e0b' },
-                Stopped:   { bg: '#1c1c1c', text: '#6b7280', dot: '#6b7280' },
-                Scheduled: { bg: '#1e3a5f', text: '#93c5fd', dot: '#3b82f6' },
-                Error:     { bg: '#450a0a', text: '#fca5a5', dot: '#dc2626' },
-              }
-              const sc = statusColor[strat.status] ?? statusColor.Stopped
-              return (
-                <div
-                  key={strat.id}
-                  onClick={() => setSelectedInstanceId(strat.id)}
-                  style={{
-                    padding: '11px 14px',
-                    cursor: 'pointer',
-                    borderBottom: `1px solid ${C.border2}`,
-                    borderLeft: `3px solid ${isSelected ? C.blue : 'transparent'}`,
-                    background: isSelected ? C.surface2 : 'transparent',
-                    transition: 'background 0.12s',
-                  }}
-                >
-                  <div style={{ fontWeight: 600, fontSize: 13, color: C.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {strat.name}
-                  </div>
-                  <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {strat.strategyType} · {strat.internalSymbol} · {strat.timeframe}
-                  </div>
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-                    background: sc.bg, color: sc.text,
-                  }}>
-                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: sc.dot, flexShrink: 0 }} />
-                    {strat.status}
-                  </span>
-                </div>
-              )
-            })
-          )}
-        </div>
-
-        {/* Right: selected strategy — card + scenarios stacked */}
-        <div style={{ flex: 1, minWidth: 0, paddingLeft: 20 }}>
-          {selectedInstance ? (
-            <StrategyCard
-              key={selectedInstance.id}
-              instance={selectedInstance}
-              onPromoteToForward={onPromoteToForward}
-              onScenarioJobStarted={onScenarioJobStarted}
-              onOpenBacktestResult={onOpenBacktestResult}
-            />
-          ) : strategies && strategies.length > 0 ? (
-            <div style={{ color: C.textMuted, fontSize: 13, padding: 24 }}>
-              Select a strategy to view its details and scenarios.
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // ORDERS PAGE
 // ──────────────────────────────────────────────────────────────────────────────
 
