@@ -87,14 +87,18 @@ public class FibOptionSpreadStrategy(FibOptionSpreadConfig config) : IStrategy
         {
             fib618  = swingHigh - range * 0.618m;   // 61.8% retracement = support
             fib786  = swingHigh - range * 0.786m;   // 78.6% = deep support / invalidation
-            fib1618 = swingLow  - range * 0.618m;   // 1.618 extension below (put spread entry zone)
+            // FIB-1: 1.618 extension is ABOVE swing high for an uptrend (range*0.618 added above),
+            // not below swingLow. Previous code was inverted — yielded a level below the base,
+            // meaning the entry zone was always in a bearish area on a bullish chart.
+            fib1618 = swingHigh + range * 0.618m;   // 1.618 extension above swingHigh (put spread entry zone)
             direction = "put-credit-spread";
         }
         else
         {
             fib618  = swingLow  + range * 0.618m;   // 61.8% retracement from low = resistance
             fib786  = swingLow  + range * 0.786m;   // 78.6% = deep resistance / invalidation
-            fib1618 = swingHigh + range * 0.618m;   // 1.618 extension above (call spread entry zone)
+            // FIB-1: 1.618 extension is BELOW swing low for a downtrend.
+            fib1618 = swingLow  - range * 0.618m;   // 1.618 extension below swingLow (call spread entry zone)
             direction = "call-credit-spread";
         }
 

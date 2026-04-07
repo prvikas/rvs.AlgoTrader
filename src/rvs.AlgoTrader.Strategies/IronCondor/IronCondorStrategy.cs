@@ -38,6 +38,11 @@ public class IronCondorStrategy(IronCondorConfig config) : IStrategy
         var chain  = context.OptionChain;
         decimal iv = chain.AtmIv;
 
+        // IC-3: AtmIv == 0 means the chain snapshot has no valid IV data — do not enter.
+        if (iv <= 0)
+            return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
+                "IronCondor: AtmIv is zero — option chain IV data unavailable, cannot size legs"));
+
         // ── IV range filter ────────────────────────────────────────────────
         if (iv < config.MinAtmIv)
             return Task.FromResult(SignalResult.Hold(

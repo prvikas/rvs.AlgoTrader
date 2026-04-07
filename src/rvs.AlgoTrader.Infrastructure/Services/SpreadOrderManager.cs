@@ -79,6 +79,10 @@ public class SpreadOrderManager(
 
         foreach (var (spec, res) in resolvedLegs)
         {
+            // SO-3: apply NSE lot size so each leg covers the correct number of contracts.
+            // spec.Quantity is the number of lots (default 1); the credential LotSize is the
+            // lot multiplier (e.g. 50 for NIFTY, 25 for BANKNIFTY). Default to 1 if not configured.
+            var lotSize = instance.Credential?.LotSize > 0 ? instance.Credential.LotSize : 1;
             var legEntity = new SpreadPositionLeg
             {
                 Id               = Guid.NewGuid(),
@@ -89,7 +93,7 @@ public class SpreadOrderManager(
                 OptionType       = spec.OptionType,
                 StrikePrice      = res.StrikePrice,
                 Expiry           = res.Expiry,
-                Quantity         = spec.Quantity,
+                Quantity         = spec.Quantity * lotSize,
                 Status           = "Pending"
             };
             legEntities.Add(legEntity);
@@ -106,17 +110,30 @@ public class SpreadOrderManager(
         bool anyRejected = results.Any(r => !r.Success);
         if (anyRejected)
         {
-            // Cancel any legs that did get submitted
+            // Reverse-out any legs that did get submitted — CancelOrder is a no-op for already-filled
+            // market orders, so we place a market order in the opposite direction to flatten the position.
             foreach (var (leg, success, brokerId) in results.Where(r => r.Success && r.BrokerOrderId != null))
             {
                 try
                 {
-                    await brokerClient.CancelOrderAsync(brokerId!, ct);
+                    var reverseDir = leg.Direction == OrderDirection.Buy ? OrderDirection.Sell : OrderDirection.Buy;
+                    var reverseIdempKey = $"rollback:{spread.Id}:{leg.InternalSymbol}:{reverseDir}";
+                    var reverseReq = new OrderRequest(
+                        leg.InternalSymbol, leg.BrokerToken,
+                        OrderType.Market.ToString().ToUpperInvariant(),
+                        reverseDir.ToString().ToUpperInvariant(),
+                        leg.Quantity, null, null,
+                        Domain.Enums.Exchange.NFO.ToString(),
+                        ProductType.NRML.ToString(),
+                        reverseIdempKey,
+                        instance.RuntimeState?.CurrentRunId,
+                        correlationId);
+                    await brokerClient.PlaceOrderAsync(reverseReq, ct);
                     leg.Status = "Cancelled";
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning(ex, "[SpreadOrderManager] Failed to cancel rollback leg {BrokerId}", brokerId);
+                    logger.LogWarning(ex, "[SpreadOrderManager] Failed to reverse rollback leg {BrokerId}", brokerId);
                 }
             }
             spread.Status   = "Failed";
@@ -151,7 +168,21 @@ public class SpreadOrderManager(
         {
             try
             {
-                await brokerClient.CancelOrderAsync(leg.BrokerOrderId!, ct);
+                // CancelOrder is a no-op on already-filled market orders. Place a reverse market
+                // order to close the position (exit = opposite direction of entry).
+                var reverseDir = leg.Direction == OrderDirection.Buy ? OrderDirection.Sell : OrderDirection.Buy;
+                var idempKey = $"close:{spreadPositionId}:{leg.InternalSymbol}:{reverseDir}";
+                var req = new OrderRequest(
+                    leg.InternalSymbol, leg.BrokerToken,
+                    OrderType.Market.ToString().ToUpperInvariant(),
+                    reverseDir.ToString().ToUpperInvariant(),
+                    leg.Quantity, null, null,
+                    Domain.Enums.Exchange.NFO.ToString(),
+                    ProductType.NRML.ToString(),
+                    idempKey,
+                    null,
+                    correlationId);
+                await brokerClient.PlaceOrderAsync(req, ct);
                 leg.Status = "Cancelled";
             }
             catch (Exception ex)

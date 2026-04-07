@@ -269,7 +269,8 @@ public record PositionSizingConfig(
     decimal WinRate          = 0.5m,    // required for KellyCriterion (0–1)
     decimal AvgWinLossRatio  = 1.5m,    // avgWin / avgLoss (KellyCriterion)
     int     MaxLots          = 100,     // hard cap regardless of model
-    decimal MaxCapitalPct    = 20.0m    // max % of equity in one trade
+    decimal MaxCapitalPct    = 20.0m,   // max % of equity in one trade
+    decimal AtrMultiplier    = 2.0m     // ATR stop multiplier for AtrBased sizing (risk = ATR × this)
 );
 
 // ── #88: Slippage & Commission Models ────────────────────────────────────────

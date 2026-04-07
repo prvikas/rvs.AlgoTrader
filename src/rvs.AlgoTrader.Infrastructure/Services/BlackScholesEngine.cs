@@ -20,7 +20,8 @@ public sealed class BlackScholesEngine : IBlackScholesEngine
         bool isCall)
     {
         if (timeToExpiryYears <= 0)
-            return new GreeksSnapshot(isCall ? 0m : -1m, 0m, 0m, 0m, 0m, 0m);
+            // All Greeks are 0 for expired options — delta is not -1 for puts post-expiry.
+            return new GreeksSnapshot(0m, 0m, 0m, 0m, 0m, 0m);
 
         double s = (double)spotPrice;
         double k = (double)strikePrice;

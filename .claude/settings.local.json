@@ -164,7 +164,8 @@
       "Bash(grep -r DateTime. /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application --include=*.cs)",
       "Bash(grep -n \"DateTime\\\\.\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Commands/ForwardTest/*.cs)",
       "Bash(grep -n \"DateTime\\\\.\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Queries/ForwardTest/*.cs)",
-      "Bash(grep -rn DateTime. /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Backtesting --include=*.cs)"
+      "Bash(grep -rn DateTime. /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Backtesting --include=*.cs)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *SpreadSignalResult* -o -name *SpreadLeg* -o -name *SignalType*)"
     ]
   }
 }

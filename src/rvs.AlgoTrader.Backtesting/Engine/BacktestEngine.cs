@@ -239,6 +239,19 @@ public class BacktestEngine(
 
             if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) continue;
 
+            // IC-1: Spread signals cannot be simulated by BacktestEngine — it is a single-leg
+            // equity engine. Spread strategies (IronCondor, ShortStraddleStrangle, CalendarSpread,
+            // VerticalSpread, etc.) must be validated via the forward test engine and ISpreadOrderManager.
+            // Silently falling through would produce 0 trades and a flat equity curve — misleading.
+            if (signal.Spread != null)
+            {
+                skippedSignals++;
+                logger.LogWarning("[Backtest] {JobId} — spread signal ({SpreadType}) from {Strategy}: " +
+                    "BacktestEngine does not support multi-leg spreads. Use forward test for spread strategies.",
+                    jobId, signal.Spread.SpreadType, request.StrategyName);
+                continue;
+            }
+
             var positionSize = CalculatePositionSize(equity, signal, request);
             if (positionSize <= 0)
             {

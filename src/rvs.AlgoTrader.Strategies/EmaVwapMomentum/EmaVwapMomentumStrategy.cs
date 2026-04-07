@@ -308,26 +308,39 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
     }
 
     /// <summary>
-    /// Daily session VWAP using typical price (H+L+C)/3.
-    /// Resets accumulator at each new trading day — without this, VWAP computed
-    /// over multi-day candle history is meaningless for intraday signals.
+    /// Session VWAP using typical price (H+L+C)/3.
+    /// For intraday candles: resets at each new IST trading day (standard intraday VWAP).
+    /// For daily candles: each bar is already one day, so a day-reset VWAP equals the bar's
+    /// own close — meaningless as a filter. EV-1: detect this by checking whether all bars have
+    /// distinct dates (daily TF) and use rolling cumulative VWAP instead.
     /// </summary>
     private static decimal[] ComputeVwap(IReadOnlyList<ClosedCandle> candles)
     {
         if (candles.Count == 0) return [];
+
+        // EV-1: Detect daily timeframe — if every consecutive pair of bars falls on different dates,
+        // we have at most one bar per day. Use rolling cumulative VWAP (no daily reset) in that case.
+        bool isDailyTf = candles.Count >= 2 &&
+            candles[0].OpenTime.ToInstant().InZone(Ist).Date !=
+            candles[1].OpenTime.ToInstant().InZone(Ist).Date;
+
         var result = new decimal[candles.Count];
         decimal cumPV = 0, cumVol = 0;
         var sessionDate = candles[0].OpenTime.ToInstant().InZone(Ist).Date;
+
         for (int i = 0; i < candles.Count; i++)
         {
             var c = candles[i];
-            // Reset at each new IST session day
-            var candleDate = c.OpenTime.ToInstant().InZone(Ist).Date;
-            if (candleDate != sessionDate)
+            if (!isDailyTf)
             {
-                cumPV = 0;
-                cumVol = 0;
-                sessionDate = candleDate;
+                // Intraday: reset at each new IST session day
+                var candleDate = c.OpenTime.ToInstant().InZone(Ist).Date;
+                if (candleDate != sessionDate)
+                {
+                    cumPV = 0;
+                    cumVol = 0;
+                    sessionDate = candleDate;
+                }
             }
             var tp = (c.High + c.Low + c.Close) / 3m;
             cumPV  += tp * c.Volume;

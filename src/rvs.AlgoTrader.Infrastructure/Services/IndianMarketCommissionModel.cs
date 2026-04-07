@@ -59,8 +59,8 @@ public sealed class IndianMarketCommissionModel : ICommissionModel
 
         // ── STT ──────────────────────────────────────────────────────────────
         decimal stt = 0m;
-        if (isEquity && isDelivery)
-            stt = tradeValue * 0.001m;              // 0.1% both sides (buy: 0.1% CNC buy)
+        if (isEquity && isDelivery && !isBuy)
+            stt = tradeValue * 0.001m;              // 0.1% on sell side only (SEBI: STT for CNC delivery = sell-side)
         else if (isEquity && !isDelivery && !isBuy)
             stt = tradeValue * 0.00025m;            // 0.025% sell-side intraday
         else if (isFutures && !isBuy)
@@ -71,7 +71,7 @@ public sealed class IndianMarketCommissionModel : ICommissionModel
         // ── Exchange fee ─────────────────────────────────────────────────────
         decimal exchangeFee;
         if (isOptions)
-            exchangeFee = price * quantity * 0.00002m;  // 0.002% on premium
+            exchangeFee = price * quantity * 0.00053m;  // 0.053% on premium (NSE F&O FY2025-26)
         else if (isFutures)
             exchangeFee = tradeValue * 0.000002m;       // 0.0002%
         else

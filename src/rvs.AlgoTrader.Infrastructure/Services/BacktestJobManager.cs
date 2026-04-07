@@ -27,6 +27,10 @@ public class BacktestJobManager(
 
     public Task<string> EnqueueAsync(BacktestRequestDto dto, CancellationToken ct)
     {
+        // BJ-1: Evict completed/failed/cancelled jobs older than 24h to prevent unbounded memory growth.
+        // Called on each enqueue rather than a background timer — low-frequency, no thread needed.
+        CleanupOldJobs();
+
         var jobId = Guid.NewGuid().ToString("N")[..TradingDefaults.JobIdLength];
         var job   = new BacktestJob(jobId) { ScenarioId = dto.ScenarioId };
         _jobs[jobId] = job;
@@ -63,6 +67,8 @@ public class BacktestJobManager(
 
     public Task<string> EnqueueScenarioAsync(Guid scenarioId, BacktestRequestDto mergedRequest, CancellationToken ct)
     {
+        CleanupOldJobs();
+
         var jobId = Guid.NewGuid().ToString("N")[..TradingDefaults.JobIdLength];
         var job   = new BacktestJob(jobId) { ScenarioId = scenarioId };
         _jobs[jobId] = job;
@@ -84,6 +90,9 @@ public class BacktestJobManager(
         var runRepo   = scope.ServiceProvider.GetRequiredService<IBacktestRunRepository>();
         try
         {
+            // BJ-2: Stamp actual execution start (not enqueue time) so StartedAt reflects when
+            // the job began running, not when it was queued.
+            job.StartedAt = DateTimeOffset.UtcNow;
             job.Status = BacktestJobStatus.Running;
             await pusher.PushProgressAsync(jobId, job.ToDto());
 
@@ -120,7 +129,9 @@ public class BacktestJobManager(
 
                 var from       = new DateOnly(dto.FromDate.Year, dto.FromDate.Month, dto.FromDate.Day);
                 var to         = new DateOnly(dto.ToDate.Year,   dto.ToDate.Month,   dto.ToDate.Day);
-                var downloadTf = dto.Timeframe == "1d" ? "1d" : "1m";
+                // BJ-3: Use the actual requested timeframe, not a hardcoded "1m" fallback.
+                // Hardcoding "1m" would download minute data for a 1H or daily backtest — wasteful.
+                var downloadTf = dto.Timeframe;
                 var dl         = await downloader.DownloadAsync(dto.InternalSymbol, dto.BrokerName, downloadTf, from, to, ct);
 
                 if (!dl.Success || dl.BarCount == 0)
@@ -185,6 +196,20 @@ public class BacktestJobManager(
             job.Error  = ex.Message;
             await pusher.PushCompletedAsync(jobId, job.ToDto());
             logger.LogError(ex, "[BacktestJob] {JobId} failed", jobId);
+        }
+    }
+
+    // BJ-1: Remove completed/failed/cancelled jobs older than 24h from the in-memory dictionary.
+    private void CleanupOldJobs()
+    {
+        var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
+        foreach (var (id, job) in _jobs)
+        {
+            if (job.Status is BacktestJobStatus.Completed or BacktestJobStatus.Failed or BacktestJobStatus.Cancelled
+                && job.StartedAt < cutoff)
+            {
+                _jobs.TryRemove(id, out _);
+            }
         }
     }
 
@@ -285,8 +310,8 @@ public class BacktestJobManager(
 internal sealed class BacktestJob(string jobId)
 {
     public string  JobId          { get; } = jobId;
-    /// <summary>Captured at enqueue time so status polls show a consistent StartedAt.</summary>
-    public DateTimeOffset StartedAt { get; } = DateTimeOffset.UtcNow;
+    /// <summary>Set at actual execution start (RunJobAsync) — not enqueue time — so it reflects when work began.</summary>
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
     /// <summary>Set when this job was triggered by EnqueueScenarioAsync or when ScenarioId is provided in BacktestRequestDto.</summary>
     public Guid?   ScenarioId     { get; init; }
     public BacktestJobStatus Status { get; set; } = BacktestJobStatus.Queued;

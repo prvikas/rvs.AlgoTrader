@@ -70,19 +70,20 @@ public sealed class PositionSizingEngine(ILogger<PositionSizingEngine> logger) :
             return (c.FixedLots, "AtrBased: ATR unavailable → fallback to FixedLots");
 
         decimal riskAmount = equity * c.RiskPerTradePct / 100m;
-        decimal riskPerLot = atr.Value;  // 1 ATR = risk unit per lot
+        decimal riskPerLot = atr.Value * c.AtrMultiplier;  // ATR × multiplier = stop distance per lot
         int lots = (int)Math.Floor(riskAmount / riskPerLot);
         return (Math.Max(1, lots),
-            $"AtrBased: risk=₹{riskAmount:N0}, ATR=₹{atr:N2}");
+            $"AtrBased: risk=₹{riskAmount:N0}, ATR=₹{atr:N2}, mult={c.AtrMultiplier}");
     }
 
     private static (int, string) KellyCriterion(
         decimal equity, decimal price, PositionSizingConfig c)
     {
-        // Half-Kelly: f* = 0.5 × (W/L − (1−W)/R)  where W=winRate, R=avgWinLoss
+        // Half-Kelly: f* = 0.5 × (W − (1−W)/R)  where W=winRate, R=avgWin/avgLoss
+        // Classic formula: W - (1-W)/R; half-Kelly halves it for drawdown safety.
         decimal w = c.WinRate;
         decimal r = c.AvgWinLossRatio;
-        decimal kelly = 0.5m * (w / (1m - w) - (1m - w) / w * (1m / r));
+        decimal kelly = 0.5m * (w - (1m - w) / r);
         if (kelly <= 0)
             return (1, $"KellyCriterion: negative Kelly ({kelly:P1}) → minimum 1 lot");
 

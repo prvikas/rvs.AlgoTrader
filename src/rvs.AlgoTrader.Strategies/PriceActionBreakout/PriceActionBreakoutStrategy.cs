@@ -111,8 +111,11 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
         }
 
         // Trend alignment: is price above or below the trend EMA?
-        bool trendUp   = trendEma == null || trendEma[^1] == 0m || current.Close > trendEma[^1];
-        bool trendDown = trendEma == null || trendEma[^1] == 0m || current.Close < trendEma[^1];
+        // PAB-1: When EMA is 0 (still warming up — ComputeEmaFull pre-fills zeros), do NOT bypass
+        // the trend filter. Passing through warmup bars produces signals without a valid trend reference.
+        // trendEma == null means TrendEmaPeriod=0 (user disabled filter) → both directions allowed.
+        bool trendUp   = trendEma == null || (trendEma[^1] != 0m && current.Close > trendEma[^1]);
+        bool trendDown = trendEma == null || (trendEma[^1] != 0m && current.Close < trendEma[^1]);
 
         // ── BUY breakout: close above N-bar high ─────────────────────────
         if (current.Close > rangeHigh && volumeOk && trendUp)
