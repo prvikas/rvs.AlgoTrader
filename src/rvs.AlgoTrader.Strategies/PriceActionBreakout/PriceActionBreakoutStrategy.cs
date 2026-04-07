@@ -56,13 +56,17 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
         var avgVolume = lookbackCount > 0 ? volSum / lookbackCount : 1d;
 
         // ATR calculation
-        var atrValues = CalculateAtr(candles, config.AtrPeriod);
+        var (atrValues, trValues) = CalculateAtr(candles, config.AtrPeriod);
         if (atrValues.Count == 0)
             return Task.FromResult(SignalResult.Skip(SkippedReason.InsufficientData, "ATR calculation failed"));
 
         var currentAtr = atrValues[^1];
-        // Avg ATR over last AtrPeriod values — TakeLast on List<T> is O(1) count, no allocation
-        var avgAtr = atrValues.TakeLast(config.AtrPeriod).Average();
+        // P3: avgAtr from raw TR values (not smoothed ATR series) — double-smoothing ATR values
+        // produces a threshold meaningfully different from what MinAtrMultiple was calibrated against.
+        var trStart = Math.Max(0, trValues.Count - config.AtrPeriod);
+        decimal trSum = 0; int trCount = 0;
+        for (int i = trStart; i < trValues.Count; i++) { trSum += trValues[i]; trCount++; }
+        var avgAtr = trCount > 0 ? trSum / trCount : currentAtr;
 
         var volumeOk = current.Volume >= avgVolume * (double)config.VolumeMultiple;
 
@@ -183,7 +187,12 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
         return result;
     }
 
-    private static List<decimal> CalculateAtr(IReadOnlyList<ClosedCandle> candles, int period)
+    /// <summary>
+    /// Returns (atrValues, trValues). Both lists needed so callers can compute
+    /// avgAtr from raw TR instead of double-smoothed ATR series (P3 fix).
+    /// </summary>
+    private static (List<decimal> AtrValues, List<decimal> TrValues) CalculateAtr(
+        IReadOnlyList<ClosedCandle> candles, int period)
     {
         var trValues = new List<decimal>();
         for (int i = 1; i < candles.Count; i++)
@@ -196,9 +205,9 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
         }
 
         var atrValues = new List<decimal>();
-        if (trValues.Count < period) return atrValues;
+        if (trValues.Count < period) return (atrValues, trValues);
 
-        // First ATR = simple average
+        // First ATR = simple average (SMA seed)
         var firstAtr = trValues.Take(period).Average();
         atrValues.Add(firstAtr);
 
@@ -211,7 +220,7 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
             prev = atr;
         }
 
-        return atrValues;
+        return (atrValues, trValues);
     }
 }
 

@@ -447,10 +447,17 @@ public class EmaVwapMomentumConfig
     /// When true, only take signals where the previous bar's low (buy) or high (sell)
     /// came within PullbackAtrFactor × ATR of the fast EMA.
     /// Filters out "chasing" entries where price has already moved far from the EMA.
+    ///
+    /// E2 fix: default changed to false. On daily data, at the moment of a golden cross
+    /// price has already risen 1–3 ATR above the fast EMA, so PullbackAtrFactor=0.5
+    /// can never be satisfied — this produced 0 BUY signals on any daily backtest.
+    /// Enable only on intraday timeframes where EMA bounce entries are meaningful.
     /// </summary>
-    public bool    RequirePullbackToEma  { get; set; } = true;
-    /// <summary>Max distance from fast EMA (as a multiple of ATR) that qualifies as a pullback.</summary>
-    public decimal PullbackAtrFactor     { get; set; } = 0.5m;
+    public bool    RequirePullbackToEma  { get; set; } = false;
+    /// <summary>Max distance from fast EMA (as a multiple of ATR) that qualifies as a pullback.
+    /// Raised from 0.5 to 2.0 — on intraday data 0.5 ATR is still very tight; 2.0 allows
+    /// normal bar ranges while still filtering out extreme extended entries.</summary>
+    public decimal PullbackAtrFactor     { get; set; } = 2.0m;
 
     // ── Session / time filters ────────────────────────────────────────────
     /// <summary>
@@ -493,8 +500,8 @@ public class EmaVwapMomentumConfig
         new("VolumeMultiple",        "Volume Filter Multiple", "decimal", 1.5m,  Min: 1.0m, Max: 5.0m,  Step: 0.5m, Hint: "Volume must be ≥ this × avg to confirm signal"),
         new("RiskRewardRatio",       "Risk:Reward Ratio",      "decimal", 2.5m,  Min: 1.0m, Max: 10.0m, Step: 0.5m),
         new("AllowShort",            "Allow Short Trades",     "bool",    false),
-        new("RequirePullbackToEma",  "Require Pullback to EMA","bool",    true,  Hint: "Only enter when prior bar touched fast EMA (filters chasing entries)"),
-        new("PullbackAtrFactor",     "Pullback ATR Factor",    "decimal", 0.5m,  Min: 0.1m, Max: 3.0m,  Step: 0.1m, Hint: "Max distance from fast EMA as ATR multiple"),
+        new("RequirePullbackToEma",  "Require Pullback to EMA","bool",    false, Hint: "Only enter when prior bar touched fast EMA (intraday use only — blocks all signals on daily data)"),
+        new("PullbackAtrFactor",     "Pullback ATR Factor",    "decimal", 2.0m,  Min: 0.5m, Max: 5.0m,  Step: 0.5m, Hint: "Max distance from fast EMA as ATR multiple"),
         new("UseOptionChain",        "Option Chain PCR Filter","bool",    false, Hint: "Requires index instrument — uses PCR as directional bias filter"),
         new("PcrBullishThreshold",   "PCR Bullish Threshold",  "decimal", 0.8m,  Min: 0.3m, Max: 1.5m,  Step: 0.1m, Hint: "PCR < this → bullish bias → only allow BUY"),
         new("PcrBearishThreshold",   "PCR Bearish Threshold",  "decimal", 1.2m,  Min: 0.5m, Max: 3.0m,  Step: 0.1m, Hint: "PCR > this → bearish bias → only allow SELL"),

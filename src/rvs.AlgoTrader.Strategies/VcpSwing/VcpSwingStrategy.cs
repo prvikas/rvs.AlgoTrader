@@ -42,9 +42,17 @@ public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
             return Task.FromResult(SignalResult.Skip(SkippedReason.InsufficientData,
                 $"Need {required} candles, have {candles.Count}"));
 
-        var closes = candles.Select(c => c.Close).ToArray();
-        var highs   = candles.Select(c => c.High).ToArray();
-        var lows    = candles.Select(c => c.Low).ToArray();
+        // V6: manual loop instead of 3× LINQ Select/ToArray — avoids GC pressure in backtests
+        var n = candles.Count;
+        var closes = new decimal[n];
+        var highs  = new decimal[n];
+        var lows   = new decimal[n];
+        for (int i = 0; i < n; i++)
+        {
+            closes[i] = candles[i].Close;
+            highs[i]  = candles[i].High;
+            lows[i]   = candles[i].Low;
+        }
         var current = candles[^1];
 
         // ── Market breadth filter (STRAT-001 spec: % above SMA) ───────────
@@ -61,9 +69,15 @@ public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
             return Task.FromResult(SignalResult.Hold("Price below SMA200 — no uptrend"));
 
         // SMA slope: compare last bar SMA200 to bar 5 days ago
-        decimal sma200Prev = closes.Skip(candles.Count - config.Sma200Period - 5)
-                                   .Take(config.Sma200Period).Average();
-        decimal slope = (sma200 - sma200Prev) / (sma200Prev == 0 ? 1 : sma200Prev) * 100m;
+        // V4: guard against negative Skip offset when candles.Count is barely above required
+        decimal sma200Prev;
+        int prevOffset = candles.Count - config.Sma200Period - 5;
+        if (prevOffset >= 0)
+            sma200Prev = closes.Skip(prevOffset).Take(config.Sma200Period).Average();
+        else
+            sma200Prev = sma200; // Not enough history for slope — treat as neutral (pass filter)
+        decimal slope = sma200Prev == 0 ? 0
+            : (sma200 - sma200Prev) / sma200Prev * 100m;
         if (slope < config.MinSma200SlopePct)
             return Task.FromResult(SignalResult.Hold($"SMA200 slope {slope:F2}% below threshold {config.MinSma200SlopePct}%"));
 
@@ -324,12 +338,15 @@ public class VcpSwingConfig
     public decimal MinRsRatingPct    { get; set; } = 20m;
 
     // ── Volume Dry-Up ─────────────────────────────────────────────────────────
-    /// <summary>Require volume to contract inside the base before entry.</summary>
-    public bool    VolumeDryUpEnabled          { get; set; } = false;
+    /// <summary>Require volume to contract inside the base before entry.
+    /// V5: default changed to true — a VCP without volume dry-up is just a pullback,
+    /// not a Mark Minervini VCP setup. Smart-money absorption shows as declining volume.</summary>
+    public bool    VolumeDryUpEnabled          { get; set; } = true;
     /// <summary>Number of recent bars to average for the dry-up check.</summary>
     public int     VolumeDryUpBars             { get; set; } = 5;
-    /// <summary>Recent avg volume must be below this % of the lookback average.</summary>
-    public decimal VolumeDryUpThresholdPct     { get; set; } = 60m;
+    /// <summary>Recent avg volume must be below this % of the lookback average.
+    /// V5: raised from 60% to 70% — allows more setups while still requiring meaningful dry-up.</summary>
+    public decimal VolumeDryUpThresholdPct     { get; set; } = 70m;
 
     public static VcpSwingConfig FromJson(string json)
     {
@@ -398,11 +415,11 @@ public class VcpSwingConfig
             Hint: "12-month price rate-of-change must be ≥ this value (strong stocks outperform)",                              Section: "Relative Strength", EnabledBy: "RsFilterEnabled"),
 
         // ── Volume Dry-Up ────────────────────────────────────────────────────
-        new("VolumeDryUpEnabled",       "Volume Dry-Up Required", "bool",    false,
-            Hint: "Volume inside the base must contract before entry is allowed",                                                Section: "Volume Dry-Up"),
+        new("VolumeDryUpEnabled",       "Volume Dry-Up Required", "bool",    true,
+            Hint: "Volume inside the base must contract before entry is allowed (Minervini VCP hallmark)",                      Section: "Volume Dry-Up"),
         new("VolumeDryUpBars",          "Dry-Up Lookback Bars",   "int",     5,     Min: 2, Max: 20,
             Hint: "Recent bars to average for volume dry-up check",                                                             Section: "Volume Dry-Up", EnabledBy: "VolumeDryUpEnabled"),
-        new("VolumeDryUpThresholdPct",  "Dry-Up Threshold %",     "decimal", 60m,   Min: 20m, Max: 90m, Step: 5m,
+        new("VolumeDryUpThresholdPct",  "Dry-Up Threshold %",     "decimal", 70m,   Min: 20m, Max: 90m, Step: 5m,
             Hint: "Recent avg volume must be below this % of the lookback average volume",                                      Section: "Volume Dry-Up", EnabledBy: "VolumeDryUpEnabled"),
     ];
 }
