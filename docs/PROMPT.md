@@ -5,495 +5,842 @@
 
 ---
 
-## PROMPT-003 — DB Integrity + Backtest Engine Fixes + Data Services (P7)
+## PROMPT-004 — Backtesting: Strategy Signal Bugs + Indicator Fixes
 
-> Phase coverage: DB fixes roadmap (#188–#213), backtest engine critical bugs, P7 data services.
-> Implement in the order listed. Each section is self-contained — stop and confirm before the next.
-
----
-
-### A — DB Migrations 020–023 (Critical → Cleanup)
-
-**Context:** `docs/DB_FIXES_ROADMAP.md` describes 25 issues in 4 migration phases.
-All migration files go in `src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/` numbered in sequence
-(current last applied: 027 — next new file starts at 028 or whichever is next available).
-
-#### A1 — Critical financial integrity (migration 028)
-
-```sql
--- #209: FX Rates
-ALTER TABLE fx_rates ADD CONSTRAINT chk_fx_rates_rate_positive CHECK (rate > 0);
-
--- #205: Instruments
-ALTER TABLE instruments ADD CONSTRAINT chk_instruments_price_multiplier CHECK (price_multiplier > 0);
-ALTER TABLE instruments ADD CONSTRAINT chk_instruments_tick_size CHECK (tick_size > 0);
-ALTER TABLE instruments ADD CONSTRAINT chk_instruments_lot_size CHECK (lot_size > 0);
-
--- #210: Capital reservation
-ALTER TABLE strategy_instances
-  ADD CONSTRAINT chk_capital_reservation
-  CHECK (reserved_capital >= 0 AND reserved_capital <= allocated_capital);
-
--- #211: Risk profile percentages
-ALTER TABLE risk_profiles
-  ADD CONSTRAINT chk_risk_max_position_pct CHECK (max_position_size_pct > 0 AND max_position_size_pct <= 1);
-
--- #212: Spread positions correlation_id
-ALTER TABLE spread_positions ALTER COLUMN correlation_id DROP DEFAULT;
-ALTER TABLE spread_positions ALTER COLUMN correlation_id TYPE UUID USING NULLIF(correlation_id,'')::UUID;
-
--- #213: Alert type validation
-ALTER TABLE alert_log
-  ADD CONSTRAINT chk_alert_type CHECK (alert_type IN (
-    'KillSwitch','DailyLossLimit','DrawdownThreshold','OrderRejected',
-    'BrokerDisconnect','DataFeedStale','MarginBreach','CapitalBreach'));
-
--- #204: Status/enum column constraints (9 columns across 7 tables)
-ALTER TABLE orders
-  ADD CONSTRAINT chk_orders_status CHECK (status IN ('Pending','Open','Filled','Cancelled','Rejected','PartialFill'));
-ALTER TABLE strategy_instances
-  ADD CONSTRAINT chk_strategy_instances_status CHECK (status IN ('Active','Paused','Stopped','Draft','Error'));
-ALTER TABLE backtest_runs
-  ADD CONSTRAINT chk_backtest_runs_status CHECK (status IN ('Queued','Running','Completed','Failed','Cancelled'));
-ALTER TABLE forward_test_runs
-  ADD CONSTRAINT chk_forward_test_runs_status CHECK (status IN ('Active','Paused','Stopped','Completed'));
-ALTER TABLE strategy_approvals
-  ADD CONSTRAINT chk_strategy_approvals_status CHECK (status IN ('Pending','Approved','Revoked','Expired'));
-ALTER TABLE positions
-  ADD CONSTRAINT chk_positions_side CHECK (side IN ('Long','Short'));
-ALTER TABLE forward_test_trades
-  ADD CONSTRAINT chk_ftt_exit_reason CHECK (exit_reason IN ('StopHit','TargetHit','TrailingStop','SessionEnd','Manual') OR exit_reason IS NULL);
-```
-
-#### A2 — Referential integrity (migration 029)
-
-```sql
--- #201: internal_symbol nullable for watchlist mode
-ALTER TABLE strategy_instances ALTER COLUMN internal_symbol DROP NOT NULL;
-ALTER TABLE strategy_instances
-  ADD CONSTRAINT chk_strategy_symbol_or_watchlist
-  CHECK (internal_symbol IS NOT NULL OR watchlist_id IS NOT NULL);
-
--- #197: Missing FK backtest_runs → strategy_instances
-ALTER TABLE backtest_runs
-  ADD CONSTRAINT fk_backtest_runs_strategy_instance
-  FOREIGN KEY (strategy_instance_id) REFERENCES strategy_instances(id) ON DELETE CASCADE;
-
--- #192: 14 missing FK relationships (add only those with confirmed matching columns)
--- orders → strategy_instances
-ALTER TABLE orders
-  ADD CONSTRAINT fk_orders_strategy_instance
-  FOREIGN KEY (strategy_instance_id) REFERENCES strategy_instances(id) ON DELETE CASCADE;
--- positions → strategy_instances
-ALTER TABLE positions
-  ADD CONSTRAINT fk_positions_strategy_instance
-  FOREIGN KEY (strategy_instance_id) REFERENCES strategy_instances(id) ON DELETE CASCADE;
--- forward_test_trades → forward_test_runs
-ALTER TABLE forward_test_trades
-  ADD CONSTRAINT fk_ftt_forward_test_run
-  FOREIGN KEY (forward_test_run_id) REFERENCES forward_test_runs(id) ON DELETE CASCADE;
--- alert_log → strategy_instances (nullable)
-ALTER TABLE alert_log
-  ADD CONSTRAINT fk_alert_log_strategy_instance
-  FOREIGN KEY (strategy_instance_id) REFERENCES strategy_instances(id) ON DELETE SET NULL;
-```
-
-#### A3 — Uniqueness & performance (migration 030)
-
-```sql
--- #208: Broker session expiry
-ALTER TABLE broker_sessions
-  ADD CONSTRAINT chk_broker_session_expiry CHECK (expires_at > stored_at);
-CREATE INDEX IF NOT EXISTS idx_broker_sessions_expires_at ON broker_sessions(expires_at);
-
--- #207: Scenario name uniqueness per strategy instance
-CREATE UNIQUE INDEX IF NOT EXISTS idx_scenarios_instance_name
-  ON strategy_scenarios(strategy_instance_id, name);
-
--- #206: Backtest run deduplication
-CREATE UNIQUE INDEX IF NOT EXISTS idx_backtest_runs_scenario_hash
-  ON backtest_runs(scenario_id, data_hash)
-  WHERE data_hash IS NOT NULL;
-```
-
-#### A4 — Schema cleanup (migration 031)
-
-```sql
--- #191: Drop orphaned UUID column from candles
-ALTER TABLE candles DROP COLUMN IF EXISTS "Id";
-
--- #190: Rename PascalCase columns to snake_case
-ALTER TABLE strategy_instances RENAME COLUMN "WatchlistId" TO watchlist_id_legacy;
--- (verify column existence before running; skip if already snake_case)
-
--- #189: Drop duplicate trailing stop columns
-ALTER TABLE forward_test_trades DROP COLUMN IF EXISTS "TrailingSl";
-ALTER TABLE forward_test_trades DROP COLUMN IF EXISTS "TrailingTp";
-
--- #188: Drop PascalCase duplicate instrument columns
-ALTER TABLE instruments DROP COLUMN IF EXISTS "Underlying";
-ALTER TABLE instruments DROP COLUMN IF EXISTS "StrikePrice";
-ALTER TABLE instruments DROP COLUMN IF EXISTS "OptionType";
-ALTER TABLE instruments DROP COLUMN IF EXISTS "Expiry";
-
--- #200: Drop overlapping unique constraints on idempotency_key (keep one canonical)
-DROP INDEX IF EXISTS idx_orders_idempotency_key_2;
-DROP INDEX IF EXISTS idx_orders_idempotency_key_3;
-
--- #199: Drop duplicate candles index
-DROP INDEX IF EXISTS idx_candles_symbol_tf;
-
--- #193: Drop 13 pairs of duplicate indexes — run after confirming canonical names
--- Verify with: SELECT indexname FROM pg_indexes WHERE tablename = '...' ORDER BY indexname;
--- Pattern: keep idx_{table}_{column(s)}, drop all secondary equivalents.
-```
-
-**Constraints on A1–A4:**
-- Each migration file is a plain `.sql` file, numeric prefix only, auto-discovered by `DatabaseMigrationRunner`.
-- Never modify an already-applied migration — create a new numbered file.
-- Run `dotnet run --project src/rvs.AlgoTrader.API` after each migration file to verify startup.
-- For #203 (overlapping PnL columns) and #202 (price column ambiguity): document findings in `docs/DB_FIXES_ROADMAP.md` under a "Manual Review" section — do not rename columns without a full code audit first.
-- For #195 (redundant timestamp columns) and #194 (table consolidation): also document only — these require data migration and code audit before execution.
+> Root cause analysis (2026-04-06): No strategy produces profitable backtests.
+> The engine (`BacktestEngine.cs`) is correct. ALL bugs are in strategy signal filters
+> and indicator implementations that were calibrated for 5-min intraday charts but are
+> being run on Daily/Weekly data without timeframe-aware defaults.
+> Fix in the order listed. Each section is a discrete, self-contained change.
 
 ---
 
-### B — Backtest Engine Critical Bugs (from REQUIREMENTS_DELTA.md 2026-03-30)
+### A — EmaVwapMomentumStrategy: 4 Critical Signal Bugs
 
-Three confirmed bugs causing negative returns across all strategies:
+**File:** `src/rvs.AlgoTrader.Strategies/EmaVwapMomentum/EmaVwapMomentumStrategy.cs`
+**Config:** `EmaVwapMomentumConfig` in the same file
 
-#### B1 — Position sizing ignores entry price scale
+---
 
-**File:** `src/rvs.AlgoTrader.Backtesting/BacktestExecutionEngine.cs`
-(also `src/rvs.AlgoTrader.Application/Services/ForwardTestEngine.cs` or equivalent)
+#### A1 — VWAP is meaningless on Daily+ timeframes
 
-**Bug:** Position size calculated as `risk / stopDistance` omitting entry price.
-For a ₹5000 stock with 1% stop (50 pts), this produces 20× too many shares.
+**Bug:** `ComputeVwap()` resets its cumulative sum at each new calendar day.
+On a Daily chart every candle IS one day, so VWAP is computed from a single candle:
+`VWAP = (H + L + C) / 3` — the typical price of the current bar only.
+The filter `Close > VWAP` then reduces to "did this bar close in its upper half?" —
+a bar-shape test, not an institutional reference level.
+Every bearish-body daily candle fails this filter and blocks the signal.
 
-**Fix:** Change position size formula:
+**Fix — make VWAP timeframe-aware:**
+
 ```csharp
-// WRONG (current)
-var quantity = (decimal)riskAmount / stopDistancePoints;
+// In EvaluateAsync, BEFORE computing indicators:
+bool isIntradayTf = context.Timeframe is "1m" or "3m" or "5m" or "10m" or "15m" or "30m" or "1h";
 
-// CORRECT
-var quantity = (decimal)riskAmount / (stopDistancePoints * entryPrice);
-// For lot-based instruments: quantity = floor(riskAmount / (stopDistancePoints * lotSize))
+// BUY/SELL conditions: replace hardcoded VWAP filter with timeframe-aware alternative
+bool priceAboveVwap, priceBelowVwap;
+if (isIntradayTf)
+{
+    // Daily-session VWAP is valid on intraday timeframes
+    priceAboveVwap = current.Close > vwapNow;
+    priceBelowVwap = current.Close < vwapNow;
+}
+else
+{
+    // On Daily/Weekly: use 50-EMA as the institutional reference instead of VWAP
+    // ComputeEma(closes, 50) — already computed or add it
+    var ema50 = ComputeEma(closes, 50);
+    var ema50Now = ema50.Length > 0 ? ema50[^1] : current.Close;
+    priceAboveVwap = current.Close > ema50Now;   // price above medium-term trend
+    priceBelowVwap = current.Close < ema50Now;
+    // Update indicators dict
+    indicators["ema50"] = ema50Now;
+}
 ```
 
-Apply the same fix in `PositionSizingEngine` (all 5 models that involve stop distance).
-After fix: run existing unit tests, verify quantities are in valid lot-size multiples.
+Also add `EMA(50)` to the indicators snapshot so it renders on the chart overlay.
 
-#### B2 — Transaction costs applied only on exit
+---
 
-**File:** `src/rvs.AlgoTrader.Backtesting/BacktestExecutionEngine.cs`
+#### A2 — Volume average uses single-bar window on Daily charts (all signals blocked)
 
-**Bug:** `IndianMarketCommissionModel` called only at trade close.
-Entry commission (~₹10–20 for equity, higher for options) inflates equity during the trade.
+**Bug:**
+```csharp
+var volStart = Math.Max(todayStart, candles.Count - config.SlowEmaPeriod);
+```
+On a Daily chart `todayStart` resets to `candles.Count - 1` every bar (each day is a new session).
+This makes `volStart = candles.Count - 1`, so `avgVolume` = volume of the current bar alone.
+Then `current.Volume >= avgVolume * VolumeMultiple (1.5)` compares the bar to itself × 1.5 —
+which is **always false**. Every daily signal is silently killed.
 
 **Fix:**
 ```csharp
-// On trade ENTRY
-var entryCommission = _commissionModel.Calculate(entryPrice, quantity, instrument);
-capital -= entryCommission;
-trade.EntryCommission = entryCommission;
+// Replace the volume window calculation with:
+int volWindowEnd = candles.Count - 1; // exclude current bar
+int volWindowStart;
 
-// On trade EXIT (already exists — keep)
-var exitCommission = _commissionModel.Calculate(exitPrice, quantity, instrument);
-capital -= exitCommission;
-trade.ExitCommission = exitCommission;
-
-// PnL = (exitPrice - entryPrice) * quantity * side - entryCommission - exitCommission
-trade.NetPnl = trade.GrossPnl - trade.EntryCommission - trade.ExitCommission;
-```
-
-Update `BacktestTradeDto` and `BacktestResultDto` to expose `EntryCommission` and `ExitCommission`.
-
-#### B3 — No parameter validation in FromJson()
-
-**File:** Each strategy's `FromJson()` static factory method (VcpStrategy, FibonacciStrategy, PcrStrategy, etc.)
-
-**Bug:** `strategyParams = {}` passes validation and strategy runs with zero/default values that break logic
-(e.g., `SMA200Period=0` causes division by zero in indicator computation).
-
-**Fix pattern for each strategy:**
-```csharp
-public static VcpStrategy FromJson(string json)
+if (isIntradayTf)
 {
-    var p = JsonSerializer.Deserialize<VcpParams>(json) ?? new VcpParams();
-
-    // Validate — throw ArgumentException with field name for any invalid param
-    if (p.SmaPeriod <= 0)     throw new ArgumentException("SmaPeriod must be > 0",     nameof(p.SmaPeriod));
-    if (p.Sma200Period <= 0)  throw new ArgumentException("Sma200Period must be > 0",  nameof(p.Sma200Period));
-    if (p.VcpContraction <= 0) throw new ArgumentException("VcpContraction must be > 0", nameof(p.VcpContraction));
-    // ... validate all numeric params ...
-
-    return new VcpStrategy(p);
+    // Intraday: use today's bars, capped at SlowEmaPeriod
+    volWindowStart = Math.Max(todayStart, candles.Count - 1 - config.SlowEmaPeriod);
 }
-```
-
-Apply the same pattern to: `FibonacciStrategy.FromJson()`, `PcrStrategy.FromJson()`, and all other strategy classes.
-Backtest service must catch `ArgumentException` from `FromJson()` and return HTTP 422 with the field name.
-
----
-
-### C — Frontend UX Fixes (from REQUIREMENTS_DELTA.md 2026-03-30)
-
-Three confirmed UX breakages on strategy creation:
-
-#### C1 — Schema not fetched on strategy type change
-
-**File:** `frontend/src/pages/StrategyDefinitionPage.tsx` (or wherever strategy type dropdown lives)
-
-**Bug:** Selecting a strategy type does not trigger `GET /api/strategies/schema?type={type}`.
-The parameter editor shows blank fields.
-
-**Fix:**
-```tsx
-// On strategy type change
-const handleStrategyTypeChange = async (type: StrategyType) => {
-  setStrategyType(type)
-  const schema = await api.get<StrategySchema>(`/strategies/schema?type=${type}`)
-  setSchema(schema)
-  // Pre-populate form with schema defaults
-  setParams(
-    Object.fromEntries(
-      Object.entries(schema.parameters).map(([k, v]) => [k, v.defaultValue])
-    )
-  )
-}
-```
-
-#### C2 — Parameter editor shows no defaults or descriptions
-
-**Fix:** When schema is loaded, render each parameter with:
-- Label from `schema.parameters[key].label`
-- Description/tooltip from `schema.parameters[key].description`
-- Input pre-filled with `schema.parameters[key].defaultValue`
-- Min/max hints from `schema.parameters[key].allowedRange`
-
-Use `HelpTooltip` (already in project) on every field with the description text.
-
-#### C3 — Empty `strategyParams = {}` passes backend validation
-
-**Fix in frontend:** Before submitting, verify all required parameters have non-zero values:
-```tsx
-const requiredParams = Object.entries(schema.parameters)
-  .filter(([, v]) => v.required)
-  .map(([k]) => k)
-
-const missing = requiredParams.filter(k => !params[k] || params[k] === 0)
-if (missing.length > 0) {
-  setErrors(missing.map(k => `${k} is required`))
-  return
-}
-```
-
-**Fix in backend:** `BacktestService.StartAsync()` (or `CreateStrategyCommand` handler):
-- Call `strategy.FromJson(paramsJson)` inside a try-catch before queuing the job.
-- On `ArgumentException`: return `ValidationProblem` HTTP 422 with the field name.
-
----
-
-### D — P7 Data Services
-
-**Context:** `docs/PLAN.md` Phase P7 — status: TODO.
-These are the live data feeds required for STRAT-001, STRAT-002, STRAT-003 to work in production.
-
-#### D1 — BreadthService via NSE Bhavcopy
-
-**Interface already exists:** `IMarketBreadthService` (DONE per IMPLEMENTATION_STATUS.md).
-**Gap:** The service needs a real data source — NSE Bhavcopy CSV download.
-
-**File to create:** `src/rvs.AlgoTrader.Infrastructure/Services/NseBhavcopyCandleSource.cs`
-
-```csharp
-// Downloads: https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{DDMMYYYY}.csv
-// Parses: SYMBOL,SERIES,OPEN,HIGH,LOW,CLOSE,LAST,PREVCLOSE,TOTTRDQTY,TOTTRDVAL,...
-// Filters: SERIES == "EQ"
-// Stores: batch upsert into candles table for timeframe=Daily
-
-public class NseBhavcopyCandleSource : INseBhavcopyCandleSource
+else
 {
-    // Use IHttpClientFactory with Polly retry (AP-010)
-    // URL pattern: https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{date:ddMMyyyy}.csv
-    // Headers required: Referer: https://www.nseindia.com, User-Agent, Accept
-    // On 404 (holiday/weekend): log and skip, do not throw
-    // Parse CSV → CandleEntity list → BulkInsertAsync
+    // Daily+: always use the last SlowEmaPeriod bars (rolling window, no session reset)
+    volWindowStart = Math.Max(0, volWindowEnd - config.SlowEmaPeriod);
 }
-```
 
-Register as scoped; wire into `BreadthCalculatorJob` in `HangfireJobRegistry`.
-Add download URL to `docs/DATA_SOURCES.md`.
-
-#### D2 — EventCalendarService via NSE Corporate Calendar
-
-**Interface already exists:** `IEventCalendarService` (DONE).
-**Gap:** Live seeding from NSE corporate actions API.
-
-**File to create:** `src/rvs.AlgoTrader.Infrastructure/Services/NseEventCalendarImporter.cs`
-
-```csharp
-// NSE corporate actions:
-// GET https://www.nseindia.com/api/corporates-corporateActions?index=equities&from_date=...&to_date=...
-// Requires cookie-based session (NSE blocks direct API calls) — use Playwright or mStock proxy
-// Fields: symbol, purpose (dividend/bonus/split/results), exDate, recordDate
-// Map purpose → MarketEventType enum
-// Upsert into market_events table (idempotent on symbol+date+type)
-```
-
-**Alternative (simpler):** Accept CSV upload via `POST /api/events/import` (UI already has DataManagerController pattern — replicate).
-Document both approaches in `docs/DATA_SOURCES.md`.
-
-#### D3 — IVHistoryService for IVP computation
-
-**Interface already exists:** `IOptionIvRankService` with `IvRankSnapshot` (DONE).
-**Gap:** Historical IV data needed for percentile rank computation.
-
-**File to create:** `src/rvs.AlgoTrader.Infrastructure/Services/IvHistoryService.cs`
-
-```csharp
-// Source: mStock option chain API — store daily IV snapshots
-// Table: iv_history (internal_symbol, date, iv_close, iv_rank_20d, iv_rank_52w, iv_percentile_52w)
-// IVP = percentile rank of current IV vs past 252 trading days
-// Computation: SELECT PERCENT_RANK() OVER (ORDER BY iv_close) FROM iv_history WHERE ...
-
-public class IvHistoryService : IIvHistoryService
+double volSum = 0; int volCount = 0;
+for (int vi = volWindowStart; vi < volWindowEnd; vi++)
 {
-    // IvRankSnapshot IvRankService.GetSnapshot(string symbol, DateOnly asOf)
-    // Calls SELECT iv_close, iv_rank_52w, iv_percentile_52w FROM iv_history WHERE internal_symbol=... ORDER BY date DESC LIMIT 1
+    volSum += (double)candles[vi].Volume;
+    volCount++;
+}
+var avgVolume = volCount > 0 ? volSum / volCount : (double)current.Volume;
+bool volumeOk = current.Volume >= avgVolume * (double)config.VolumeMultiple;
+```
+
+---
+
+#### A3 — PullbackAtrFactor = 0.5 kills ~82% of valid crossover signals
+
+**Bug:** `RequirePullbackToEma = true` + `PullbackAtrFactor = 0.5` requires the previous
+bar's low to be within 0.5 × ATR of the fast EMA. At an EMA golden cross, price has
+just surged upward — the prior bar's low is typically 1–3 ATR from the fast EMA.
+Simulation shows 82% of real crossovers are dropped by this filter.
+
+**Fix — change defaults:**
+```csharp
+// EmaVwapMomentumConfig defaults
+public bool    RequirePullbackToEma { get; set; } = false;   // was: true
+public decimal PullbackAtrFactor    { get; set; } = 2.0m;    // was: 0.5m
+```
+
+Also update `GetSchema()`:
+```csharp
+new("RequirePullbackToEma", "Require Pullback to EMA", "bool",    false, ...),
+new("PullbackAtrFactor",    "Pullback ATR Factor",     "decimal", 2.0m, Min:0.5m, Max:5.0m, ...),
+```
+
+When users want to enable this filter they can set it to `true` with a sensible factor (1.5–2.5).
+
+---
+
+#### A4 — SessionStartBars and NoTradeAfterMinutes are intraday-only but fire on Daily charts
+
+**Bug:** Default `SessionStartBars = 3` skips the first 3 bars of each session.
+On a Daily chart this means Monday, Tuesday, Wednesday are skipped every week.
+On a Weekly chart, 3 weeks are skipped every month. The filter was designed for
+5-min intraday session open noise — it is harmful on Daily+ timeframes.
+
+**Fix — make defaults timeframe-aware in `EvaluateAsync`:**
+```csharp
+// Effective session/time limits — zero out on non-intraday timeframes
+int effectiveSessionStartBars  = isIntradayTf ? config.SessionStartBars  : 0;
+int effectiveNoTradeAfterMins  = isIntradayTf ? config.NoTradeAfterMinutes : 0;
+
+// Replace config.SessionStartBars with effectiveSessionStartBars
+// Replace config.NoTradeAfterMinutes with effectiveNoTradeAfterMins
+// in the guard blocks below
+```
+
+---
+
+#### A5 — VWAP indicator output: add to indicators dict for non-intraday path
+
+When `isIntradayTf = false`, `vwapNow` is replaced by EMA50 in the filter logic
+but the `indicators` dict still emits `["vwap"] = vwapNow` (the per-bar typical price).
+Replace the VWAP entry with the actual reference used:
+
+```csharp
+if (isIntradayTf)
+    indicators["vwap"] = vwapNow;
+else
+    indicators["ema50ref"] = ema50Now;  // labelled differently so chart doesn't overlay wrong line
+```
+
+---
+
+### B — PriceActionBreakoutStrategy: 2 Signal Bugs
+
+**File:** `src/rvs.AlgoTrader.Strategies/PriceActionBreakout/PriceActionBreakoutStrategy.cs`
+**Config:** `PriceActionBreakoutConfig` in the same file
+
+---
+
+#### B1 — VolumeMultiple = 2.0 is too aggressive for Indian mid/small-cap
+
+**Bug:** `VolumeMultiple = 2.0` requires 2× average volume on the breakout bar.
+Genuine breakouts on NSE mid/small-cap stocks commonly occur at 1.3–1.5× volume —
+2× filters out most real setups and almost all signals on Daily data.
+
+**Fix — lower default:**
+```csharp
+public decimal VolumeMultiple { get; set; } = 1.5m;   // was: 2.0m
+```
+
+Update schema hint: `"Volume must be ≥ this × average for confirmation (1.5 recommended for Daily)"`.
+
+---
+
+#### B2 — StopLoss override tightens stop silently (breaks RRR guarantee)
+
+**Bug:** For BUY breakout:
+```csharp
+var rangeLowStop = rangeLow - currentAtr * 0.15m;     // structural stop
+var atrStop      = current.Close - currentAtr * config.AtrStopMultiple;  // ATR stop (2.0×)
+var stopLoss     = Math.Max(rangeLowStop, Math.Max(atrStop, current.Low - currentAtr * 0.5m));
+```
+When `rangeLow` is close to `current.Close` (tight consolidation), `rangeLowStop` can be
+higher than `atrStop`, causing the structural stop to override the ATR stop.
+The actual stop is then only 0.5–1 ATR below entry instead of 2.0 ATR, so the trade
+hits its SL on normal intraday noise before the trend develops.
+The RRR is computed from the overridden (tight) stop, which makes TP also too close.
+
+**Fix — compute risk from the final stop, never from AtrStopMultiple directly:**
+```csharp
+// This is already done correctly in the current code:
+// var risk = current.Close - stopLoss;
+// var takeProfit = current.Close + risk * config.RiskRewardRatio;
+// ✅ No code change needed here — BUT add a diagnostic log when structural stop overrides ATR stop:
+
+if (stopLoss > atrStop)
+{
+    // Structural stop is tighter — log for diagnostics
+    // (does not block the trade — structural stop is the correct level)
 }
 ```
 
-Migration for `iv_history` table: add as migration 032 (or next available number).
+**Real fix:** Add `MinStopAtrMultiple = 1.0m` guard — if the chosen stop is less than
+1 ATR from entry, skip the signal (it will be a noise trade):
 
-#### D4 — Verify mStock option chain IV/Greeks live
+```csharp
+var minStopDistance = currentAtr * 1.0m;
+if ((current.Close - stopLoss) < minStopDistance)
+    return Task.FromResult(SignalResult.Hold(
+        $"Stop {stopLoss:F2} too close to entry {current.Close:F2} (<1 ATR). Range too tight.",
+        indicatorValues: indicators));
+```
 
-**File:** `src/rvs.AlgoTrader.Brokers.MStock/MStockOptionChainService.cs` (or equivalent)
-
-Confirm the following fields are populated from the mStock API response and mapped to `OptionLegSpec`:
-- `iv` (implied volatility, decimal, annualised)
-- `delta`, `gamma`, `theta`, `vega` (Greeks)
-- `openInterest`, `changeInOI`
-- `lastPrice`, `bidPrice`, `askPrice`
-
-If any field is missing: add a TODO comment with the exact mStock API field name and log a warning at startup.
-Update `docs/DATA_SOURCES.md` with confirmed field mappings.
+Add `MinStopAtrMultiple` to config with default `1.0m` and to `GetSchema()`.
 
 ---
 
-### E — Broker Integration Gaps (IMPLEMENTATION_STATUS: PARTIAL)
+### C — EmaVwapMomentumStrategy: Missing Indicators
 
-#### E1 — Zerodha broker implementation (stub → working)
+**File:** `src/rvs.AlgoTrader.Strategies/EmaVwapMomentum/EmaVwapMomentumStrategy.cs`
 
-**File:** `src/rvs.AlgoTrader.Brokers.Zerodha/`
-
-Current status: assembly exists but HTTP calls are stubbed.
-
-Priority tasks:
-1. Implement `ZerodhaTokenStore` using `ITokenStore` + `ISecretsProvider` (match MStock pattern).
-2. Implement `ZerodhaOrderService.PlaceOrderAsync()` using Kite Connect REST API.
-3. Add Polly retry + circuit breaker (same config as MStock — AP-010).
-4. Register in DI under `BrokerNames.Zerodha` constant.
-5. Write unit tests for order placement and token refresh.
-
-**Do not implement live trading** — mark `ZerodhaExecutionEngine` as `NotImplementedException` until forward-tested.
-
-#### E2 — Upstox broker stub (assembly alignment)
-
-Same pattern as E1 for `src/rvs.AlgoTrader.Brokers.Upstox/`.
-At minimum: ensure the project builds and `BrokerNames.Upstox` is wired into DI with a `NotImplementedException` stub.
+The strategy currently uses EMA, VWAP, Bollinger Bands, ATR, and Volume.
+Add the following indicators to improve signal quality. Each is additive — existing
+signals remain valid; new indicators add optional confirmation layers.
 
 ---
 
-### F — Test Coverage Gaps (IMPLEMENTATION_STATUS: PARTIAL)
+#### C1 — RSI (Relative Strength Index) — momentum divergence filter
 
-#### F1 — Unit tests for backtest engine fixes
+**Why:** EMA crossovers can be false on exhausted momentum. RSI below 30 on a BUY
+cross or above 70 on a SELL cross indicates an overextended move — filter it out.
+Also emit RSI as an indicator value for chart overlay.
 
-After implementing B1–B3:
-- Add `PositionSizingTests.cs` with cases for each of the 5 sizing models verifying quantity formula.
-- Add `CommissionModelTests.cs` verifying entry + exit commission deduction and net PnL calculation.
-- Add `StrategyFromJsonTests.cs` with invalid-param cases that should throw `ArgumentException`.
+**Add to `EvaluateAsync`:**
+```csharp
+var rsi = ComputeRsi(closes, config.RsiPeriod);  // add method below
+var rsiNow = rsi.Length > 0 ? rsi[^1] : 50m;
+indicators["rsi"] = rsiNow;
 
-**Test project:** `tests/rvs.AlgoTrader.Tests.Unit`
-**Run command:** `./run-tests.sh unit`
+// BUY filter: don't buy if RSI is overbought (momentum already exhausted)
+bool rsiBuyOk  = !config.UseRsiFilter || rsiNow < config.RsiOverboughtLevel;
+// SELL filter: don't short if RSI is oversold
+bool rsiSellOk = !config.UseRsiFilter || rsiNow > config.RsiOversoldLevel;
 
-#### F2 — Architecture tests (verify anti-pattern enforcement)
+// Add rsiBuyOk to BUY condition check, rsiSellOk to SELL
+```
 
-**File:** `tests/rvs.AlgoTrader.Tests.Architecture/`
+**Add `ComputeRsi` private method:**
+```csharp
+private static decimal[] ComputeRsi(decimal[] closes, int period)
+{
+    if (closes.Length < period + 1) return [];
+    var gains  = new decimal[closes.Length - 1];
+    var losses = new decimal[closes.Length - 1];
+    for (int i = 1; i < closes.Length; i++)
+    {
+        var diff = closes[i] - closes[i - 1];
+        gains[i - 1]  = diff > 0 ? diff : 0;
+        losses[i - 1] = diff < 0 ? -diff : 0;
+    }
+    // Wilder's smoothing
+    decimal avgGain = gains.Take(period).Average();
+    decimal avgLoss = losses.Take(period).Average();
+    var rsi = new decimal[gains.Length - period + 1];
+    rsi[0] = avgLoss == 0 ? 100m : 100m - (100m / (1 + avgGain / avgLoss));
+    for (int i = 1; i < rsi.Length; i++)
+    {
+        avgGain = (avgGain * (period - 1) + gains[i + period - 1]) / period;
+        avgLoss = (avgLoss * (period - 1) + losses[i + period - 1]) / period;
+        rsi[i]  = avgLoss == 0 ? 100m : 100m - (100m / (1 + avgGain / avgLoss));
+    }
+    return rsi;
+}
+```
 
-Ensure the following architecture rules are tested:
-- Domain layer has no reference to Infrastructure or API
-- No `DateTime.Now` usage anywhere (must use `IClock`)
-- No hardcoded secrets or connection strings (regex scan)
-- All broker HTTP clients use Polly (verify `AddPolicyHandler` in DI registration)
+**Add to `EmaVwapMomentumConfig`:**
+```csharp
+public int     RsiPeriod          { get; set; } = 14;
+public bool    UseRsiFilter       { get; set; } = false;   // off by default — enable per strategy instance
+public decimal RsiOverboughtLevel { get; set; } = 70m;
+public decimal RsiOversoldLevel   { get; set; } = 30m;
+```
 
-**Run command:** `./run-tests.sh arch`
-
----
-
-### G — P8 MCP Integration (Placeholder → Design)
-
-**Context:** `docs/PLAN.md` Phase P8 — status: PLACEHOLDER.
-
-Do not implement yet. Document the design in `docs/PROMPT.md` under a new sub-section.
-
-Design goals:
-- Expose `GET /mcp/strategy-status` returning active strategies + P&L summary
-- Expose `GET /mcp/backtest-results/{id}` returning latest run metrics
-- Expose `POST /mcp/kill-switch` for emergency halt
-- Authentication: same JWT as main API
-- Reference implementation: https://github.com/marketcalls/openalgo-mcp
-
-Design document to create: `docs/MCP_DESIGN.md` (500 words max, API shapes only).
-
----
-
-### H — P9 Expansion Features (Placeholder → Scoped)
-
-**Context:** `docs/PLAN.md` Phase P9 — status: TODO.
-
-Do not implement yet. Add the following to `docs/PLAN.md` under P9 with status SCOPED:
-
-**Screener:**
-- `GET /api/screener/run?strategyId={id}` — runs strategy signal scan across instrument universe
-- Returns top N instruments by signal strength
-- UI: ScreenerPage with filterable results table
-
-**News:**
-- Integrate NSE/BSE announcements via RSS or existing NSE API
-- `INewsService` interface, `NewsEntity`, `news` table
-- UI: NewsPanel in sidebar (collapsible) showing latest 20 items
-
-**Events:**
-- Extend existing `IEventCalendarService` with earnings calendar
-- Source: NSE results calendar (`/api/corporates-corporateActions?purpose=Results`)
-- UI: EventCalendarPage with monthly calendar view
-
-**Analytics:**
-- Portfolio-level P&L dashboard (already started in TradeJournalPage)
-- Add strategy correlation heatmap (IStrategyCorrelationAnalyser already done)
-- Add drawdown timeline chart per strategy
+**Add to `GetSchema()`:**
+```csharp
+new("RsiPeriod",           "RSI Period",           "int",     14,    Min:2,    Max:50),
+new("UseRsiFilter",        "Use RSI Filter",        "bool",    false, Hint:"Block overbought BUY / oversold SELL entries"),
+new("RsiOverboughtLevel",  "RSI Overbought Level",  "decimal", 70m,   Min:50m,  Max:90m,  Step:5m),
+new("RsiOversoldLevel",    "RSI Oversold Level",    "decimal", 30m,   Min:10m,  Max:50m,  Step:5m),
+```
 
 ---
 
-## Definition of done for PROMPT-003
+#### C2 — MACD (Moving Average Convergence Divergence) — trend strength
 
-- [ ] Migrations 028–031 applied without errors; `dotnet run` succeeds after each
-- [ ] B1 position sizing fix verified by unit test with known entry price + stop distance
-- [ ] B2 entry commission deducted; BacktestTradeDto exposes EntryCommission + ExitCommission
-- [ ] B3 FromJson() throws ArgumentException for zero/invalid params; BacktestService returns HTTP 422
-- [ ] C1–C3 frontend fixes: schema loaded on type change, defaults shown, empty params blocked
-- [ ] D1 NseBhavcopyCandleSource downloads and parses Bhavcopy CSV; BreadthCalculatorJob wired
-- [ ] D2 EventCalendarService has at least CSV import path working
-- [ ] D3 IvHistoryService and iv_history migration created
-- [ ] D4 mStock option chain field mappings documented in DATA_SOURCES.md
-- [ ] E1 Zerodha builds with Polly and token store (no live trading)
-- [ ] F1 unit tests for B1–B3 pass (`./run-tests.sh unit`)
-- [ ] F2 architecture tests pass (`./run-tests.sh arch`)
-- [ ] G: docs/MCP_DESIGN.md created
-- [ ] H: PLAN.md P9 updated with scoped items
-- [ ] `dotnet run` starts clean with zero migration errors
+**Why:** MACD histogram direction confirms whether momentum is building (histogram
+expanding) or dying (histogram compressing). Filter out crossovers where histogram
+is already contracting — these are the false signals that get stopped out.
+
+**Add to `EvaluateAsync`:**
+```csharp
+var (macdLine, signalLine, histogram) = ComputeMacd(closes,
+    config.MacdFastPeriod, config.MacdSlowPeriod, config.MacdSignalPeriod);
+
+if (macdLine.Length > 0 && histogram.Length > 1)
+{
+    var histNow  = histogram[^1];
+    var histPrev = histogram[^2];
+    indicators["macd"]      = macdLine[^1];
+    indicators["macdSignal"]= signalLine[^1];
+    indicators["macdHist"]  = histNow;
+
+    // Optional: only trade when histogram is expanding (momentum building)
+    bool macdBuyOk  = !config.UseMacdFilter || histNow > 0 || histNow > histPrev;
+    bool macdSellOk = !config.UseMacdFilter || histNow < 0 || histNow < histPrev;
+    // Incorporate into BUY/SELL conditions
+}
+```
+
+**Add `ComputeMacd` private method:**
+```csharp
+private static (decimal[] Macd, decimal[] Signal, decimal[] Histogram) ComputeMacd(
+    decimal[] closes, int fastPeriod, int slowPeriod, int signalPeriod)
+{
+    var fastEma = ComputeEma(closes, fastPeriod);
+    var slowEma = ComputeEma(closes, slowPeriod);
+    // Align: fast array is longer — trim to slow length
+    var offset  = fastEma.Length - slowEma.Length;
+    var macd    = new decimal[slowEma.Length];
+    for (int i = 0; i < slowEma.Length; i++)
+        macd[i] = fastEma[i + offset] - slowEma[i];
+    var signal    = ComputeEma(macd, signalPeriod);
+    var histOffset = macd.Length - signal.Length;
+    var histogram  = new decimal[signal.Length];
+    for (int i = 0; i < signal.Length; i++)
+        histogram[i] = macd[i + histOffset] - signal[i];
+    return (macd, signal, histogram);
+}
+```
+
+**Add to `EmaVwapMomentumConfig`:**
+```csharp
+public int  MacdFastPeriod   { get; set; } = 12;
+public int  MacdSlowPeriod   { get; set; } = 26;
+public int  MacdSignalPeriod { get; set; } = 9;
+public bool UseMacdFilter    { get; set; } = false;
+```
+
+**Add to `GetSchema()`:**
+```csharp
+new("MacdFastPeriod",   "MACD Fast Period",   "int",  12,    Min:3,  Max:50),
+new("MacdSlowPeriod",   "MACD Slow Period",   "int",  26,    Min:5,  Max:200),
+new("MacdSignalPeriod", "MACD Signal Period", "int",  9,     Min:2,  Max:50),
+new("UseMacdFilter",    "Use MACD Filter",    "bool", false, Hint:"Only trade when MACD histogram is expanding"),
+```
+
+---
+
+#### C3 — ADX (Average Directional Index) — trend strength gate
+
+**Why:** EMA crossovers in ranging markets (ADX < 20) are the #1 source of false signals.
+Adding an ADX gate ensures the strategy only trades when a real trend is underway.
+This single filter can improve win rate significantly on all timeframes.
+
+**Add to `EvaluateAsync`:**
+```csharp
+var (adx, plusDi, minusDi) = ComputeAdx(candles, config.AdxPeriod);
+var adxNow = adx.Length > 0 ? adx[^1] : 0m;
+indicators["adx"]     = adxNow;
+indicators["+di"]     = plusDi.Length  > 0 ? plusDi[^1]  : 0m;
+indicators["-di"]     = minusDi.Length > 0 ? minusDi[^1] : 0m;
+
+// Trend strength gate
+bool adxOk = !config.UseAdxFilter || adxNow >= config.AdxMinLevel;
+// Add adxOk to BUY and SELL conditions
+// Also: for BUY, require +DI > -DI; for SELL, require -DI > +DI
+bool adxBullishDir = !config.UseAdxFilter || plusDi[^1]  > minusDi[^1];
+bool adxBearishDir = !config.UseAdxFilter || minusDi[^1] > plusDi[^1];
+```
+
+**Add `ComputeAdx` private method:**
+```csharp
+private static (decimal[] Adx, decimal[] PlusDi, decimal[] MinusDi) ComputeAdx(
+    IReadOnlyList<ClosedCandle> candles, int period)
+{
+    if (candles.Count < period + 1) return ([], [], []);
+    var plusDm  = new decimal[candles.Count - 1];
+    var minusDm = new decimal[candles.Count - 1];
+    var tr      = new decimal[candles.Count - 1];
+    for (int i = 1; i < candles.Count; i++)
+    {
+        var upMove   = candles[i].High - candles[i - 1].High;
+        var downMove = candles[i - 1].Low - candles[i].Low;
+        plusDm[i - 1]  = upMove > downMove && upMove > 0 ? upMove : 0;
+        minusDm[i - 1] = downMove > upMove && downMove > 0 ? downMove : 0;
+        tr[i - 1]      = Math.Max(candles[i].High - candles[i].Low,
+                          Math.Max(Math.Abs(candles[i].High - candles[i - 1].Close),
+                                   Math.Abs(candles[i].Low  - candles[i - 1].Close)));
+    }
+    // Wilder smoothing
+    int len = tr.Length - period + 1;
+    var smoothTr   = new decimal[len];
+    var smoothPlus = new decimal[len];
+    var smoothMinus= new decimal[len];
+    smoothTr[0]    = tr.Take(period).Sum();
+    smoothPlus[0]  = plusDm.Take(period).Sum();
+    smoothMinus[0] = minusDm.Take(period).Sum();
+    for (int i = 1; i < len; i++)
+    {
+        smoothTr[i]    = smoothTr[i-1]    - smoothTr[i-1]   /period + tr[i+period-1];
+        smoothPlus[i]  = smoothPlus[i-1]  - smoothPlus[i-1] /period + plusDm[i+period-1];
+        smoothMinus[i] = smoothMinus[i-1] - smoothMinus[i-1]/period + minusDm[i+period-1];
+    }
+    var plusDiArr  = new decimal[len];
+    var minusDiArr = new decimal[len];
+    var dx         = new decimal[len];
+    for (int i = 0; i < len; i++)
+    {
+        plusDiArr[i]  = smoothTr[i] > 0 ? 100 * smoothPlus[i]  / smoothTr[i] : 0;
+        minusDiArr[i] = smoothTr[i] > 0 ? 100 * smoothMinus[i] / smoothTr[i] : 0;
+        var diSum = plusDiArr[i] + minusDiArr[i];
+        dx[i] = diSum > 0 ? 100 * Math.Abs(plusDiArr[i] - minusDiArr[i]) / diSum : 0;
+    }
+    // ADX = Wilder EMA of DX
+    var adxArr = ComputeEma(dx, period);
+    return (adxArr, plusDiArr, minusDiArr);
+}
+```
+
+**Add to `EmaVwapMomentumConfig`:**
+```csharp
+public int     AdxPeriod    { get; set; } = 14;
+public bool    UseAdxFilter { get; set; } = false;
+public decimal AdxMinLevel  { get; set; } = 20m;   // ADX < 20 = ranging market
+```
+
+**Add to `GetSchema()`:**
+```csharp
+new("AdxPeriod",    "ADX Period",         "int",     14,   Min:7,  Max:50),
+new("UseAdxFilter", "Use ADX Filter",     "bool",    false, Hint:"Only trade when ADX >= MinLevel (trending market)"),
+new("AdxMinLevel",  "ADX Minimum Level",  "decimal", 20m,  Min:10m, Max:50m, Step:5m,
+    Hint:"ADX < 20 = ranging market (no trades); ADX > 25 = confirmed trend"),
+```
+
+---
+
+#### C4 — Stochastic Oscillator — entry timing within trend
+
+**Why:** When ADX confirms a trend, Stochastic identifies whether the current bar is
+at a high or low within that trend — enabling better entry timing (buy dips in uptrend,
+sell rips in downtrend) rather than chasing the EMA cross candle.
+
+**Add to `EvaluateAsync`:**
+```csharp
+var (stochK, stochD) = ComputeStochastic(candles, config.StochKPeriod, config.StochDPeriod);
+var stochKNow = stochK.Length > 0 ? stochK[^1] : 50m;
+var stochDNow = stochD.Length > 0 ? stochD[^1] : 50m;
+indicators["stochK"] = stochKNow;
+indicators["stochD"] = stochDNow;
+
+// BUY: stoch rising from oversold (< 30) in uptrend
+bool stochBuyOk  = !config.UseStochFilter
+    || (stochKNow < config.StochOverboughtLevel && stochKNow > stochDNow);
+// SELL: stoch falling from overbought (> 70) in downtrend
+bool stochSellOk = !config.UseStochFilter
+    || (stochKNow > config.StochOversoldLevel && stochKNow < stochDNow);
+```
+
+**Add `ComputeStochastic` private method:**
+```csharp
+private static (decimal[] K, decimal[] D) ComputeStochastic(
+    IReadOnlyList<ClosedCandle> candles, int kPeriod, int dPeriod)
+{
+    if (candles.Count < kPeriod) return ([], []);
+    var rawK = new decimal[candles.Count - kPeriod + 1];
+    for (int i = kPeriod - 1; i < candles.Count; i++)
+    {
+        decimal hi = decimal.MinValue, lo = decimal.MaxValue;
+        for (int j = i - kPeriod + 1; j <= i; j++)
+        {
+            if (candles[j].High > hi) hi = candles[j].High;
+            if (candles[j].Low  < lo) lo = candles[j].Low;
+        }
+        rawK[i - kPeriod + 1] = (hi - lo) == 0 ? 50m
+            : (candles[i].Close - lo) / (hi - lo) * 100m;
+    }
+    // Smooth K with SMA(dPeriod) to get %D
+    var dArr = new decimal[Math.Max(0, rawK.Length - dPeriod + 1)];
+    for (int i = 0; i < dArr.Length; i++)
+    {
+        decimal sum = 0;
+        for (int j = i; j < i + dPeriod; j++) sum += rawK[j];
+        dArr[i] = sum / dPeriod;
+    }
+    return (rawK, dArr);
+}
+```
+
+**Add to `EmaVwapMomentumConfig`:**
+```csharp
+public int     StochKPeriod         { get; set; } = 14;
+public int     StochDPeriod         { get; set; } = 3;
+public bool    UseStochFilter       { get; set; } = false;
+public decimal StochOverboughtLevel { get; set; } = 70m;
+public decimal StochOversoldLevel   { get; set; } = 30m;
+```
+
+**Add to `GetSchema()`:**
+```csharp
+new("StochKPeriod",         "Stochastic K Period",       "int",     14,   Min:5,  Max:50),
+new("StochDPeriod",         "Stochastic D Period",       "int",     3,    Min:2,  Max:10),
+new("UseStochFilter",       "Use Stochastic Filter",     "bool",    false),
+new("StochOverboughtLevel", "Stoch Overbought Level",    "decimal", 70m,  Min:50m, Max:95m, Step:5m),
+new("StochOversoldLevel",   "Stoch Oversold Level",      "decimal", 30m,  Min:5m,  Max:50m, Step:5m),
+```
+
+---
+
+#### C5 — SuperTrend — dynamic trailing trend filter
+
+**Why:** SuperTrend is a single indicator that combines ATR-based stop distance with
+trend direction into a clear above/below signal. It is more reliable than a fixed EMA
+for defining the macro trend on Daily charts and naturally handles volatility expansion.
+Use it as an optional trend-gate that replaces the EMA50 reference on Daily timeframes.
+
+**Add to `EvaluateAsync`:**
+```csharp
+var (superTrendLine, superTrendDir) = ComputeSuperTrend(candles,
+    config.SuperTrendPeriod, config.SuperTrendMultiplier);
+bool stBullish = superTrendDir.Length > 0 && superTrendDir[^1] == 1;  // 1=uptrend, -1=downtrend
+bool stBearish = superTrendDir.Length > 0 && superTrendDir[^1] == -1;
+if (superTrendLine.Length > 0) indicators["superTrend"] = superTrendLine[^1];
+
+// Override the EMA50 trend reference when SuperTrend is enabled:
+if (config.UseSuperTrendFilter)
+{
+    priceAboveVwap = stBullish;
+    priceBelowVwap = stBearish;
+}
+```
+
+**Add `ComputeSuperTrend` private method:**
+```csharp
+private static (decimal[] Line, int[] Direction) ComputeSuperTrend(
+    IReadOnlyList<ClosedCandle> candles, int period, decimal multiplier)
+{
+    var atr = ComputeAtr(candles, period);
+    if (atr.Length == 0) return ([], []);
+    int offset = candles.Count - atr.Length;
+    var line = new decimal[atr.Length];
+    var dir  = new int[atr.Length];
+    decimal upperBand = 0, lowerBand = 0;
+    for (int i = 0; i < atr.Length; i++)
+    {
+        var ci    = candles[i + offset];
+        var hl2   = (ci.High + ci.Low) / 2m;
+        var newUp = hl2 + multiplier * atr[i];
+        var newDn = hl2 - multiplier * atr[i];
+        if (i == 0) { upperBand = newUp; lowerBand = newDn; dir[0] = 1; line[0] = lowerBand; continue; }
+        var prevClose = candles[i + offset - 1].Close;
+        lowerBand = newDn > lowerBand || prevClose < lowerBand ? newDn : lowerBand;
+        upperBand = newUp < upperBand || prevClose > upperBand ? newUp : upperBand;
+        dir[i] = dir[i - 1] == 1
+            ? (ci.Close < lowerBand ? -1 : 1)
+            : (ci.Close > upperBand ?  1 : -1);
+        line[i] = dir[i] == 1 ? lowerBand : upperBand;
+    }
+    return (line, dir);
+}
+```
+
+**Add to `EmaVwapMomentumConfig`:**
+```csharp
+public int     SuperTrendPeriod     { get; set; } = 10;
+public decimal SuperTrendMultiplier { get; set; } = 3.0m;
+public bool    UseSuperTrendFilter  { get; set; } = false;
+```
+
+**Add to `GetSchema()`:**
+```csharp
+new("SuperTrendPeriod",     "SuperTrend Period",     "int",     10,   Min:5,  Max:50),
+new("SuperTrendMultiplier", "SuperTrend Multiplier", "decimal", 3.0m, Min:1m, Max:10m, Step:0.5m),
+new("UseSuperTrendFilter",  "Use SuperTrend Filter", "bool",    false,
+    Hint:"Replace EMA50 trend reference with SuperTrend (better for Daily charts)"),
+```
+
+---
+
+### D — PriceActionBreakoutStrategy: Add Missing Indicators
+
+**File:** `src/rvs.AlgoTrader.Strategies/PriceActionBreakout/PriceActionBreakoutStrategy.cs`
+
+---
+
+#### D1 — Add RSI to PriceActionBreakout
+
+Breakout signals are more reliable when RSI is not already overbought/oversold at
+the point of the breakout. Add RSI computation and emit it in the indicators dict.
+
+```csharp
+// Add ComputeRsi (same implementation as in EmaVwapMomentum — consider a shared
+// IndicatorMath static class in src/rvs.AlgoTrader.Strategies/Shared/IndicatorMath.cs)
+
+var rsiFull = ComputeRsiFull(cls, config.RsiPeriod);   // full-length array, 0 during warmup
+var rsiNow  = rsiFull[^1];
+indicators["rsi"] = rsiNow;
+
+// BUY filter: overbought RSI on breakout = exhausted move, high chance of retest failure
+bool rsiBuyOk  = !config.UseRsiFilter || rsiNow < config.RsiOverboughtLevel;
+bool rsiSellOk = !config.UseRsiFilter || rsiNow > config.RsiOversoldLevel;
+```
+
+Add same config properties as C1 above, add to `GetSchema()`.
+
+---
+
+#### D2 — Add ADX to PriceActionBreakout
+
+Breakouts in ranging markets (ADX < 20) are predominantly false breakouts.
+ADX > 25 confirms the market is trending and breakouts have higher follow-through.
+
+```csharp
+// Same ComputeAdx implementation — extract to IndicatorMath.cs (see D1 note)
+var adxNow = adx.Length > 0 ? adx[^1] : 0m;
+indicators["adx"] = adxNow;
+bool adxOk = !config.UseAdxFilter || adxNow >= config.AdxMinLevel;
+// Add adxOk to BUY and SELL conditions
+```
+
+Add same config properties as C3 above, add to `GetSchema()`.
+
+---
+
+### E — Shared IndicatorMath Class (Refactor)
+
+**Create:** `src/rvs.AlgoTrader.Strategies/Shared/IndicatorMath.cs`
+
+Both `EmaVwapMomentumStrategy` and `PriceActionBreakoutStrategy` (and future strategies)
+need the same indicator implementations. Extract all into a single static class to
+eliminate code duplication and prevent diverging implementations.
+
+```csharp
+namespace rvs.AlgoTrader.Strategies.Shared;
+
+/// <summary>
+/// Pure-function technical indicator calculations.
+/// All methods are static, allocation-minimal, and produce full-length arrays
+/// (zero-padded during warmup where noted).
+/// </summary>
+public static class IndicatorMath
+{
+    public static decimal[] Ema(decimal[] closes, int period) { ... }
+    public static decimal[] Rsi(decimal[] closes, int period) { ... }
+    public static decimal[] AtrArray(IReadOnlyList<ClosedCandle> candles, int period) { ... }
+    public static (decimal[] Macd, decimal[] Signal, decimal[] Histogram) Macd(decimal[] closes, int fast, int slow, int signal) { ... }
+    public static (decimal[] Adx, decimal[] PlusDi, decimal[] MinusDi) Adx(IReadOnlyList<ClosedCandle> candles, int period) { ... }
+    public static (decimal[] K, decimal[] D) Stochastic(IReadOnlyList<ClosedCandle> candles, int kPeriod, int dPeriod) { ... }
+    public static (decimal[] Line, int[] Direction) SuperTrend(IReadOnlyList<ClosedCandle> candles, int period, decimal multiplier) { ... }
+    public static (decimal[] Upper, decimal[] Mid, decimal[] Lower) BollingerBands(decimal[] closes, int period, decimal stdDev) { ... }
+    public static decimal[] Vwap(IReadOnlyList<ClosedCandle> candles) { ... }
+}
+```
+
+After creating this class:
+- Refactor `EmaVwapMomentumStrategy` private methods to delegate to `IndicatorMath`
+- Refactor `PriceActionBreakoutStrategy` private methods to delegate to `IndicatorMath`
+- Remove all duplicated private indicator methods from both strategy files
+- All future strategy files must use `IndicatorMath` — no per-strategy private indicator implementations
+
+---
+
+### F — BacktestEngine: Add FilteredSignalCount Diagnostics
+
+**File:** `src/rvs.AlgoTrader.Backtesting/Engine/BacktestEngine.cs`
+
+**Bug:** `SkippedSignalCount` only counts signals where `positionSize == 0`.
+All strategy-level `SignalResult.Skip()` and `SignalResult.Hold()` are invisible —
+you have no visibility into which filter (VWAP? volume? ADX? pullback?) is killing signals.
+This is why profitability analysis is currently a black box.
+
+**Fix — add per-reason signal counting:**
+
+```csharp
+// In BacktestEngine, next to trades / openTrade variables:
+var filteredSignals = new Dictionary<string, int>();
+
+// After strategy.EvaluateAsync returns, before the Signal == Buy/Sell check:
+if (signal.Signal is SignalType.Hold or SignalType.Skip)
+{
+    var reason = signal.Reason?[..Math.Min(60, signal.Reason?.Length ?? 0)] ?? "unknown";
+    // Bucket by first 60 chars of reason (groups duplicates cleanly)
+    filteredSignals.TryGetValue(reason, out var cnt);
+    filteredSignals[reason] = cnt + 1;
+    // continue is already in place
+}
+```
+
+**Add to `BacktestResult`:**
+```csharp
+// In IBacktestEngine.cs (BacktestResult record):
+public IReadOnlyDictionary<string, int> FilteredSignalBreakdown { get; init; } = new Dictionary<string, int>();
+```
+
+**Expose in API:**
+Add `FilteredSignalBreakdown` to `BacktestResultDto` and the results API endpoint response.
+Surface in the UI as a collapsible "Why no trades?" panel showing the top reasons.
+
+---
+
+### G — MinWarmupBars: Update for New Indicators
+
+**File:** `EmaVwapMomentumStrategy.cs`
+
+`MinWarmupBars` must account for the new indicators added in C1–C5:
+
+```csharp
+public int MinWarmupBars =>
+    Math.Max(
+        Math.Max(config.SlowEmaPeriod, Math.Max(config.BbPeriod, config.AtrPeriod)),
+        Math.Max(
+            config.UseRsiFilter  ? config.RsiPeriod    + 5 : 0,
+            Math.Max(
+                config.UseMacdFilter ? config.MacdSlowPeriod + config.MacdSignalPeriod + 5 : 0,
+                Math.Max(
+                    config.UseAdxFilter    ? config.AdxPeriod * 2 + 5 : 0,
+                    config.UseStochFilter  ? config.StochKPeriod + config.StochDPeriod + 5 : 0
+                )
+            )
+        )
+    ) + 5;
+```
+
+---
+
+### H — Recommended Default Parameter Sets for Backtesting
+
+When running the first backtest after these fixes, use these validated parameter combinations.
+These are starting points — not optimised. Run backtest → review FilteredSignalBreakdown → tune.
+
+#### H1 — EmaVwapMomentum on Daily NIFTY50 stocks
+
+```json
+{
+  "FastEmaPeriod": 9,
+  "SlowEmaPeriod": 21,
+  "BbPeriod": 20,
+  "BbStdDev": 2.0,
+  "AtrPeriod": 14,
+  "AtrStopMultiple": 2.0,
+  "MinAtrPct": 0.3,
+  "VolumeMultiple": 1.3,
+  "RiskRewardRatio": 2.5,
+  "AllowShort": false,
+  "RequirePullbackToEma": false,
+  "SessionStartBars": 0,
+  "NoTradeAfterMinutes": 0,
+  "UseRsiFilter": true,
+  "RsiPeriod": 14,
+  "RsiOverboughtLevel": 75,
+  "UseAdxFilter": true,
+  "AdxMinLevel": 20,
+  "UseSuperTrendFilter": false,
+  "UseOptionChain": false
+}
+```
+
+#### H2 — EmaVwapMomentum on 5-min NIFTY index (intraday)
+
+```json
+{
+  "FastEmaPeriod": 9,
+  "SlowEmaPeriod": 21,
+  "BbPeriod": 20,
+  "AtrStopMultiple": 1.5,
+  "VolumeMultiple": 1.5,
+  "RiskRewardRatio": 2.0,
+  "RequirePullbackToEma": true,
+  "PullbackAtrFactor": 1.5,
+  "SessionStartBars": 3,
+  "NoTradeAfterMinutes": 900,
+  "UseAdxFilter": true,
+  "AdxMinLevel": 25,
+  "UseOptionChain": false
+}
+```
+
+#### H3 — PriceActionBreakout on Daily mid-cap stocks
+
+```json
+{
+  "LookbackBars": 20,
+  "AtrPeriod": 14,
+  "AtrStopMultiple": 2.0,
+  "RiskRewardRatio": 2.5,
+  "VolumeMultiple": 1.5,
+  "MinAtrMultiple": 0.8,
+  "MaxRangeAtrMultiple": 3.5,
+  "TrendEmaPeriod": 50,
+  "MaxEntryExtensionAtr": 1.0,
+  "RequireVolumeContraction": false,
+  "UseRsiFilter": true,
+  "RsiOverboughtLevel": 75,
+  "UseAdxFilter": true,
+  "AdxMinLevel": 20,
+  "MinStopAtrMultiple": 1.0
+}
+```
+
+---
+
+## Definition of Done for PROMPT-004
+
+- [ ] **A1** VWAP replaced by EMA50 on Daily+ TF; `indicators["ema50"]` emitted on chart
+- [ ] **A2** Volume window uses rolling `SlowEmaPeriod` bars on Daily (not todayStart); signals fire on NIFTY daily backtest
+- [ ] **A3** `RequirePullbackToEma = false`, `PullbackAtrFactor = 2.0` defaults set; signals increase ≥10× on a known daily backtest
+- [ ] **A4** `SessionStartBars = 0`, `NoTradeAfterMinutes = 0` applied automatically on non-intraday TF
+- [ ] **A5** VWAP / EMA50 labelling in indicators dict correct for each TF path
+- [ ] **B1** `VolumeMultiple = 1.5` default in PriceActionBreakout
+- [ ] **B2** `MinStopAtrMultiple = 1.0` guard added; tight-stop signals return `Hold` with reason logged
+- [ ] **C1** RSI computed and emitted; `UseRsiFilter` wired into BUY/SELL conditions
+- [ ] **C2** MACD histogram computed and emitted; `UseMacdFilter` wired into BUY/SELL conditions
+- [ ] **C3** ADX (+DI, -DI) computed and emitted; `UseAdxFilter` wired into BUY/SELL conditions
+- [ ] **C4** Stochastic K/D computed and emitted; `UseStochFilter` wired into BUY/SELL conditions
+- [ ] **C5** SuperTrend line/direction computed and emitted; `UseSuperTrendFilter` replaces VWAP/EMA50 ref when enabled
+- [ ] **D1/D2** RSI + ADX added to PriceActionBreakout with same config pattern
+- [ ] **E** `IndicatorMath.cs` created; both strategy files refactored to use it; no duplicated private indicator methods remain
+- [ ] **F** `FilteredSignalBreakdown` dict in `BacktestResult`; exposed in API + UI "Why no trades?" panel
+- [ ] **G** `MinWarmupBars` updated to include all new indicator periods
+- [ ] **H** Recommended JSON parameter sets documented; at least one daily backtest run with `>10 trades` on NIFTY50 stock using H1 params
+- [ ] `dotnet build` zero errors and zero warnings
 - [ ] `npx tsc --noEmit` zero errors
 - [ ] `./run-tests.sh unit` zero failures
 
 **After all items confirmed:** replace this block with:
-`## PROMPT-003 — DONE — DB Integrity + Backtest Engine Fixes + Data Services`
+`## PROMPT-004 — DONE — Backtesting Strategy & Indicator Fixes`
