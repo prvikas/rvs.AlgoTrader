@@ -192,7 +192,15 @@ public class FibOptionSpreadConfig
     public int     WingWidthStrikes { get; set; } = 2;       // strike intervals for hedge leg
 
     public static FibOptionSpreadConfig FromJson(string json)
-        => JsonSerializer.Deserialize<FibOptionSpreadConfig>(json) ?? new();
+    {
+        var p = JsonSerializer.Deserialize<FibOptionSpreadConfig>(json) ?? new FibOptionSpreadConfig();
+        if (p.SwingLookback    <= 0) throw new ArgumentException("SwingLookback must be > 0",    nameof(p.SwingLookback));
+        if (p.Sma50Period      <= 0) throw new ArgumentException("Sma50Period must be > 0",      nameof(p.Sma50Period));
+        if (p.WingWidthStrikes <= 0) throw new ArgumentException("WingWidthStrikes must be > 0", nameof(p.WingWidthStrikes));
+        if (p.ShortLegDelta    <= 0) throw new ArgumentException("ShortLegDelta must be > 0",    nameof(p.ShortLegDelta));
+        if (p.EntryZonePct     <  0) throw new ArgumentException("EntryZonePct must be >= 0",    nameof(p.EntryZonePct));
+        return p;
+    }
 
     public static IReadOnlyList<StrategyParamDef> GetSchema() =>
     [

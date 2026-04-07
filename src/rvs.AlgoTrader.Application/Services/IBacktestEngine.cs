@@ -223,7 +223,9 @@ public record BacktestTrade(
     decimal NetPnl,
     string ExitReason,
     // ── Trailing stop state (managed by BacktestEngine, not strategy) ─────
-    decimal InitialStopLoss = 0m,   // original SL at entry — never changes, used to compute R
-    decimal BestPrice      = 0m,    // running high (longs) or running low (shorts) since entry — used for MFE
-    decimal WorstPrice     = 0m,    // running low (longs) or running high (shorts) since entry — used for MAE
-    bool TrailActive       = false); // true once trailing has been activated
+    decimal InitialStopLoss  = 0m,   // original SL at entry — never changes, used to compute R
+    decimal BestPrice        = 0m,   // running high (longs) or running low (shorts) since entry — used for MFE
+    decimal WorstPrice       = 0m,   // running low (longs) or running high (shorts) since entry — used for MAE
+    bool TrailActive         = false, // true once trailing has been activated
+    decimal EntryCommission  = 0m,   // commission deducted from equity at trade open
+    decimal ExitCommission   = 0m);  // commission deducted from equity at trade close

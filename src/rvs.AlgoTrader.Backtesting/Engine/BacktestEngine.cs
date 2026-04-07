@@ -59,7 +59,15 @@ public class BacktestEngine(
         logger.LogInformation("[Backtest] Loaded {Count} candles for {Symbol}/{Tf}",
             allCandles.Count, request.InternalSymbol, request.Timeframe);
 
-        var strategy = strategyFactory.Create(request.StrategyName, request.ParametersJson);
+        IStrategy strategy;
+        try
+        {
+            strategy = strategyFactory.Create(request.StrategyName, request.ParametersJson);
+        }
+        catch (ArgumentException ex)
+        {
+            return BacktestResult.Failed($"Invalid strategy parameter '{ex.ParamName}': {ex.Message}");
+        }
         var warmupBars = Math.Max(request.WarmupBars, strategy.MinWarmupBars);
         if (allCandles.Count < warmupBars + 1)
             return BacktestResult.Failed($"Insufficient candle data (need > {warmupBars} bars, got {allCandles.Count})");
@@ -127,10 +135,15 @@ public class BacktestEngine(
                 var closed = TryClosePosition(openTrade, current, request);
                 if (closed != null)
                 {
-                    var entryCosts = costCalc.Calculate(closed.EntryPrice * closed.Quantity, closed.Direction == "BUY", costProfile);
-                    var exitCosts  = costCalc.Calculate(closed.ExitPrice  * closed.Quantity, closed.Direction != "BUY", costProfile);
-                    closed     = closed with { NetPnl = closed.GrossPnl - entryCosts.Total - exitCosts.Total };
-                    equity    += closed.NetPnl;
+                    // EntryCommission was already deducted from equity at trade open.
+                    // Only deduct exit commission here; use stored EntryCommission for NetPnl.
+                    var exitCosts = costCalc.Calculate(closed.ExitPrice * closed.Quantity, closed.Direction != "BUY", costProfile);
+                    closed = closed with
+                    {
+                        ExitCommission = exitCosts.Total,
+                        NetPnl         = closed.GrossPnl - closed.EntryCommission - exitCosts.Total
+                    };
+                    equity += closed.GrossPnl - exitCosts.Total; // EntryCommission already deducted at open
                     trades.Add(closed);
                     openTrade  = null;
 
@@ -261,6 +274,11 @@ public class BacktestEngine(
             }
 
             var initialSl = signal.StopLoss ?? entryPrice * 0.99m;
+
+            // Deduct entry commission immediately so equity is accurate for subsequent sizing
+            var entryCostsOnOpen = costCalc.Calculate(entryPrice * positionSize, signal.Signal == SignalType.Buy, costProfile);
+            equity -= entryCostsOnOpen.Total;
+
             openTrade = new BacktestTrade(
                 Id: Guid.NewGuid(),
                 Symbol: request.InternalSymbol,
@@ -278,7 +296,8 @@ public class BacktestEngine(
                 InitialStopLoss: initialSl,
                 BestPrice:       entryPrice,   // will track high (longs) or low (shorts) from entry
                 WorstPrice:      entryPrice,   // will track low (longs) or high (shorts) from entry
-                TrailActive:     false);
+                TrailActive:     false,
+                EntryCommission: entryCostsOnOpen.Total);
         }
 
         if (openTrade != null && allCandles.Count > 0)
@@ -288,17 +307,17 @@ public class BacktestEngine(
             var grossPnl      = openTrade.Direction == "BUY"
                 ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
-            var entryCostsEod = costCalc.Calculate(openTrade.EntryPrice * openTrade.Quantity, openTrade.Direction == "BUY",  costProfile);
-            var exitCostsEod  = costCalc.Calculate(exitPrice             * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
-            var netPnlEod     = grossPnl - entryCostsEod.Total - exitCostsEod.Total;
-            equity += netPnlEod;
+            var exitCostsEod = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
+            var netPnlEod    = grossPnl - openTrade.EntryCommission - exitCostsEod.Total;
+            equity += grossPnl - exitCostsEod.Total; // EntryCommission already deducted at open
             trades.Add(openTrade with
             {
-                ExitPrice  = exitPrice,
-                ExitTime   = lastCandle.CloseTime,
-                GrossPnl   = grossPnl,
-                NetPnl     = netPnlEod,
-                ExitReason = "END_OF_DATA"
+                ExitPrice      = exitPrice,
+                ExitTime       = lastCandle.CloseTime,
+                GrossPnl       = grossPnl,
+                NetPnl         = netPnlEod,
+                ExitReason     = "END_OF_DATA",
+                ExitCommission = exitCostsEod.Total
             });
         }
 

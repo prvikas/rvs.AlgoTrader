@@ -130,7 +130,9 @@ public record BacktestTradeDto(
     string ExitTime,    // ISO UTC string
     // Maximum adverse/favorable excursion from entry price (price units)
     decimal Mae = 0m,
-    decimal Mfe = 0m);
+    decimal Mfe = 0m,
+    decimal EntryCommission = 0m,
+    decimal ExitCommission  = 0m);
 
 /// <summary>Status of a running/completed async backtest job.</summary>
 public record BacktestJobStatusDto(

@@ -553,6 +553,10 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
       setErrorMsg('Symbol is required')
       return
     }
+    if (Object.keys(strategyParams).length === 0) {
+      setErrorMsg('Strategy parameters not loaded — wait for the schema to finish loading')
+      return
+    }
     startMutation.mutate()
   }
 

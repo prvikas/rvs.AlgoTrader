@@ -73,6 +73,26 @@ public class EventCalendarController(IEventCalendarService events) : ControllerB
         return Ok(ApiResponse<bool>.Ok(true));
     }
 
+    /// <summary>
+    /// [Admin] Import corporate actions from NSE Bhavcopy CSV.
+    /// Expected columns: SYMBOL, PURPOSE, EX_DATE (yyyy-MM-dd or dd/MM/yyyy).
+    /// Returns the count of events created.
+    /// </summary>
+    [HttpPost("import")]
+    public async Task<ActionResult<ApiResponse<int>>> ImportCsv(
+        IFormFile file,
+        [FromServices] INseEventCalendarImporter importer,
+        CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(ApiResponse<int>.Fail("CSV file is required"));
+
+        using var reader = new System.IO.StreamReader(file.OpenReadStream());
+        var csv = await reader.ReadToEndAsync(ct);
+        var count = await importer.ImportCsvAsync(csv, ct);
+        return Ok(ApiResponse<int>.Ok(count));
+    }
+
     /// <summary>[Admin] Delete an event.</summary>
     [HttpDelete("{id:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(

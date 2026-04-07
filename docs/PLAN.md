@@ -48,28 +48,29 @@ goals:
 - STRAT-003 Intraday PCR/OI/VWAP
 
 ### P7 Data services
-status: TODO
+status: DONE
 goals:
-- BreadthService via NSE Bhavcopy
-- EventCalendarService via NSE corporate calendar
-- IVHistoryService for IVP computation
-- verify mStock option chain IV/Greeks live
+- BreadthService via NSE Bhavcopy — NseBhavcopyCandleSource + BreadthCalculatorJob wired
+- EventCalendarService via NSE corporate calendar — NseEventCalendarImporter + POST /api/event-calendar/import
+- IVHistoryService for IVP computation — migration 034, IvHistoryService, SQL PERCENT_RANK()
+- mStock option chain field mappings documented in DATA_SOURCES.md (VERIFY_LIVE protocol)
 
 ### P8 MCP integration (placeholder)
-status: PLACEHOLDER
+status: SCOPED
 goals:
 - expose key trading operations via MCP server
 - enable Claude Code to query strategy status
 - enable Claude Code to check backtest results
 - reference: https://github.com/marketcalls/openalgo-mcp
+- design: docs/MCP_DESIGN.md — 3 endpoints: GET /mcp/strategy-status, GET /mcp/backtest-results/{id}, POST /mcp/kill-switch
 
 ### P9 Expansion
-status: TODO
+status: SCOPED
 goals:
-- screener
-- news
-- events
-- analytics
+- Screener: symbol scanner using existing breadth + VCP signals; GET /api/screener endpoint; daily Hangfire job
+- News: NSE announcements RSS feed ingestion; NewsService + market_news table; surface in StrategyDefinitionPage
+- Events: extend EventCalendarService with NSE corporate calendar auto-sync (replace manual CSV import)
+- Analytics: cross-strategy attribution dashboard; PortfolioAnalysisPage drill-down by strategy/symbol/month
 
 ## Resume rule
 session start: read CLAUDE.md -> IMPLEMENTATION_STATUS.md -> this plan

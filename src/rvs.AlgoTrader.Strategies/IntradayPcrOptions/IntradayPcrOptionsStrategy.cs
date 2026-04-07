@@ -163,7 +163,16 @@ public class IntradayPcrOptionsConfig
     public int DeferredStartMinute      { get; set; } = 0;
 
     public static IntradayPcrOptionsConfig FromJson(string json)
-        => JsonSerializer.Deserialize<IntradayPcrOptionsConfig>(json) ?? new();
+    {
+        var p = JsonSerializer.Deserialize<IntradayPcrOptionsConfig>(json) ?? new IntradayPcrOptionsConfig();
+        if (p.GapThresholdPts  <= 0) throw new ArgumentException("GapThresholdPts must be > 0",  nameof(p.GapThresholdPts));
+        if (p.TargetDelta      <= 0) throw new ArgumentException("TargetDelta must be > 0",      nameof(p.TargetDelta));
+        if (p.VwapTolerancePct <= 0) throw new ArgumentException("VwapTolerancePct must be > 0", nameof(p.VwapTolerancePct));
+        if (p.RiskRewardRatio  <= 0) throw new ArgumentException("RiskRewardRatio must be > 0",  nameof(p.RiskRewardRatio));
+        if (p.PcrUpperThreshold <= p.PcrLowerThreshold)
+            throw new ArgumentException("PcrUpperThreshold must be > PcrLowerThreshold", nameof(p.PcrUpperThreshold));
+        return p;
+    }
 
     public static IReadOnlyList<StrategyParamDef> GetSchema() =>
     [

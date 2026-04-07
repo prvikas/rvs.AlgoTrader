@@ -119,7 +119,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISymbolDataPreferencesService, SymbolDataPreferencesService>();
         services.AddScoped<IMarketCalendarService, MarketCalendarService>();
         services.AddScoped<IMarketBreadthService, MarketBreadthService>();
+        services.AddScoped<INseBhavcopyCandleSource, NseBhavcopyCandleSource>();
         services.AddScoped<IEventCalendarService, EventCalendarService>();
+        services.AddScoped<INseEventCalendarImporter, NseEventCalendarImporter>();
         services.AddScoped<IHistoricalDataManager, HistoricalDataManager>();
         services.AddSingleton<IDataFeedHealthMonitor, DataFeedHealthMonitor>();
         services.AddScoped<INotificationService, NotificationService>();
@@ -195,6 +197,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IBlackScholesEngine, BlackScholesEngine>();
         services.AddScoped<IOptionLegSelector, OptionLegSelector>();
         services.AddScoped<IOptionIvRankService, OptionIvRankService>();
+        services.AddScoped<IIvHistoryService, IvHistoryService>();
         services.AddScoped<IOptionIvHistoryRepository, EfOptionIvHistoryRepository>();
         // IOrderManager is Scoped (not Singleton) because OrderManager depends on
         // IOrderRepository which is Scoped (EF Core-backed). A Singleton cannot
@@ -233,6 +236,9 @@ public static class ServiceCollectionExtensions
         // Policies are shared singletons so circuit-breaker state is preserved across requests.
         var brokerRetry          = BrokerResiliencePolicies.Retry;
         var brokerCircuitBreaker = BrokerResiliencePolicies.CircuitBreaker;
+        // Named client for NSE Bhavcopy downloads (AP-010)
+        services.AddHttpClient("NseBhavcopy")
+            .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
         services.AddHttpClient<MStockAuth>()
             .AddPolicyHandler(brokerRetry).AddPolicyHandler(brokerCircuitBreaker);
         services.AddHttpClient<MStockClient>()

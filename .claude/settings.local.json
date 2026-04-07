@@ -153,7 +153,11 @@
       "Bash(grep -E \"\\\\.sql$\")",
       "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit -name *DbContext.cs -type f)",
       "Bash(Get-Content C:UsersprvikAppDataLocalTempclaudeC--Users-prvik-Downloads-algotrader-claude-kit3c05175c-04bc-4273-a75a-694699c2d72atasksblaiqh7w2.output)",
-      "Bash(xargs ls:*)"
+      "Bash(xargs ls:*)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src -name *.cs -path */Strategies/* -type f)",
+      "Bash(grep -r \"Zerodha\\\\|Polly\\\\|AddHttpClient\\\\|BreadthCalculatorJob\\\\|HangfireJobRegistry\" C:UsersprvikDownloadsalgotrader-claude-kitsrc --include=*.cs -l)",
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrcrvs.AlgoTrader.InfrastructureExtensions -name *.cs)",
+      "Bash(grep -rn BulkInsertAsync C:UsersprvikDownloadsalgotrader-claude-kitsrc --include=*.cs)"
     ]
   }
 }

@@ -332,7 +332,20 @@ public class VcpSwingConfig
     public decimal VolumeDryUpThresholdPct     { get; set; } = 60m;
 
     public static VcpSwingConfig FromJson(string json)
-        => JsonSerializer.Deserialize<VcpSwingConfig>(json) ?? new();
+    {
+        var p = JsonSerializer.Deserialize<VcpSwingConfig>(json) ?? new VcpSwingConfig();
+        if (p.Sma200Period       <= 0) throw new ArgumentException("Sma200Period must be > 0",       nameof(p.Sma200Period));
+        if (p.Sma150Period       <= 0) throw new ArgumentException("Sma150Period must be > 0",       nameof(p.Sma150Period));
+        if (p.Sma50Period        <= 0) throw new ArgumentException("Sma50Period must be > 0",        nameof(p.Sma50Period));
+        if (p.LookbackBars       <= 0) throw new ArgumentException("LookbackBars must be > 0",       nameof(p.LookbackBars));
+        if (p.PivotBars          <= 0) throw new ArgumentException("PivotBars must be > 0",          nameof(p.PivotBars));
+        if (p.MinContractions    <= 0) throw new ArgumentException("MinContractions must be > 0",    nameof(p.MinContractions));
+        if (p.AtrPeriod          <= 0) throw new ArgumentException("AtrPeriod must be > 0",          nameof(p.AtrPeriod));
+        if (p.RiskRewardRatio    <= 0) throw new ArgumentException("RiskRewardRatio must be > 0",    nameof(p.RiskRewardRatio));
+        if (p.EntryBufferPct     <  0) throw new ArgumentException("EntryBufferPct must be >= 0",    nameof(p.EntryBufferPct));
+        if (p.BreakoutVolumeMultiple <= 0) throw new ArgumentException("BreakoutVolumeMultiple must be > 0", nameof(p.BreakoutVolumeMultiple));
+        return p;
+    }
 
     public static IReadOnlyList<StrategyParamDef> GetSchema() =>
     [

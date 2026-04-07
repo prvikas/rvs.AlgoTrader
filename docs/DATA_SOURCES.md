@@ -134,6 +134,44 @@ method: download CSV -> compute SMA20 per symbol -> store in market\_breadth tab
 
 
 
+## mStock option chain field mappings (get_option_chain_data)
+
+The following fields are expected from mStock `get_option_chain_data`. Verify each against a live NIFTY response (see VERIFY_LIVE protocol above).
+
+| System Field | mStock JSON Field | Type | Notes |
+|---|---|---|---|
+| `LastTradedPrice` | `ltp` | decimal | Option premium last price |
+| `ImpliedVolatility` | `iv` | decimal (annualised %) | **VERIFY_LIVE** — may be absent |
+| `Delta` | `delta` | decimal | **VERIFY_LIVE** — may need Black-Scholes fallback |
+| `Gamma` | `gamma` | decimal | **VERIFY_LIVE** |
+| `Theta` | `theta` | decimal | **VERIFY_LIVE** |
+| `Vega` | `vega` | decimal | **VERIFY_LIVE** |
+| `OpenInterest` | `oi` | long | Confirmed |
+| `OiChange` | computed | long | delta between consecutive snapshots |
+| `BidPrice` | `bid` | decimal | **VERIFY_LIVE** |
+| `AskPrice` | `ask` | decimal | **VERIFY_LIVE** |
+| `Strike` | `strikePrice` | decimal | Confirmed |
+| `OptionType` | `optionType` | string (`CE`/`PE`) | Confirmed |
+
+**Action required:** Call `get_option_chain_data` for a live NIFTY weekly expiry and log the raw response JSON. Update each `VERIFY_LIVE` row above to `Confirmed` or `Not available`. If `iv`/Greeks are absent, `IBlackScholesEngine` is already wired as a fallback.
+
+Code reference: `src/rvs.AlgoTrader.Brokers.MStock/MStockClient.cs` → `GetOptionChainSnapshotAsync`.
+
+## NSE Bhavcopy (new — D1)
+
+URL pattern: `https://nsearchives.nseindia.com/products/content/sec_bhavdata_full_{DDMMYYYY}.csv`
+Required headers: `Referer: https://www.nseindia.com`, `User-Agent`, `Accept`
+Columns used: `SYMBOL`, `SERIES` (filter EQ), `OPEN`, `HIGH`, `LOW`, `CLOSE`, `TOTTRDQTY`
+Service: `NseBhavcopyCandleSource` → bulk-inserts into `candles` table as `1D` timeframe
+Wired: `BreadthCalculatorJob` downloads before calling `IMarketBreadthService.ComputeAndSaveAsync`
+
+## NSE Corporate Actions CSV import (new — D2)
+
+Endpoint: `POST /api/event-calendar/import` (multipart CSV)
+Expected CSV columns: `SYMBOL`, `PURPOSE`, `EX_DATE` (yyyy-MM-dd or dd/MM/yyyy)
+Service: `NseEventCalendarImporter` → upserts into `market_events` table
+PURPOSE → EventType mapping: Dividend→DIVIDEND | Bonus→BONUS | Split→SPLIT | Results→EARNINGS | Rights→RIGHTS
+
 \## Fallback if mStock IV not confirmed
 
 use IOptionGreeksCalculator (Black-Scholes):

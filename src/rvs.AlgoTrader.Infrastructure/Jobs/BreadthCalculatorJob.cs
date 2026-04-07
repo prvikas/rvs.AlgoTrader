@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Services;
 
 namespace rvs.AlgoTrader.Infrastructure.Jobs;
 
@@ -14,6 +15,7 @@ public class BreadthCalculatorJob(
     IMarketBreadthService breadth,
     IMarketCalendarService calendar,
     IClock clock,
+    INseBhavcopyCandleSource bhavcopy,
     ILogger<BreadthCalculatorJob> log)
 {
     /// <summary>
@@ -38,6 +40,10 @@ public class BreadthCalculatorJob(
             log.LogWarning("BreadthCalculatorJob: could not find a trading day near {Today}. Skipping.", today);
             return;
         }
+
+        log.LogInformation("BreadthCalculatorJob: downloading Bhavcopy for {Date}", targetDate);
+        var downloaded = await bhavcopy.DownloadAndSaveAsync(targetDate, ct);
+        log.LogInformation("BreadthCalculatorJob: Bhavcopy downloaded {Count} symbols for {Date}", downloaded, targetDate);
 
         log.LogInformation("BreadthCalculatorJob: computing breadth for {Date}", targetDate);
         var result = await breadth.ComputeAndSaveAsync(targetDate, ct);

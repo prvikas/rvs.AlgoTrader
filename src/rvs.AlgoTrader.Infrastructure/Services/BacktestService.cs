@@ -133,7 +133,9 @@ public class BacktestService(
                 : Math.Max(0m, t.WorstPrice - t.EntryPrice),
             Mfe: t.Direction == "BUY"
                 ? Math.Max(0m, t.BestPrice - t.EntryPrice)
-                : Math.Max(0m, t.EntryPrice - t.BestPrice)
+                : Math.Max(0m, t.EntryPrice - t.BestPrice),
+            EntryCommission: t.EntryCommission,
+            ExitCommission:  t.ExitCommission
         )).ToList(),
         MonthlyBreakdown: r.MonthlyBreakdown.Select(m => new BacktestMonthlyBreakdownDto(m.Year, m.Month, m.Pnl, m.Trades, m.WinRate)).ToList(),
         YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList(),
