@@ -358,6 +358,15 @@ public class EfOptionIvHistoryRepository(AlgoTraderDbContext db) : IOptionIvHist
              .ToListAsync(ct)
              .ContinueWith(t => (IReadOnlyList<OptionIvHistory>)t.Result, ct);
 
+    // FIB-3: Date-range query for backtest pre-fetch (avoids O(n) DB calls per bar).
+    public Task<IReadOnlyList<OptionIvHistory>> GetRangeAsync(
+        string underlyingSymbol, NodaTime.LocalDate from, NodaTime.LocalDate to, CancellationToken ct)
+        => db.OptionIvHistory
+             .Where(h => h.UnderlyingSymbol == underlyingSymbol && h.Date >= from && h.Date <= to)
+             .OrderByDescending(h => h.Date)
+             .ToListAsync(ct)
+             .ContinueWith(t => (IReadOnlyList<OptionIvHistory>)t.Result, ct);
+
     public async Task UpsertAsync(OptionIvHistory record, CancellationToken ct)
     {
         var existing = await db.OptionIvHistory

@@ -96,6 +96,15 @@ public interface IOptionIvHistoryRepository
     Task<IReadOnlyList<Domain.Entities.OptionIvHistory>> GetRecentAsync(
         string underlyingSymbol, int days, CancellationToken ct);
 
+    /// <summary>
+    /// FIB-3: Returns all IV history records for <paramref name="underlyingSymbol"/> between
+    /// <paramref name="from"/> and <paramref name="to"/> (inclusive), ordered by date descending.
+    /// BacktestEngine pre-fetches this once per run and computes rolling IV rank in-memory
+    /// to avoid O(n) DB round-trips during the candle loop.
+    /// </summary>
+    Task<IReadOnlyList<Domain.Entities.OptionIvHistory>> GetRangeAsync(
+        string underlyingSymbol, NodaTime.LocalDate from, NodaTime.LocalDate to, CancellationToken ct);
+
     /// <summary>Upsert a daily ATM IV snapshot (by underlying + date).</summary>
     Task UpsertAsync(Domain.Entities.OptionIvHistory record, CancellationToken ct);
 }

@@ -101,7 +101,10 @@ public record SpreadLeg(
     decimal?                    FixedStrike   = null,
     decimal?                    TargetDelta   = null,
     bool                        NearestWeekly = true,
-    int                         Quantity      = 1     // in lots
+    int                         Quantity      = 1,    // in lots
+    // IC-2/VS-1: When set, OtmByStrike counts from this resolved strike rather than ATM.
+    // SpreadOrderManager passes the short leg's actual filled strike as FromStrike for the wing leg.
+    decimal?                    FromStrike    = null
 );
 
 /// <summary>
@@ -114,7 +117,12 @@ public record SpreadSignalResult(
     string                      SpreadType,       // "IronCondor", "Vertical", "Straddle", etc.
     IReadOnlyList<SpreadLeg>    Legs,
     string                      Reason,
-    object?                     DiagnosticsJson   = null
+    object?                     DiagnosticsJson   = null,
+    // FIB-2: Optional underlying price level at which the spread should be force-closed.
+    // Set to the Fib 0.786 level by FibOptionSpreadStrategy (the "stop" for underlying price).
+    // SpreadOrderManager polls the underlying price; if it breaches this level the spread is closed
+    // regardless of option P&L. Null = no underlying stop (relies on premium stop-loss only).
+    decimal?                    UnderlyingStopLevel = null
 );
 
 /// <summary>
@@ -129,7 +137,9 @@ public record OptionsLegSpec(
     int? OtmStrikes           = null,   // OtmByStrike: number of strike intervals OTM
     decimal? FixedStrike      = null,   // FixedStrike: exact strike
     decimal? TargetDelta      = null,   // ByDelta: e.g. 0.30 for 30-delta
-    bool NearestWeeklyExpiry  = true    // false = nearest monthly
+    bool NearestWeeklyExpiry  = true,   // false = nearest monthly
+    // IC-2/VS-1: Anchor for OtmByStrike — use short leg's resolved strike, not ATM.
+    decimal? FromStrike       = null
 );
 
 public record SignalResult(

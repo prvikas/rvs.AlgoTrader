@@ -3,6 +3,7 @@ using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using System.Linq;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -62,5 +63,17 @@ public class OptionIvRankService(
         };
 
         await repo.UpsertAsync(record, ct);
+    }
+
+    // FIB-3: Pre-fetch IV history for a date range (backtest use).
+    // Extends the from-date by LookbackDays so the first bars of the backtest have a full
+    // 252-day window to compute accurate IV rank/percentile.
+    public async Task<IReadOnlyList<(LocalDate Date, decimal AtmIv)>> GetHistoryRangeAsync(
+        string underlyingSymbol, LocalDate from, LocalDate to, CancellationToken ct)
+    {
+        // Pull LookbackDays extra so bars near fromDate have a full 252-day window.
+        var extendedFrom = from.PlusDays(-LookbackDays);
+        var records = await repo.GetRangeAsync(underlyingSymbol, extendedFrom, to, ct);
+        return records.Select(r => (r.Date, r.AtmIv)).ToList();
     }
 }

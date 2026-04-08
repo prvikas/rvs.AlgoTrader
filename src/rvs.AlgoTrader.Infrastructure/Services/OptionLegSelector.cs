@@ -27,7 +27,8 @@ public class OptionLegSelector(
         decimal spotPrice,
         LocalDate expiryDate,
         string brokerName,
-        CancellationToken ct)
+        CancellationToken ct,
+        double? atmIv = null)
     {
         var all = await instrumentRepo.GetOptionsByUnderlyingAndExpiryAsync(
             underlyingSymbol, expiryDate, ct);
@@ -52,7 +53,7 @@ public class OptionLegSelector(
             StrikeSelectionMode.OtmByPct    => SelectOtmByPct(strikes, spotPrice, spec, targetType),
             StrikeSelectionMode.OtmByStrike => SelectOtmByCount(strikes, spotPrice, spec, targetType),
             StrikeSelectionMode.FixedStrike => NearestStrike(strikes, spec.FixedStrike ?? spotPrice),
-            StrikeSelectionMode.ByDelta     => SelectByDelta(strikes, spotPrice, expiryDate, spec),
+            StrikeSelectionMode.ByDelta     => SelectByDelta(strikes, spotPrice, expiryDate, spec, atmIv),
             _                               => NearestStrike(strikes, spotPrice)
         };
 
@@ -85,15 +86,21 @@ public class OptionLegSelector(
         List<decimal> strikes, decimal spot, OptionsLegSpec spec, string type)
     {
         int n = spec.OtmStrikes ?? 1;
-        int atmIdx = strikes.IndexOf(NearestStrike(strikes, spot));
+        // IC-2/VS-1: When FromStrike is provided (e.g. the short leg's resolved strike),
+        // anchor the wing count from that strike rather than ATM.
+        // This ensures the wing is exactly N strike intervals away from the short leg,
+        // not from ATM (which diverges when the short leg is delta-selected away from ATM).
+        decimal anchor = spec.FromStrike ?? spot;
+        int anchorIdx = strikes.IndexOf(NearestStrike(strikes, anchor));
         int targetIdx = type == "CE"
-            ? Math.Min(atmIdx + n, strikes.Count - 1)
-            : Math.Max(atmIdx - n, 0);
+            ? Math.Min(anchorIdx + n, strikes.Count - 1)
+            : Math.Max(anchorIdx - n, 0);
         return strikes[targetIdx];
     }
 
     private decimal SelectByDelta(
-        List<decimal> strikes, decimal spot, LocalDate expiryDate, OptionsLegSpec spec)
+        List<decimal> strikes, decimal spot, LocalDate expiryDate, OptionsLegSpec spec,
+        double? atmIv = null)
     {
         double targetDelta = (double)(spec.TargetDelta ?? 0.30m);
         bool isCall = spec.OptionType == OptionType.Call;
@@ -101,10 +108,15 @@ public class OptionLegSelector(
         var today = clock.NowInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date;
         double tte = Math.Max((expiryDate - today).Days / 365.0, 1.0 / 365.0);
 
-        // Pick the strike whose absolute delta is closest to targetDelta.
-        // IV is approximated as 15% (0.15) for strike ranking — relative ordering is stable.
+        // BS-2: Use actual ATM IV when provided (e.g. from OptionChainSnapshot.AtmIv / 100).
+        // Falls back to 0.18 only when no IV data is available.
+        // Using the real IV significantly improves delta accuracy in high-IV regimes (>20%).
+        const double FallbackIv = 0.18;
+        double iv = atmIv is > 0 ? atmIv.Value : FallbackIv;
+        // TODO-BS-2: atmIv not provided by caller — delta selection will be less accurate in high-IV regimes.
+
         return strikes
-            .Select(k => (Strike: k, Delta: Math.Abs((double)bsEngine.Compute(spot, k, tte, 0.15, RiskFreeRate, isCall).Delta)))
+            .Select(k => (Strike: k, Delta: Math.Abs((double)bsEngine.Compute(spot, k, tte, iv, RiskFreeRate, isCall).Delta)))
             .MinBy(x => Math.Abs(x.Delta - targetDelta))
             .Strike;
     }

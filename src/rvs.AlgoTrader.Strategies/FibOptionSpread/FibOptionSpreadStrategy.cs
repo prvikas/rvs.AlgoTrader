@@ -163,11 +163,15 @@ public class FibOptionSpreadStrategy(FibOptionSpreadConfig config) : IStrategy
         decimal stopLevel = fib786;
 
         var spread = new SpreadSignalResult(
-            SpreadType:    direction,
-            Legs:          [shortLeg, longLeg],
-            Reason:        $"Fib 1.618 entry: price={current.Close:F2}, zone={fib1618:F2}, " +
-                           $"stop@0.786={fib786:F2}, {direction}, wing={config.WingWidthStrikes} strikes",
-            DiagnosticsJson: indicators);
+            SpreadType:         direction,
+            Legs:               [shortLeg, longLeg],
+            Reason:             $"Fib 1.618 entry: price={current.Close:F2}, zone={fib1618:F2}, " +
+                                $"stop@0.786={fib786:F2}, {direction}, wing={config.WingWidthStrikes} strikes",
+            DiagnosticsJson:    indicators,
+            // FIB-2: Pass the 0.786 Fib level as UnderlyingStopLevel. SpreadOrderManager polls
+            // the underlying price and force-closes the spread if it breaches this level,
+            // regardless of the option leg P&L. This gives the spread a hard underlying stop.
+            UnderlyingStopLevel: stopLevel);
 
         // Wrap in a SignalResult that carries the 0.786 stop so TrailingStopManager can act on it.
         return Task.FromResult(new SignalResult(

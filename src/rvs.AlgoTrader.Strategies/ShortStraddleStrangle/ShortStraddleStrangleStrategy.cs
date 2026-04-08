@@ -33,6 +33,19 @@ public class ShortStraddleStrangleStrategy(ShortStraddleStrangleConfig config) :
         var chain  = context.OptionChain;
         decimal iv = chain.AtmIv;
 
+        // ── SS-3: DTE filter — only sell premium in the optimal theta decay window ─
+        if (config.MinDte > 0 || config.MaxDte > 0)
+        {
+            var currentDate = context.Candles[^1].OpenTime.Date;
+            int dte = (chain.Expiry - currentDate).Days;
+            if (dte < config.MinDte)
+                return Task.FromResult(SignalResult.Hold(
+                    $"DTE {dte}d below minimum {config.MinDte}d — too close to expiry, premium decays non-linearly"));
+            if (config.MaxDte > 0 && dte > config.MaxDte)
+                return Task.FromResult(SignalResult.Hold(
+                    $"DTE {dte}d above maximum {config.MaxDte}d — too far from expiry, theta decay too slow"));
+        }
+
         // ── IV filter — enter only in elevated IV environments ─────────────
         if (iv < config.MinAtmIv)
             return Task.FromResult(SignalResult.Hold(
@@ -97,6 +110,14 @@ public class ShortStraddleStrangleConfig
     /// </summary>
     public decimal MaxLossMultiple                  { get; set; } = 2.0m;  // stop at 2× premium received
 
+    // SS-3: DTE filter — sell premium only in the optimal theta-decay window.
+    // Too close to expiry (< MinDte): gamma risk spikes; small moves cause outsized losses.
+    // Too far from expiry (> MaxDte): theta decay is slow; capital tied up with low daily P&L.
+    /// <summary>Minimum DTE to enter. Default 3 — avoids gamma risk in final days before expiry.</summary>
+    public int    MinDte                            { get; set; } = 3;
+    /// <summary>Maximum DTE to enter. Default 14 — ensures theta decay is meaningful. Set 0 to disable upper cap.</summary>
+    public int    MaxDte                            { get; set; } = 14;
+
     public static ShortStraddleStrangleConfig FromJson(string json)
         => JsonSerializer.Deserialize<ShortStraddleStrangleConfig>(json) ?? new();
 
@@ -107,6 +128,8 @@ public class ShortStraddleStrangleConfig
         new("MinAtmIv",          "Min ATM IV %",         "decimal", 18m,   Min: 10m,   Max: 60m,  Step: 1m,   Hint: "Only enter when IV is elevated"),
         new("StrangleCallDelta", "Strangle Call Delta",  "decimal", 0.20m, Min: 0.05m, Max: 0.40m, Step: 0.05m, Hint: "OTM delta for the call leg (strangle only)"),
         new("StranglePutDelta",  "Strangle Put Delta",   "decimal", 0.20m, Min: 0.05m, Max: 0.40m, Step: 0.05m, Hint: "OTM delta for the put leg (strangle only); set lower than call to account for put skew"),
-        new("MaxLossMultiple",   "Max Loss Multiple",    "decimal", 2.0m,  Min: 1.0m,  Max: 5.0m, Step: 0.5m, Hint: "MANDATORY: force-close when loss ≥ this × premium"),
+        new("MaxLossMultiple",   "Max Loss Multiple",    "decimal", 2.0m,  Min: 1.0m,  Max: 5.0m,  Step: 0.5m, Hint: "MANDATORY: force-close when loss ≥ this × premium"),
+        new("MinDte",            "Min DTE",              "int",     3,     Min: 0,    Max: 30,    Hint: "Minimum days to expiry for entry (SS-3). 0 = disabled."),
+        new("MaxDte",            "Max DTE",              "int",     14,    Min: 0,    Max: 90,    Hint: "Maximum days to expiry for entry (SS-3). 0 = no upper cap."),
     ];
 }

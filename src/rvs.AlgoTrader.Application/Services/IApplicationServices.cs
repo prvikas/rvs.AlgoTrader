@@ -637,6 +637,18 @@ public interface IOptionIvRankService
     /// Idempotent — upserts by (underlying, date).
     /// </summary>
     Task RecordAsync(string underlyingSymbol, decimal atmIv, CancellationToken ct);
+
+    /// <summary>
+    /// FIB-3: Pre-fetch raw IV history for a date range (inclusive) for backtesting.
+    /// BacktestEngine calls this once before the main candle loop and computes rolling
+    /// IV rank per bar in-memory — avoids O(n) database round-trips during backtesting.
+    /// Returns records ordered by date descending.
+    /// </summary>
+    Task<IReadOnlyList<(NodaTime.LocalDate Date, decimal AtmIv)>> GetHistoryRangeAsync(
+        string underlyingSymbol,
+        NodaTime.LocalDate from,
+        NodaTime.LocalDate to,
+        CancellationToken ct);
 }
 
 public interface IOptionLegSelector
@@ -647,13 +659,17 @@ public interface IOptionLegSelector
     /// <param name="expiryDate">Target expiry date.</param>
     /// <param name="brokerName">Active broker — used to resolve the right token.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="atmIv">ATM implied volatility (0–1 fraction, e.g. 0.18 = 18%).
+    /// Used by ByDelta selection for accurate delta ranking. Falls back to 0.18 when null.
+    /// Pass context.OptionChain.AtmIv / 100 when available (BS-2).</param>
     Task<OptionLegResolution?> ResolveAsync(
         string underlyingSymbol,
         Domain.Interfaces.OptionsLegSpec spec,
         decimal spotPrice,
         NodaTime.LocalDate expiryDate,
         string brokerName,
-        CancellationToken ct);
+        CancellationToken ct,
+        double? atmIv = null);
 }
 
 /// <summary>Result of IOptionLegSelector.ResolveAsync — the concrete instrument details.</summary>

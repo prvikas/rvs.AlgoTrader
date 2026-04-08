@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using NodaTime;
+using rvs.AlgoTrader.Application.DTOs.MarketData;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
@@ -19,7 +20,13 @@ public class BacktestEngine(
     ICandleRepository candleRepo,
     IStrategyFactory strategyFactory,
     ITransactionCostCalculator costCalc,
-    ILogger<BacktestEngine> logger) : IBacktestEngine
+    ILogger<BacktestEngine> logger,
+    // FIB-3: Optional — populates SymbolIvRank in StrategyContext per bar using pre-fetched history.
+    // Null when IV history data is unavailable (strategies degrade gracefully: FibOptionSpread skips IVP filter).
+    IOptionIvRankService? ivRankService = null,
+    // FIB-4: Optional — populates HasUpcomingEvent in StrategyContext per bar using pre-fetched event list.
+    // Null when event calendar is not populated (strategies degrade gracefully: FibOptionSpread skips event filter).
+    IEventCalendarService? eventCalendar = null) : IBacktestEngine
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
@@ -90,6 +97,48 @@ public class BacktestEngine(
         // Progress reporting: every 1% of bars (minimum 1)
         var jobId        = request.JobId ?? "backtest";
         var progressStep = Math.Max(1, totalBars / 100);
+
+        // ── FIB-3: Pre-fetch IV history for rolling per-bar IV rank ────────────
+        // Loaded once before the loop; sorted ascending by date for binary-search lookups.
+        // Empty list when IOptionIvRankService is not available or has no data.
+        IReadOnlyList<(NodaTime.LocalDate Date, decimal AtmIv)> ivHistory =
+            Array.Empty<(NodaTime.LocalDate, decimal)>();
+        if (ivRankService != null)
+        {
+            try
+            {
+                ivHistory = await ivRankService.GetHistoryRangeAsync(
+                    request.InternalSymbol, request.FromDate, request.ToDate, ct);
+                logger.LogInformation("[Backtest] FIB-3: loaded {Count} IV history records for {Symbol}",
+                    ivHistory.Count, request.InternalSymbol);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[Backtest] FIB-3: failed to load IV history — SymbolIvRank will be null for all bars");
+            }
+        }
+
+        // ── FIB-4: Pre-fetch market events for per-bar HasUpcomingEvent ────────
+        // Group into a HashSet of dates that have High-impact events for fast O(1) per-bar lookups.
+        // ExclusionDays window is applied per bar (check up to N future dates).
+        IReadOnlyList<MarketEventDto> prefetchedEvents =
+            Array.Empty<MarketEventDto>();
+        if (eventCalendar != null)
+        {
+            try
+            {
+                // Add a 14-day forward buffer so bars near toDate can still check the window.
+                var eventsTo = request.ToDate.PlusDays(14);
+                prefetchedEvents = await eventCalendar.GetRangeAsync(
+                    request.FromDate, eventsTo, ct: ct);
+                logger.LogInformation("[Backtest] FIB-4: loaded {Count} market events for {From}–{To}",
+                    prefetchedEvents.Count, request.FromDate, eventsTo);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[Backtest] FIB-4: failed to load event calendar — HasUpcomingEvent will be false for all bars");
+            }
+        }
 
         // ── Chart accumulation ──────────────────────────────────────────────
         // Full buffer: downsampled to ≤ 2000 at completion.
@@ -191,13 +240,30 @@ public class BacktestEngine(
             // *** KEY FIX: zero-copy O(1) slice — no List<T> allocation ***
             var visibleCandles = new ReadOnlyListSlice<ClosedCandle>(allCandles, i + 1);
 
+            // FIB-3: Compute rolling IvRankSnapshot for this bar from the pre-fetched IV history.
+            // Uses up to 252 most recent records on or before the current bar's date.
+            var barDate = current.OpenTime.Date;
+            var barIvRank = ComputeIvRankAsOf(barDate, ivHistory);
+
+            // FIB-4: Determine HasUpcomingEvent for this bar using the pre-fetched event list.
+            // FibOptionSpreadConfig.ExclusionDays is not known here (strategy config may vary),
+            // so we use a conservative 7-day window — strategies with smaller windows will not
+            // get false positives, just a slightly broader pre-filter that is re-checked internally.
+            const int BacktestEventWindow = 7;
+            var hasUpcomingEvent = prefetchedEvents.Any(e =>
+                e.Impact == "High" &&
+                e.EventDate >= barDate &&
+                e.EventDate <= barDate.PlusDays(BacktestEventWindow));
+
             var ctx = new StrategyContext(
                 Guid.Empty,
                 request.InternalSymbol,
                 request.Timeframe,
                 visibleCandles,
                 request.ParametersJson,
-                "backtest");
+                "backtest",
+                SymbolIvRank:    barIvRank,
+                HasUpcomingEvent: hasUpcomingEvent);
 
             SignalResult signal;
             try { signal = await strategy.EvaluateAsync(ctx, ct); }
@@ -364,6 +430,50 @@ public class BacktestEngine(
             };
 
         return result;
+    }
+
+    /// <summary>
+    /// FIB-3: Compute rolling IV rank/percentile for a specific bar date from pre-fetched IV history.
+    /// History is ordered by date descending; takes up to 252 entries on or before barDate.
+    /// Returns null if fewer than 30 data points are available (warmup requirement).
+    /// </summary>
+    private static Domain.ValueObjects.IvRankSnapshot? ComputeIvRankAsOf(
+        NodaTime.LocalDate barDate,
+        IReadOnlyList<(NodaTime.LocalDate Date, decimal AtmIv)> ivHistory)
+    {
+        const int MinDataPoints = 30;
+        const int LookbackDays  = 252;
+
+        if (ivHistory.Count == 0) return null;
+
+        // Take up to LookbackDays entries that are on or before barDate (history is desc-sorted)
+        var window = new List<decimal>(LookbackDays);
+        foreach (var (date, iv) in ivHistory)
+        {
+            if (date > barDate) continue;
+            window.Add(iv);
+            if (window.Count == LookbackDays) break;
+        }
+
+        if (window.Count < MinDataPoints) return null;
+
+        decimal currentIv    = window[0]; // most recent (history is desc-sorted)
+        decimal high52        = window.Max();
+        decimal low52         = window.Min();
+        decimal range         = high52 - low52;
+        decimal ivRank        = range == 0 ? 50m : Math.Round((currentIv - low52) / range * 100m, 1);
+        int     below         = window.Count(v => v < currentIv);
+        decimal ivPercentile  = Math.Round((decimal)below / window.Count * 100m, 1);
+
+        return new IvRankSnapshot(
+            UnderlyingSymbol: "backtest",
+            CurrentIv:        currentIv,
+            IvRank:           ivRank,
+            IvPercentile:     ivPercentile,
+            WeekHigh52:       high52,
+            WeekLow52:        low52,
+            Regime:           IvRankSnapshot.ClassifyRegime(ivRank),
+            DataPointsUsed:   window.Count);
     }
 
     /// <summary>

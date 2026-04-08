@@ -42,18 +42,54 @@ public class SpreadOrderManager(
         var brokerClient = brokerFactory.GetOrderClient(brokerName);
         var now          = clock.NowInstant();
 
-        // Resolve all legs to concrete instruments
+        // BS-2: Extract ATM IV from diagnostics (stored by all option strategies as "atmIv" key).
+        // Convert from percentage (e.g. 18.5) to fraction (0.185) for Black-Scholes input.
+        double? atmIvFraction = null;
+        if (signal.DiagnosticsJson is IReadOnlyDictionary<string, decimal> diag
+            && diag.TryGetValue("atmIv", out var ivPct) && ivPct > 0)
+            atmIvFraction = (double)(ivPct / 100m);
+
+        // Resolve all legs to concrete instruments.
+        // IC-2/VS-1: Sell (short) legs are resolved first so their resolved strike can be
+        // passed as FromStrike to the corresponding buy (wing) leg of the same option type.
+        // This ensures wing legs are anchored exactly N strikes from the short, not from ATM.
         var resolvedLegs = new List<(SpreadLeg Spec, OptionLegResolution Resolution)>();
-        foreach (var leg in signal.Legs)
+        var shortStrikeByType = new Dictionary<Domain.Enums.OptionType, decimal>();
+
+        // First pass: resolve short (Sell) legs
+        foreach (var leg in signal.Legs.Where(l => l.Direction == OrderDirection.Sell))
         {
-            var spec   = new OptionsLegSpec(leg.OptionType, leg.SelectionMode,
+            var spec = new OptionsLegSpec(leg.OptionType, leg.SelectionMode,
                 leg.OtmPct, leg.OtmStrikes, leg.FixedStrike, leg.TargetDelta, leg.NearestWeekly);
             var resolution = await legSelector.ResolveAsync(
-                instance.InternalSymbol, spec, spotPrice, expiryDate, brokerName, ct);
+                instance.InternalSymbol, spec, spotPrice, expiryDate, brokerName, ct, atmIvFraction);
 
             if (resolution == null)
             {
-                logger.LogError("[SpreadOrderManager] Could not resolve leg {OptionType}/{Mode} for {Instance}",
+                logger.LogError("[SpreadOrderManager] Could not resolve short leg {OptionType}/{Mode} for {Instance}",
+                    leg.OptionType, leg.SelectionMode, instance.Name);
+                return null;
+            }
+            resolvedLegs.Add((leg, resolution));
+            shortStrikeByType[leg.OptionType] = resolution.StrikePrice;
+        }
+
+        // Second pass: resolve long (Buy / wing) legs, anchoring OtmByStrike from the short strike
+        foreach (var leg in signal.Legs.Where(l => l.Direction == OrderDirection.Buy))
+        {
+            // Pass FromStrike = short leg's resolved strike when available and mode is OtmByStrike
+            decimal? fromStrike = leg.SelectionMode == StrikeSelectionMode.OtmByStrike
+                && shortStrikeByType.TryGetValue(leg.OptionType, out var ss) ? ss : leg.FromStrike;
+
+            var spec = new OptionsLegSpec(leg.OptionType, leg.SelectionMode,
+                leg.OtmPct, leg.OtmStrikes, leg.FixedStrike, leg.TargetDelta, leg.NearestWeekly,
+                FromStrike: fromStrike);
+            var resolution = await legSelector.ResolveAsync(
+                instance.InternalSymbol, spec, spotPrice, expiryDate, brokerName, ct, atmIvFraction);
+
+            if (resolution == null)
+            {
+                logger.LogError("[SpreadOrderManager] Could not resolve wing leg {OptionType}/{Mode} for {Instance}",
                     leg.OptionType, leg.SelectionMode, instance.Name);
                 return null;
             }
