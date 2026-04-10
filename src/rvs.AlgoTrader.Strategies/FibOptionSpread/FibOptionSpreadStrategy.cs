@@ -171,7 +171,9 @@ public class FibOptionSpreadStrategy(FibOptionSpreadConfig config) : IStrategy
             // FIB-2: Pass the 0.786 Fib level as UnderlyingStopLevel. SpreadOrderManager polls
             // the underlying price and force-closes the spread if it breaches this level,
             // regardless of the option leg P&L. This gives the spread a hard underlying stop.
-            UnderlyingStopLevel: stopLevel);
+            UnderlyingStopLevel: stopLevel,
+            SpotPrice:          context.OptionChain?.SpotPrice ?? current.Close,
+            NearExpiryDate:     context.OptionChain?.Expiry);
 
         // Wrap in a SignalResult that carries the 0.786 stop so TrailingStopManager can act on it.
         return Task.FromResult(new SignalResult(

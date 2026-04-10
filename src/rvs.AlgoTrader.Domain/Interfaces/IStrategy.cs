@@ -85,7 +85,14 @@ public record StrategyContext(
 
     // True when EventCalendarService detects a high-impact event within the
     // configured exclusion window. STRAT-002 skips entry when true.
-    bool HasUpcomingEvent = false
+    bool HasUpcomingEvent = false,
+
+    // CS-1: Dual-expiry option chains for CalendarSpread.
+    // Near = weekly expiry (sell leg). Far = monthly expiry (buy leg).
+    // Populated by StrategyEvaluationQueue and ForwardTestEngine for CalendarSpread strategies.
+    // Null for all other strategies or when chain fetch fails.
+    OptionChainSnapshot? NearExpiryChain = null,
+    OptionChainSnapshot? FarExpiryChain  = null
 );
 
 /// <summary>
@@ -122,7 +129,15 @@ public record SpreadSignalResult(
     // Set to the Fib 0.786 level by FibOptionSpreadStrategy (the "stop" for underlying price).
     // SpreadOrderManager polls the underlying price; if it breaches this level the spread is closed
     // regardless of option P&L. Null = no underlying stop (relies on premium stop-loss only).
-    decimal?                    UnderlyingStopLevel = null
+    decimal?                    UnderlyingStopLevel = null,
+    // SEQ-1: Underlying spot price at signal time — required by SpreadOrderManager for strike
+    // resolution via IOptionLegSelector.ResolveAsync. Set by every option strategy from
+    // context.OptionChain.SpotPrice. Null for equity-based spreads (e.g. VerticalSpread on equity).
+    decimal?                    SpotPrice = null,
+    // SEQ-1: Nearest (short-leg) expiry date — required by SpreadOrderManager to select the
+    // correct option contract. For CalendarSpread this is the near (weekly) expiry.
+    // Null when the strategy cannot determine expiry (degrade to SpreadOrderManager's own lookup).
+    LocalDate?                  NearExpiryDate = null
 );
 
 /// <summary>

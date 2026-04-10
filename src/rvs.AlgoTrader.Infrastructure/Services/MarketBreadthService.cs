@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NodaTime;
@@ -190,27 +191,27 @@ LEFT JOIN prior  p ON p.internal_symbol = t.internal_symbol";
 
     private sealed class BreadthRow
     {
-        public Guid Id { get; set; }
-        public DateTimeOffset SnapshotDate { get; set; }
-        public int TotalSymbols { get; set; }
-        public int Above200Sma { get; set; }
-        public int Above50Sma { get; set; }
-        public int HighsCount { get; set; }
-        public int LowsCount { get; set; }
-        public int AdvancingCount { get; set; }
-        public int DecliningCount { get; set; }
-        public string Regime { get; set; } = "Neutral";
-        public DateTimeOffset ComputedAt { get; set; }
+        [Column("id")]              public Guid Id { get; set; }
+        [Column("snapshot_date")]   public DateTimeOffset SnapshotDate { get; set; }
+        [Column("total_symbols")]   public int TotalSymbols { get; set; }
+        [Column("above_200_sma")]   public int Above200Sma { get; set; }
+        [Column("above_50_sma")]    public int Above50Sma { get; set; }
+        [Column("highs_count")]     public int HighsCount { get; set; }
+        [Column("lows_count")]      public int LowsCount { get; set; }
+        [Column("advancing_count")] public int AdvancingCount { get; set; }
+        [Column("declining_count")] public int DecliningCount { get; set; }
+        [Column("regime")]          public string Regime { get; set; } = "Neutral";
+        [Column("computed_at")]     public DateTimeOffset ComputedAt { get; set; }
     }
 
     private sealed class BreadthComputeRow
     {
-        public int TotalSymbols { get; set; }
-        public int Above200Sma { get; set; }
-        public int Above50Sma { get; set; }
-        public int HighsCount { get; set; }
-        public int LowsCount { get; set; }
-        public int AdvancingCount { get; set; }
-        public int DecliningCount { get; set; }
+        [Column("total_symbols")]   public int TotalSymbols { get; set; }
+        [Column("above_200_sma")]   public int Above200Sma { get; set; }
+        [Column("above_50_sma")]    public int Above50Sma { get; set; }
+        [Column("highs_count")]     public int HighsCount { get; set; }
+        [Column("lows_count")]      public int LowsCount { get; set; }
+        [Column("advancing_count")] public int AdvancingCount { get; set; }
+        [Column("declining_count")] public int DecliningCount { get; set; }
     }
 }

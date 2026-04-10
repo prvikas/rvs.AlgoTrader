@@ -112,7 +112,7 @@ public static class ServiceCollectionExtensions
         else
             services.AddSingleton<IRiskManagementService, InMemoryRiskManagementService>();
         services.AddScoped<IForwardTestFillSimulator, ForwardTestFillSimulator>();
-        services.AddScoped<ILiveExecutionEngine, LiveExecutionEngine>();
+        services.AddScoped<ILiveExecutionEngine, LiveExecutionEngine>(); // IOptionChainService + ISpreadOrderManager now injected
         services.AddScoped<IHistoricalDownloadService, HistoricalDownloadService>();
         services.AddScoped<IInstrumentRefreshService, InstrumentRefreshService>();
         services.AddScoped<IStrategyInstanceManager, StrategyInstanceManager>();

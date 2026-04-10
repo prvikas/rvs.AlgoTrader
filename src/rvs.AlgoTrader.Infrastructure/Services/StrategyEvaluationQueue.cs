@@ -17,18 +17,24 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// Each instance evaluated sequentially within its own worker channel.
 ///
 /// Routing:
-///   StrategyMode.Live    → LiveExecutionEngine (real orders)
-///   StrategyMode.Forward → ForwardTestEngine (paper trading, no real orders)
+///   StrategyMode.Live    → LiveExecutionEngine (real orders via 8-gate sequence)
+///   StrategyMode.Forward → ForwardTestEngine (paper trading — always called; owns its own
+///                          signal evaluation, position state, and trade persistence)
 ///   Other modes          → skipped
 ///
-/// HOLD and SKIPPED signals → signal_journal only, no domain event.
-/// BUY/SELL signals → SignalGenerated event + execution engine.
+/// Option chain pre-fetch (SEQ-1 / Rule #18):
+///   IOptionChainService is called BEFORE building StrategyContext so strategies can read
+///   OptionChain / NearExpiryChain / FarExpiryChain without any I/O inside EvaluateAsync.
+///   Option strategies that require a chain return Skip when it is unavailable (degraded mode).
+///
+/// Forward mode routing (SEQ-2):
+///   ForwardTestEngine.ProcessCandleAsync is always called for Forward instances, regardless
+///   of whether the queue's own evaluation produced a BUY/SELL signal. ForwardTestEngine
+///   fetches its own option chains and manages spread/single-leg position state independently.
+///   The queue's evaluation for Forward mode is used only for signal journaling.
 ///
 /// Multi-timeframe (#94):
-///   Before calling EvaluateAsync, higher-TF candles (15m, 60m, 1d) are pre-fetched from
-///   ICandleCache and attached to StrategyContext when the instance's primary TF is finer-grained.
-///   Strategies access these via context.Candles15Min / Candles1Hour / CandlesDaily — no I/O
-///   inside EvaluateAsync.
+///   Higher-TF candles (15m, 60m, 1d) are pre-fetched and attached to StrategyContext.
 /// </summary>
 public class StrategyEvaluationQueue(
     IStrategyInstanceRepository instanceRepo,
@@ -42,6 +48,9 @@ public class StrategyEvaluationQueue(
     IMarketBreadthService breadthService,
     IOptionIvRankService ivRankService,
     IEventCalendarService eventCalendarService,
+    // SEQ-1: Pre-fetches option chain snapshots before StrategyContext is built (Rule #18).
+    // Registered as Scoped — each candle event gets a fresh service with its own in-process cache.
+    IOptionChainService optionChainService,
     ILogger<StrategyEvaluationQueue> logger) : IConsumer<CandleClosedEvent>
 {
     // Per-instance channels to ensure sequential evaluation
@@ -49,6 +58,14 @@ public class StrategyEvaluationQueue(
 
     // Higher-TF bars to fetch — enough for most indicators (200-bar SMA needs 200 daily bars)
     private const int HigherTfBarCount = 200;
+
+    // Strategy types that require an option chain snapshot for EvaluateAsync.
+    // Checked against StrategyInstance.StrategyType (not display Name).
+    private static readonly HashSet<string> OptionStrategyTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "IronCondor", "ShortStraddleStrangle", "CalendarSpread",
+        "FibOptionSpread", "IntradayPcrOptions", "VerticalSpread"
+    };
 
     public async Task Consume(ConsumeContext<CandleClosedEvent> context)
     {
@@ -84,7 +101,6 @@ public class StrategyEvaluationQueue(
             var correlationId = evt.CorrelationId;
 
             // ── Pre-fetch higher-TF candles for multi-timeframe strategies (#94) ──
-            // Only fetch a higher TF when the primary TF is finer-grained.
             var candles15Min = IsFinerThan(instance.Timeframe, Timeframes.FifteenMinute)
                 ? await candleCache.GetAsync(instance.InternalSymbol, Timeframes.FifteenMinute, HigherTfBarCount, ct)
                 : null;
@@ -98,7 +114,6 @@ public class StrategyEvaluationQueue(
                 : null;
 
             // ── Pre-fetch market-context for strategy filters ─────────────────
-            // Each fetch is best-effort; failure returns null (strategy skips optional filter).
             var todayIst = clock.NowInstant()
                 .InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])
                 .Date;
@@ -135,7 +150,37 @@ public class StrategyEvaluationQueue(
                 logger.LogDebug(ex, "[EvalQueue] EventCalendarService unavailable for {Instance}", instance.Name);
             }
 
-            var strategy = strategyFactory.Create(instance.StrategyName, instance.ParametersJson);
+            // ── SEQ-1: Pre-fetch option chain(s) for option strategies (Rule #18) ─
+            // Fetched here so EvaluateAsync has zero I/O; strategies read context fields directly.
+            OptionChainSnapshot? optionChain     = null;
+            OptionChainSnapshot? nearExpiryChain = null;
+            OptionChainSnapshot? farExpiryChain  = null;
+
+            if (OptionStrategyTypes.Contains(instance.StrategyType))
+            {
+                try
+                {
+                    var nearExpiry = optionChainService.GetNearestWeeklyExpiry(instance.InternalSymbol);
+                    nearExpiryChain = await optionChainService.GetSnapshotAsync(
+                        instance.InternalSymbol, nearExpiry, ct);
+                    optionChain = nearExpiryChain; // backward compat — strategies that use context.OptionChain
+
+                    // CalendarSpread also needs the far (monthly) expiry chain for CS-1/CS-2
+                    if (string.Equals(instance.StrategyType, "CalendarSpread", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var farExpiry = optionChainService.GetNearestMonthlyExpiry(instance.InternalSymbol);
+                        farExpiryChain = await optionChainService.GetSnapshotAsync(
+                            instance.InternalSymbol, farExpiry, ct);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "[EvalQueue] OptionChainService unavailable for {Instance} — " +
+                        "option strategies will return Skip", instance.Name);
+                }
+            }
+
+            var strategy = strategyFactory.Create(instance.StrategyType, instance.ParametersJson);
             var strategyContext = new StrategyContext(
                 instance.Id,
                 instance.InternalSymbol,
@@ -143,13 +188,15 @@ public class StrategyEvaluationQueue(
                 candles,
                 instance.ParametersJson ?? "{}",
                 correlationId,
-                OptionChain:       null,          // populated by IOptionChainService when wired
+                OptionChain:       optionChain,
                 Candles15Min:      candles15Min,
                 Candles1Hour:      candles1Hour,
                 CandlesDaily:      candlesDaily,
                 BreadthPct200Sma:  breadthPct200Sma,
                 SymbolIvRank:      symbolIvRank,
-                HasUpcomingEvent:  hasUpcomingEvent);
+                HasUpcomingEvent:  hasUpcomingEvent,
+                NearExpiryChain:   nearExpiryChain,
+                FarExpiryChain:    farExpiryChain);
 
             SignalResult result;
             try
@@ -162,7 +209,7 @@ public class StrategyEvaluationQueue(
                 return;
             }
 
-            // Always journal signal
+            // Always journal signal (for both Live and Forward modes)
             var isActionable = result.Signal is SignalType.Buy or SignalType.Sell;
             await signalJournal.AppendAsync(new SignalJournalEntry(
                 0L,
@@ -179,25 +226,35 @@ public class StrategyEvaluationQueue(
                 isActionable,
                 result.SkippedReason), ct);
 
-            // Only publish and execute on BUY/SELL
+            // ── SEQ-2: Forward mode — ForwardTestEngine owns position state and execution ─
+            // Always call ProcessCandleAsync regardless of whether this evaluation produced
+            // a BUY/SELL. ForwardTestEngine re-evaluates internally (with its own option chains),
+            // manages open spread/single-leg state, and persists trades.
+            // The queue's evaluation above serves only for signal journaling in Forward mode.
+            if (instance.Mode == StrategyMode.Forward)
+            {
+                try
+                {
+                    await forwardTestEngine.ProcessCandleAsync(instance, evt.ClosedCandle, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "[EvalQueue] ForwardTestEngine.ProcessCandleAsync failed for {Instance}",
+                        instance.Name);
+                }
+                return;
+            }
+
+            // ── Live mode: only route on actionable signals ────────────────────
             if (!isActionable) return;
 
             await bus.Publish(new SignalGenerated(
-                instance.Id, instance.StrategyName, instance.InternalSymbol,
+                instance.Id, instance.StrategyType, instance.InternalSymbol,
                 instance.Timeframe, result.Signal.ToString(),
                 result.EntryPrice, result.StopLoss, result.TakeProfit,
                 result.Reason ?? "", correlationId, clock.NowIst()), ct);
 
-            // Route to the correct execution engine based on mode
-            if (instance.Mode == StrategyMode.Live)
-            {
-                await executionEngine.ExecuteSignalAsync(instance, result, correlationId, ct);
-            }
-            else if (instance.Mode == StrategyMode.Forward)
-            {
-                // ForwardTestEngine handles fill simulation and trade persistence
-                await forwardTestEngine.ProcessCandleAsync(instance, evt.ClosedCandle, ct);
-            }
+            await executionEngine.ExecuteSignalAsync(instance, result, correlationId, ct);
         }
         finally
         {
@@ -211,7 +268,6 @@ public class StrategyEvaluationQueue(
     /// </summary>
     private static bool IsFinerThan(string instanceTf, string higherTf)
     {
-        // Use the Timeframes.All ordering: lower index = finer granularity
         var all = Timeframes.All;
         var instanceIdx = IndexOf(all, instanceTf);
         var higherIdx   = IndexOf(all, higherTf);

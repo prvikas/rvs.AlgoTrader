@@ -121,7 +121,11 @@ public class VerticalSpreadStrategy(VerticalSpreadConfig config) : IStrategy
             Legs:            [leg1, leg2],
             Reason:          $"{config.SpreadType}: close={current.Close:F2}, SMA{config.TrendSmaPeriod}={sma:F2}, " +
                              $"width={config.SpreadWidthStrikes} strikes",
-            DiagnosticsJson: indicators);
+            DiagnosticsJson: indicators,
+            // VerticalSpread targets equity underlyings — SpotPrice from current candle.
+            // NearExpiryDate requires an option chain; use context.OptionChain if available.
+            SpotPrice:       context.OptionChain?.SpotPrice ?? current.Close,
+            NearExpiryDate:  context.OptionChain?.Expiry);
 
         return Task.FromResult(SignalResult.SpreadEntry(spread));
     }

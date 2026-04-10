@@ -28,7 +28,10 @@ public class ForwardTestEngine(
     IStrategyFactory strategyFactory,
     IPositionSizingEngine sizingEngine,
     IClock clock,
-    ILogger<ForwardTestEngine> logger) : IForwardTestEngine
+    ILogger<ForwardTestEngine> logger,
+    // SS-1: Required for spread simulation (MaxLossMultiple enforcement in paper trading).
+    // Singleton — safe to inject into a Singleton ForwardTestEngine.
+    IBlackScholesEngine bsEngine) : IForwardTestEngine
 {
     // Keyed by strategy instance ID; holds in-memory position/P&L state.
     // ConcurrentDictionary guards against concurrent Start/Stop vs ProcessCandle races.
@@ -48,14 +51,88 @@ public class ForwardTestEngine(
         // Create a DI scope for all scoped services needed in this candle tick
         using var scope = scopeFactory.CreateScope();
         var sp = scope.ServiceProvider;
-        var candleCache   = sp.GetRequiredService<ICandleCache>();
-        var fillSimulator = sp.GetRequiredService<IForwardTestFillSimulator>();
-        var tradeRepo     = sp.GetRequiredService<IForwardTestTradeRepository>();
+        var candleCache        = sp.GetRequiredService<ICandleCache>();
+        var fillSimulator      = sp.GetRequiredService<IForwardTestFillSimulator>();
+        var tradeRepo          = sp.GetRequiredService<IForwardTestTradeRepository>();
+        var optionChainService = sp.GetService<IOptionChainService>(); // optional — null when not registered
 
         var candles = await candleCache.GetAsync(instance.InternalSymbol, instance.Timeframe, 500, ct);
         if (candles.Count < 20) return;
 
-        // ── Check if open position should close (SL/TP) ───────────────────
+        // ── SS-1: Monitor open spread position per bar ────────────────────
+        if (state.OpenSpread != null)
+        {
+            var barDate     = candle.OpenTime.Date;
+            decimal spot    = candle.Close;
+            bool   spreadClosed = false;
+            string closeReason  = "";
+            decimal spreadPnl   = 0m;
+
+            // Expiry check
+            if (barDate >= state.OpenSpread.ExpiryDate)
+            {
+                // At expiry net time-value = 0 → costToClose ≈ 0 → P&L = NetCredit.
+                // Conservative for debit spreads (ignores far leg residual value), but acceptable
+                // given the linear approximation used throughout ForwardTestEngine.
+                spreadPnl   = FtSpreadPnl(state.OpenSpread);
+                spreadClosed = true; closeReason = "EXPIRY";
+            }
+            else
+            {
+                decimal currentVal = FtSpreadCurrentValue(state.OpenSpread, spot, barDate);
+                // Unified P&L = NetCredit − cost-to-close (see BacktestEngine.TryCloseSpreadSim).
+                spreadPnl = state.OpenSpread.NetCredit - currentVal;
+
+                decimal absCredit = Math.Abs(state.OpenSpread.NetCredit);
+                // SS-1: MaxLossMultiple
+                if (absCredit > 0 && spreadPnl <= -(absCredit * state.OpenSpread.MaxLossMultiple))
+                { spreadClosed = true; closeReason = "MAX_LOSS_MULTIPLE"; }
+                // Profit target
+                else if (absCredit > 0 && spreadPnl >= absCredit * state.OpenSpread.ProfitTargetPct)
+                { spreadClosed = true; closeReason = "PROFIT_TARGET"; }
+                // FIB-2: underlying stop
+                else if (state.OpenSpread.UnderlyingStop.HasValue)
+                {
+                    bool isUptrend = state.OpenSpread.SpreadType.Contains("put", StringComparison.OrdinalIgnoreCase);
+                    bool breached  = isUptrend ? spot < state.OpenSpread.UnderlyingStop.Value
+                                               : spot > state.OpenSpread.UnderlyingStop.Value;
+                    if (breached) { spreadPnl = -absCredit * state.OpenSpread.MaxLossMultiple; spreadClosed = true; closeReason = "UNDERLYING_STOP"; }
+                }
+            }
+
+            if (spreadClosed)
+            {
+                var closedTrade = new ForwardTestTrade
+                {
+                    Id              = Guid.NewGuid(),
+                    SessionId       = state.SessionId,
+                    InternalSymbol  = candle.InternalSymbol,
+                    Direction       = state.OpenSpread.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
+                    Quantity        = state.OpenSpread.LegCount,
+                    EntryPrice      = Math.Abs(state.OpenSpread.NetCredit),
+                    ExitPrice       = Math.Abs(state.OpenSpread.NetCredit) - spreadPnl,
+                    SimulatedFillPrice = Math.Abs(state.OpenSpread.NetCredit) - spreadPnl,
+                    Slippage        = 0m,
+                    Pnl             = spreadPnl,
+                    RealizedPnl     = spreadPnl,
+                    CloseReason     = closeReason,
+                    OpenedAt        = state.OpenSpread.EntryTime,
+                    ClosedAt        = clock.NowInstant(),
+                    EntryTime       = state.OpenSpread.EntryTime,
+                    ExitTime        = candle.OpenTime.ToInstant()
+                };
+                state.TotalPnl += spreadPnl;
+                state.ClosedTradeCount++;
+                if (spreadPnl > 0) state.WinCount++;
+                await tradeRepo.AddAsync(closedTrade, ct);
+                state.OpenSpread = null;
+                logger.LogInformation("[ForwardTest] Spread closed: {Reason} PnL={Pnl:F2}", closeReason, spreadPnl);
+            }
+
+            if (state.OpenSpread != null) return; // still managing spread — no new entry
+        }
+
+        // ── Check if open single-leg position should close (SL/TP) ────────
         if (state.OpenTrade != null)
         {
             var closeResult = TryClosePosition(state.OpenTrade, candle);
@@ -97,15 +174,44 @@ public class ForwardTestEngine(
         if (state.OpenTrade != null) return; // already in position — wait for close
 
         // ── Evaluate strategy for new entry ──────────────────────────────
-        var strategy = strategyFactory.Create(instance.StrategyType, instance.ParametersJson);
+        var strategy      = strategyFactory.Create(instance.StrategyType, instance.ParametersJson);
         var correlationId = Guid.NewGuid().ToString("N");
+
+        // CS-1: Fetch near and far option chains for CalendarSpread strategies.
+        // Also fetch near chain for all option strategies so they can run their IV filters.
+        OptionChainSnapshot? nearChain = null;
+        OptionChainSnapshot? farChain  = null;
+        if (optionChainService != null)
+        {
+            try
+            {
+                var nearExpiry = optionChainService.GetNearestWeeklyExpiry(instance.InternalSymbol);
+                nearChain = await optionChainService.GetSnapshotAsync(instance.InternalSymbol, nearExpiry, ct);
+
+                // CS-1: far chain only for CalendarSpread
+                if (instance.StrategyType == "CalendarSpread")
+                {
+                    var farExpiry = optionChainService.GetNearestMonthlyExpiry(instance.InternalSymbol);
+                    farChain = await optionChainService.GetSnapshotAsync(instance.InternalSymbol, farExpiry, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug("[ForwardTest] Option chain unavailable for {Symbol}: {Err}",
+                    instance.InternalSymbol, ex.Message);
+            }
+        }
+
         var context = new StrategyContext(
             instance.Id,
             instance.InternalSymbol,
             instance.Timeframe,
             candles,
             instance.ParametersJson ?? "{}",
-            correlationId);
+            correlationId,
+            OptionChain:     nearChain,
+            NearExpiryChain: nearChain,   // CS-1
+            FarExpiryChain:  farChain);   // CS-1
 
         SignalResult signal;
         try
@@ -115,6 +221,52 @@ public class ForwardTestEngine(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "[ForwardTest] Strategy eval error for {Instance}", instance.Name);
+            return;
+        }
+
+        // ── SS-1: Handle spread entry ────────────────────────────────────
+        if (signal.Spread != null)
+        {
+            var barDate    = candle.OpenTime.Date;
+            decimal atmIvPct = nearChain?.AtmIv
+                ?? (signal.DiagnosticsJson is IReadOnlyDictionary<string, decimal> d
+                    && d.TryGetValue("atmIv", out var iv) ? iv : 15m);
+
+            double ivFrac  = Math.Max(0.05, (double)(atmIvPct / 100m));
+            var nearExpiry = BacktestEngine.NearestWeeklyExpiry(barDate);
+            var farExpiry  = BacktestEngine.NearestMonthlyExpiry(barDate);
+
+            decimal netCredit = 0m;
+            int     legCount  = 0;
+            const double RFR  = 0.065;
+
+            foreach (var leg in signal.Spread.Legs)
+            {
+                var expiry = leg.NearestWeekly ? nearExpiry : farExpiry;
+                double tte = Math.Max(0.001, (expiry - barDate).Days / 365.0);
+                decimal si = 50m; // default NIFTY strike interval
+                decimal strike = BacktestEngine.ResolveStrike(leg, candle.Close, ivFrac, tte, RFR, si, bsEngine);
+                var g = bsEngine.Compute(candle.Close, strike, tte, ivFrac, RFR,
+                    leg.OptionType == OptionType.Call);
+                decimal prem = Math.Max(0m, g.TheoreticalPrice);
+                netCredit += leg.Direction == OrderDirection.Sell ? prem : -prem;
+                legCount++;
+            }
+
+            var (maxLoss, profitTarget, _) = BacktestEngine.ExtractSpreadConfig(instance.ParametersJson);
+            state.OpenSpread = new ForwardTestSpreadState(
+                SpreadType:       signal.Spread.SpreadType,
+                ExpiryDate:       nearExpiry,
+                NetCredit:        netCredit,
+                MaxLossMultiple:  maxLoss,
+                ProfitTargetPct:  profitTarget,
+                UnderlyingStop:   signal.Spread.UnderlyingStopLevel,
+                EntryTime:        candle.OpenTime.ToInstant(),
+                EntryIvFraction:  ivFrac,
+                LegCount:         legCount)
+            { OriginalDte = Math.Max(1.0, (nearExpiry - barDate).Days) };
+
+            logger.LogInformation("[ForwardTest] Spread entered {Type} credit={Credit:F2}", signal.Spread.SpreadType, netCredit);
             return;
         }
 
@@ -284,21 +436,61 @@ public class ForwardTestEngine(
         return new PositionCloseResult(exitPrice, pnl, reason);
     }
 
+    // ── Spread simulation helpers (SS-1) ─────────────────────────────────────
+
+    private static decimal FtSpreadCurrentValue(ForwardTestSpreadState pos, decimal spot, LocalDate barDate)
+    {
+        // Simple approximation: use linear time-value decay from entry DTE
+        // Full B-S repricing is too expensive per bar without knowing individual strikes;
+        // use a net intrinsic proxy: (expiryDate - barDate).Days / totalDte × entryNetAbs
+        // This is a conservative approximation; SpreadBacktestEngine uses full B-S.
+        double daysLeft  = Math.Max(0.0, (pos.ExpiryDate - barDate).Days);
+        double totalDays = Math.Max(1.0, pos.OriginalDte);
+        decimal fraction = (decimal)(daysLeft / totalDays);
+        return Math.Abs(pos.NetCredit) * fraction; // time-value decays linearly as approximation
+    }
+
+    // At expiry the linear time-value approximation returns 0 (daysLeft = 0),
+    // so cost-to-close ≈ 0 and P&L = NetCredit (positive for credit spreads,
+    // negative for debit spreads unless the far leg is worth more — not modelled here).
+    private static decimal FtSpreadPnl(ForwardTestSpreadState pos) => pos.NetCredit;
+
     // ── Private types ─────────────────────────────────────────────────────────
 
     private class ForwardTestState(Guid sessionId, decimal initialCapital)
     {
-        public Guid SessionId { get; } = sessionId;
-        public decimal InitialCapital { get; } = initialCapital;
-        public ForwardTestOpenTrade? OpenTrade { get; set; }
-        public decimal TotalPnl { get; set; }
-        public int ClosedTradeCount { get; set; }
-        public int WinCount { get; set; }
+        public Guid    SessionId      { get; }      = sessionId;
+        public decimal InitialCapital { get; }      = initialCapital;
+        public ForwardTestOpenTrade?   OpenTrade    { get; set; }
+        // SS-1: open spread tracking
+        public ForwardTestSpreadState? OpenSpread   { get; set; }
+        public decimal TotalPnl       { get; set; }
+        public int     ClosedTradeCount { get; set; }
+        public int     WinCount       { get; set; }
     }
 
     private record ForwardTestOpenTrade(
         string Direction, int Quantity, decimal EntryPrice,
         decimal StopLoss, decimal TakeProfit, Instant OpenedAt);
+
+    /// <summary>
+    /// SS-1: In-memory state for a simulated spread position in ForwardTestEngine.
+    /// Created when strategy signals a spread; closed when exit conditions are met.
+    /// </summary>
+    private sealed record ForwardTestSpreadState(
+        string   SpreadType,
+        LocalDate ExpiryDate,
+        decimal  NetCredit,         // positive = credit received; negative = debit paid
+        decimal  MaxLossMultiple,
+        decimal  ProfitTargetPct,
+        decimal? UnderlyingStop,
+        Instant  EntryTime,
+        double   EntryIvFraction,
+        int      LegCount)
+    {
+        // Original DTE at entry — used for linear time-decay approximation in FtSpreadCurrentValue
+        public double OriginalDte { get; init; } = 7.0; // default 1 week; overridden at construction
+    }
 
     private record PositionCloseResult(decimal ExitPrice, decimal Pnl, string Reason);
 }

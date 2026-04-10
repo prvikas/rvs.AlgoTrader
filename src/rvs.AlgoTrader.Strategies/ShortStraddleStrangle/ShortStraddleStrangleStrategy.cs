@@ -83,11 +83,13 @@ public class ShortStraddleStrangleStrategy(ShortStraddleStrangleConfig config) :
             Reason:          reason,
             DiagnosticsJson: new Dictionary<string, decimal>
             {
-                ["atmIv"]  = iv,
-                ["minIv"]  = config.MinAtmIv,
+                ["atmIv"]     = iv,
+                ["minIv"]     = config.MinAtmIv,
                 ["callDelta"] = config.StrategyType == ShortStraddleStrangleType.Strangle ? config.StrangleCallDelta : 0m,
                 ["putDelta"]  = config.StrategyType == ShortStraddleStrangleType.Strangle ? config.StranglePutDelta  : 0m,
-            });
+            },
+            SpotPrice:       chain.SpotPrice,
+            NearExpiryDate:  chain.Expiry);
 
         return Task.FromResult(SignalResult.SpreadEntry(spread));
     }
@@ -109,6 +111,11 @@ public class ShortStraddleStrangleConfig
     /// Enforced by PortfolioRiskManager / external stop-loss handler. Must not be disabled.
     /// </summary>
     public decimal MaxLossMultiple                  { get; set; } = 2.0m;  // stop at 2× premium received
+    /// <summary>
+    /// Close the spread when this fraction of entry credit is captured as profit (e.g. 0.50 = 50%).
+    /// Used by SpreadBacktestEngine. Default 0.50 — close at 50% of max profit.
+    /// </summary>
+    public decimal ProfitTargetPct                  { get; set; } = 0.50m;
 
     // SS-3: DTE filter — sell premium only in the optimal theta-decay window.
     // Too close to expiry (< MinDte): gamma risk spikes; small moves cause outsized losses.
@@ -129,6 +136,7 @@ public class ShortStraddleStrangleConfig
         new("StrangleCallDelta", "Strangle Call Delta",  "decimal", 0.20m, Min: 0.05m, Max: 0.40m, Step: 0.05m, Hint: "OTM delta for the call leg (strangle only)"),
         new("StranglePutDelta",  "Strangle Put Delta",   "decimal", 0.20m, Min: 0.05m, Max: 0.40m, Step: 0.05m, Hint: "OTM delta for the put leg (strangle only); set lower than call to account for put skew"),
         new("MaxLossMultiple",   "Max Loss Multiple",    "decimal", 2.0m,  Min: 1.0m,  Max: 5.0m,  Step: 0.5m, Hint: "MANDATORY: force-close when loss ≥ this × premium"),
+        new("ProfitTargetPct",   "Profit Target %",      "decimal", 0.50m, Min: 0.10m, Max: 1.0m,  Step: 0.05m,Hint: "Close when this fraction of entry credit is captured (backtest engine)"),
         new("MinDte",            "Min DTE",              "int",     3,     Min: 0,    Max: 30,    Hint: "Minimum days to expiry for entry (SS-3). 0 = disabled."),
         new("MaxDte",            "Max DTE",              "int",     14,    Min: 0,    Max: 90,    Hint: "Maximum days to expiry for entry (SS-3). 0 = no upper cap."),
     ];

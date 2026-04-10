@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.MarketData;
@@ -26,7 +27,11 @@ public class BacktestEngine(
     IOptionIvRankService? ivRankService = null,
     // FIB-4: Optional — populates HasUpcomingEvent in StrategyContext per bar using pre-fetched event list.
     // Null when event calendar is not populated (strategies degrade gracefully: FibOptionSpread skips event filter).
-    IEventCalendarService? eventCalendar = null) : IBacktestEngine
+    IEventCalendarService? eventCalendar = null,
+    // ALL-SPREADS-1: Optional — enables spread simulation using Black-Scholes pricing.
+    // When null, spread signals are logged as warnings and skipped (IC-1 fallback).
+    // Registered as Singleton; safe to inject into a Scoped BacktestEngine.
+    IBlackScholesEngine? bsEngine = null) : IBacktestEngine
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
@@ -85,7 +90,8 @@ public class BacktestEngine(
         var equity    = request.InitialCapital;
         var peakEquity = equity;
         var maxDrawdown = 0m;
-        BacktestTrade? openTrade = null;
+        BacktestTrade?   openTrade  = null;
+        OpenSpreadSim?   openSpread = null;
         var totalBars  = allCandles.Count;
         var skippedSignals = 0;
         var circuitBreakerHit = false;
@@ -174,6 +180,71 @@ public class BacktestEngine(
             if (i % 500 == 0) ct.ThrowIfCancellationRequested();
 
             var current = allCandles[i];
+
+            // ── ALL-SPREADS-1: monitor open spread position ───────────────────
+            if (openSpread != null)
+            {
+                var (spreadClosed, closeReason, spreadPnl, exitValue) =
+                    TryCloseSpreadSim(openSpread, current, bsEngine!);
+
+                if (spreadClosed)
+                {
+                    decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
+                    decimal netSpreadPnl = spreadPnl - exitComm;
+                    equity += netSpreadPnl; // EntryCommission already deducted at entry
+
+                    var spreadTrade = new BacktestTrade(
+                        Id:              Guid.NewGuid(),
+                        Symbol:          request.InternalSymbol,
+                        Direction:       openSpread.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
+                        Quantity:        openSpread.Legs.Count,
+                        EntryPrice:      Math.Abs(openSpread.NetCredit),
+                        ExitPrice:       exitValue,
+                        StopLoss:        openSpread.UnderlyingStop ?? 0m,
+                        TakeProfit:      Math.Abs(openSpread.NetCredit) * openSpread.ProfitTargetPct,
+                        EntryTime:       openSpread.EntryTime,
+                        ExitTime:        current.OpenTime,
+                        GrossPnl:        spreadPnl,
+                        NetPnl:          netSpreadPnl,
+                        ExitReason:      closeReason,
+                        EntryCommission: openSpread.EntryCommission,
+                        ExitCommission:  exitComm);
+                    trades.Add(spreadTrade);
+                    openSpread = null;
+
+                    if (equity > peakEquity) peakEquity = equity;
+                    var spreadDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                    if (spreadDd > maxDrawdown) maxDrawdown = spreadDd;
+
+                    if (equity <= 0)
+                    {
+                        circuitBreakerHit    = true;
+                        circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt (spread). Backtest stopped.";
+                        logger.LogWarning("[Backtest] Bankruptcy after spread close at bar {I}", i);
+                        break;
+                    }
+                    if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
+                    {
+                        circuitBreakerHit    = true;
+                        circuitBreakerReason = $"Equity ₹{equity:F0} fell below circuit breaker floor after spread close.";
+                        logger.LogWarning("[Backtest] Circuit breaker hit after spread close at bar {I}", i);
+                        break;
+                    }
+                }
+
+                AddChartBar(new BacktestChartBar(
+                    current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
+                    current.Open, current.High, current.Low, current.Close, current.Volume,
+                    null, null, null, null, null));
+
+                if (progress != null && i % progressStep == 0)
+                {
+                    var pct2 = (decimal)(i - warmupBars) / Math.Max(1, totalBars - warmupBars) * 100m;
+                    progress.Report(new BacktestProgress(jobId, i, totalBars, Math.Min(99m, pct2),
+                        trades.Count, equity, SnapshotRollingWindow()));
+                }
+                continue;
+            }
 
             if (openTrade != null)
             {
@@ -305,16 +376,28 @@ public class BacktestEngine(
 
             if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) continue;
 
-            // IC-1: Spread signals cannot be simulated by BacktestEngine — it is a single-leg
-            // equity engine. Spread strategies (IronCondor, ShortStraddleStrangle, CalendarSpread,
-            // VerticalSpread, etc.) must be validated via the forward test engine and ISpreadOrderManager.
-            // Silently falling through would produce 0 trades and a flat equity curve — misleading.
+            // ALL-SPREADS-1: Simulate spread entry via Black-Scholes pricing.
+            // Falls back to skip+warning when IBlackScholesEngine is unavailable (e.g. unit tests
+            // that construct BacktestEngine without DI).
             if (signal.Spread != null)
             {
-                skippedSignals++;
-                logger.LogWarning("[Backtest] {JobId} — spread signal ({SpreadType}) from {Strategy}: " +
-                    "BacktestEngine does not support multi-leg spreads. Use forward test for spread strategies.",
-                    jobId, signal.Spread.SpreadType, request.StrategyName);
+                if (bsEngine == null)
+                {
+                    skippedSignals++;
+                    logger.LogWarning("[Backtest] {JobId} — spread signal ({SpreadType}): " +
+                        "IBlackScholesEngine not available, spread simulation disabled.",
+                        jobId, signal.Spread.SpreadType);
+                    continue;
+                }
+
+                var entryIvPct = barIvRank?.CurrentIv ?? 15m; // fallback 15% when no IV history
+                openSpread = EnterSpreadSim(signal.Spread, current, barDate, entryIvPct, request, bsEngine);
+                if (openSpread != null)
+                {
+                    equity -= openSpread.EntryCommission;
+                    logger.LogDebug("[Backtest] Spread entered {Type} bar={Bar} credit={Credit:F2} legs={Legs}",
+                        signal.Spread.SpreadType, i, openSpread.NetCredit, openSpread.Legs.Count);
+                }
                 continue;
             }
 
@@ -405,6 +488,33 @@ public class BacktestEngine(
             });
         }
 
+        // Close any open spread position at end of data
+        if (openSpread != null && bsEngine != null && allCandles.Count > 0)
+        {
+            var lastBar = allCandles[^1];
+            decimal eodValue   = PriceSpreadSim(openSpread, lastBar.Close, lastBar.OpenTime.Date, bsEngine);
+            decimal eodPnl     = openSpread.NetCredit - eodValue; // unified formula — see TryCloseSpreadSim
+            decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
+            decimal netEodPnl  = eodPnl - exitComm;
+            equity += netEodPnl;
+            trades.Add(new BacktestTrade(
+                Id:              Guid.NewGuid(),
+                Symbol:          request.InternalSymbol,
+                Direction:       openSpread.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
+                Quantity:        openSpread.Legs.Count,
+                EntryPrice:      Math.Abs(openSpread.NetCredit),
+                ExitPrice:       eodValue,
+                StopLoss:        openSpread.UnderlyingStop ?? 0m,
+                TakeProfit:      Math.Abs(openSpread.NetCredit) * openSpread.ProfitTargetPct,
+                EntryTime:       openSpread.EntryTime,
+                ExitTime:        lastBar.CloseTime,
+                GrossPnl:        eodPnl,
+                NetPnl:          netEodPnl,
+                ExitReason:      "END_OF_DATA",
+                EntryCommission: openSpread.EntryCommission,
+                ExitCommission:  exitComm));
+        }
+
         // Final progress (100%)
         progress?.Report(new BacktestProgress(jobId, totalBars, totalBars, 100m, trades.Count, equity));
 
@@ -474,6 +584,275 @@ public class BacktestEngine(
             WeekLow52:        low52,
             Regime:           IvRankSnapshot.ClassifyRegime(ivRank),
             DataPointsUsed:   window.Count);
+    }
+
+    // ── ALL-SPREADS-1: Spread simulation helpers ─────────────────────────────
+
+    /// <summary>
+    /// Internal state for one simulated multi-leg spread position in the backtest.
+    /// Created at entry; mutated per bar by TryCloseSpreadSim.
+    /// </summary>
+    private sealed record OpenSpreadSim(
+        SpreadSignalResult         Signal,
+        LocalDate                  ExpiryDate,
+        // LegExpiry added per-leg so PriceSpreadSim can use the correct TTE for each leg
+        // (CalendarSpread has two different expiries — near weekly and far monthly).
+        List<(SpreadLeg Leg, decimal Strike, decimal EntryLegPrice, LocalDate LegExpiry)> Legs,
+        decimal                    NetCredit,          // positive = credit received; negative = debit paid
+        decimal                    MaxLossMultiple,    // from strategy config (SS-1)
+        decimal                    ProfitTargetPct,    // fraction of credit to capture (e.g. 0.50)
+        decimal?                   UnderlyingStop,     // FIB-2: fib786 stop level; null = none
+        ZonedDateTime              EntryTime,
+        decimal                    EntrySpot,
+        double                     EntryIvFraction,    // e.g. 0.15 = 15%
+        decimal                    EntryCommission
+    );
+
+    /// <summary>
+    /// Resolve strikes, price each leg via Black-Scholes, record net premium, return the open position.
+    /// Returns null if B-S pricing produces invalid results (zero/negative premium on all legs).
+    /// </summary>
+    private static OpenSpreadSim? EnterSpreadSim(
+        SpreadSignalResult signal,
+        ClosedCandle       current,
+        LocalDate          barDate,
+        decimal            atmIvPct,
+        BacktestRequest    request,
+        IBlackScholesEngine bs)
+    {
+        var (maxLossMultiple, profitTargetPct, strikeInterval) = ExtractSpreadConfig(request.ParametersJson);
+
+        // Each leg may use near or far expiry depending on NearestWeekly
+        var nearExpiry = NearestWeeklyExpiry(barDate);
+        var farExpiry  = NearestMonthlyExpiry(barDate);
+
+        double ivFrac      = Math.Max(0.05, (double)(atmIvPct / 100m));
+        const double RFR   = 0.065; // RBI repo rate
+        decimal entryComm  = request.BrokerageFlatPerSide * signal.Legs.Count;
+
+        var resolvedLegs = new List<(SpreadLeg Leg, decimal Strike, decimal EntryLegPrice, LocalDate LegExpiry)>();
+        decimal netCredit = 0m;
+
+        foreach (var leg in signal.Legs)
+        {
+            var legExpiry = leg.NearestWeekly ? nearExpiry : farExpiry;
+            double tte    = Math.Max(0.001, (legExpiry - barDate).Days / 365.0);
+
+            decimal strike = ResolveStrike(leg, current.Close, ivFrac, tte, RFR, strikeInterval, bs);
+            if (strike <= 0) continue;
+
+            var greeks = bs.Compute(current.Close, strike, tte, ivFrac, RFR,
+                leg.OptionType == OptionType.Call);
+            decimal legPremium = Math.Max(0m, greeks.TheoreticalPrice);
+
+            // Credit = premium received (sell); Debit = premium paid (buy)
+            netCredit += leg.Direction == OrderDirection.Sell ? legPremium : -legPremium;
+            resolvedLegs.Add((leg, strike, legPremium, legExpiry));
+        }
+
+        if (resolvedLegs.Count == 0) return null;
+
+        // Determine expiry for the position: use the near expiry
+        // (for CalendarSpread, near expiry is when the short near leg expires)
+        return new OpenSpreadSim(
+            Signal:          signal,
+            ExpiryDate:      nearExpiry,
+            Legs:            resolvedLegs,
+            NetCredit:       netCredit,
+            MaxLossMultiple: maxLossMultiple,
+            ProfitTargetPct: profitTargetPct,
+            UnderlyingStop:  signal.UnderlyingStopLevel,
+            EntryTime:       current.OpenTime,
+            EntrySpot:       current.Close,
+            EntryIvFraction: ivFrac,
+            EntryCommission: entryComm);
+    }
+
+    /// <summary>
+    /// Re-price the spread on the current bar and check exit conditions.
+    /// Returns (closed, closeReason, grossPnl, currentSpreadValue).
+    /// </summary>
+    private static (bool Closed, string Reason, decimal GrossPnl, decimal CurrentValue)
+        TryCloseSpreadSim(OpenSpreadSim pos, ClosedCandle current, IBlackScholesEngine bs)
+    {
+        var barDate = current.OpenTime.Date;
+        decimal spot = current.Close;
+
+        // Expiry: price all legs at T→0 (intrinsic only).
+        // P&L = NetCredit − costToClose for all spread types (credit and debit).
+        if (barDate >= pos.ExpiryDate)
+        {
+            decimal expiryValue = PriceSpreadSim(pos, spot, pos.ExpiryDate, bs);
+            decimal pnl = pos.NetCredit - expiryValue;
+            return (true, "EXPIRY", pnl, expiryValue);
+        }
+
+        // FIB-2 / SS-1 underlying stop: force-close when spot breaches the fib786 level
+        if (pos.UnderlyingStop.HasValue)
+        {
+            bool isUptrend  = pos.Signal.SpreadType.Contains("put", StringComparison.OrdinalIgnoreCase);
+            bool breached   = isUptrend
+                ? spot < pos.UnderlyingStop.Value   // put spread: stop below swing support
+                : spot > pos.UnderlyingStop.Value;  // call spread: stop above swing resistance
+            if (breached)
+            {
+                decimal val = PriceSpreadSim(pos, spot, barDate, bs);
+                decimal pnl = pos.NetCredit - val;
+                return (true, "UNDERLYING_STOP", pnl, val);
+            }
+        }
+
+        decimal currentValue = PriceSpreadSim(pos, spot, barDate, bs);
+        // Unified P&L formula: NetCredit − cost-to-close.
+        // Proof: credit spread: receive C, pay C' to close → PnL = C − C'.
+        //        debit spread:  pay D, receive V when closing → V − D = −D − (−V) = NetCredit − costToClose.
+        decimal runningPnl   = pos.NetCredit - currentValue;
+
+        // SS-1: MaxLossMultiple — close when loss exceeds MaxLossMultiple × premium
+        decimal maxPremium = Math.Abs(pos.NetCredit);
+        if (maxPremium > 0 && runningPnl <= -(maxPremium * pos.MaxLossMultiple))
+            return (true, "MAX_LOSS_MULTIPLE", runningPnl, currentValue);
+
+        // Profit target: for credit spreads, capture ProfitTargetPct of entry credit
+        if (maxPremium > 0 && runningPnl >= maxPremium * pos.ProfitTargetPct)
+            return (true, "PROFIT_TARGET", runningPnl, currentValue);
+
+        return (false, "", 0m, currentValue);
+    }
+
+    /// <summary>
+    /// Price the entire spread using Black-Scholes (sum of all leg prices with direction sign).
+    /// Each leg uses its own LegExpiry for TTE so CalendarSpread near/far legs are priced correctly.
+    /// Returns net cost-to-close: positive = net payment, negative = net receipt.
+    /// P&amp;L = NetCredit − PriceSpreadSim(…) for all spread types (credit and debit).
+    /// </summary>
+    private static decimal PriceSpreadSim(
+        OpenSpreadSim pos, decimal spot, LocalDate barDate, IBlackScholesEngine bs)
+    {
+        const double RFR = 0.065;
+        decimal spreadValue = 0m;
+        foreach (var (leg, strike, _, legExpiry) in pos.Legs)
+        {
+            // Use each leg's own expiry — critical for CalendarSpread (near ≠ far expiry).
+            double tte = Math.Max(0.0, (legExpiry - barDate).Days / 365.0);
+            var g = bs.Compute(spot, strike, tte, pos.EntryIvFraction, RFR,
+                leg.OptionType == OptionType.Call);
+            decimal legVal = Math.Max(0m, g.TheoreticalPrice);
+            // To close: pay to buy back short legs, receive for selling long legs
+            spreadValue += leg.Direction == OrderDirection.Sell ? legVal : -legVal;
+        }
+        return spreadValue;
+    }
+
+    /// <summary>
+    /// Resolve the concrete strike for a spread leg using the selection mode.
+    /// For ByDelta: iterative B-S search across ±30% of spot in strikeInterval steps.
+    /// For ATM/OtmByStrike: arithmetic from ATM.
+    /// </summary>
+    internal static decimal ResolveStrike(
+        SpreadLeg leg, decimal spot, double iv, double tte, double r,
+        decimal strikeInterval, IBlackScholesEngine bs)
+    {
+        decimal atm = Math.Round(spot / strikeInterval) * strikeInterval;
+
+        return leg.SelectionMode switch
+        {
+            StrikeSelectionMode.Atm => atm,
+
+            StrikeSelectionMode.OtmByStrike => ComputeOtmStrike(leg, atm, strikeInterval),
+
+            StrikeSelectionMode.ByDelta when leg.TargetDelta.HasValue =>
+                FindDeltaStrike(leg, spot, iv, tte, r, strikeInterval, bs),
+
+            _ => atm
+        };
+    }
+
+    internal static decimal ComputeOtmStrike(SpreadLeg leg, decimal atm, decimal si)
+    {
+        int n   = leg.OtmStrikes ?? 1;
+        bool isCallOtm = leg.OptionType == OptionType.Call;
+
+        if (leg.FromStrike.HasValue)
+            return leg.FromStrike.Value + (isCallOtm ? 1 : -1) * n * si;
+
+        return atm + (isCallOtm ? 1 : -1) * n * si;
+    }
+
+    internal static decimal FindDeltaStrike(
+        SpreadLeg leg, decimal spot, double iv, double tte, double r,
+        decimal si, IBlackScholesEngine bs)
+    {
+        bool isCall          = leg.OptionType == OptionType.Call;
+        decimal targetAbs    = Math.Abs(leg.TargetDelta!.Value);
+        decimal bestStrike   = Math.Round(spot / si) * si;
+        decimal bestDiff     = decimal.MaxValue;
+
+        // Search ±30% of spot; search direction: calls go OTM above, puts OTM below
+        for (decimal k = spot * 0.70m; k <= spot * 1.30m; k += si)
+        {
+            decimal rounded = Math.Round(k / si) * si;
+            var g    = bs.Compute(spot, rounded, tte, iv, r, isCall);
+            var diff = Math.Abs(Math.Abs(g.Delta) - targetAbs);
+            if (diff < bestDiff) { bestDiff = diff; bestStrike = rounded; }
+        }
+        return bestStrike;
+    }
+
+    /// <summary>
+    /// Compute nearest weekly F&amp;O expiry (Thursday) that is at least 1 day after 'from'.
+    /// NSE weekly options for NIFTY/BANKNIFTY expire on Thursday.
+    /// </summary>
+    internal static LocalDate NearestWeeklyExpiry(LocalDate from)
+    {
+        var d = from.PlusDays(1);
+        while (d.DayOfWeek != IsoDayOfWeek.Thursday)
+            d = d.PlusDays(1);
+        return d;
+    }
+
+    /// <summary>
+    /// Compute nearest monthly F&amp;O expiry (last Thursday of the month following 'from').
+    /// Used for CalendarSpread far-leg expiry.
+    /// </summary>
+    internal static LocalDate NearestMonthlyExpiry(LocalDate from)
+    {
+        // Last Thursday of the month after 'from'
+        var nextMonth = from.PlusMonths(1);
+        var firstOfFollowing = new LocalDate(nextMonth.Year, nextMonth.Month, 1).PlusMonths(1);
+        var lastDay = firstOfFollowing.PlusDays(-1);
+        while (lastDay.DayOfWeek != IsoDayOfWeek.Thursday)
+            lastDay = lastDay.PlusDays(-1);
+        return lastDay;
+    }
+
+    /// <summary>
+    /// Extract spread simulation config from the strategy's ParametersJson.
+    /// Reads MaxLossMultiple, ProfitTargetPct (0–100 → 0–1), StrikeInterval.
+    /// Uses safe defaults when keys are absent or JSON is malformed.
+    /// </summary>
+    internal static (decimal MaxLossMultiple, decimal ProfitTargetPct, decimal StrikeInterval)
+        ExtractSpreadConfig(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return (2.0m, 0.50m, 50m);
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            decimal maxLoss = root.TryGetProperty("MaxLossMultiple", out var ml)
+                ? ml.GetDecimal() : 2.0m;
+            // ProfitTargetPct stored as fraction (0.50) in ShortStraddle, as pct (50) in CalendarSpread
+            decimal profitRaw = root.TryGetProperty("ProfitTargetPct", out var pt)
+                ? pt.GetDecimal()
+                : root.TryGetProperty("VegaProfitTargetPct", out var vp)
+                    ? vp.GetDecimal() : 0.50m;
+            // Normalise: values > 1 are treated as percentage
+            decimal profit = profitRaw > 1m ? profitRaw / 100m : profitRaw;
+            decimal si = root.TryGetProperty("StrikeInterval", out var sv)
+                ? sv.GetDecimal() : 50m;
+            return (Math.Max(1m, maxLoss), Math.Clamp(profit, 0.05m, 1m), Math.Max(1m, si));
+        }
+        catch { return (2.0m, 0.50m, 50m); }
     }
 
     /// <summary>

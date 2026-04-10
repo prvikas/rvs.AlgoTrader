@@ -92,7 +92,9 @@ public class IronCondorStrategy(IronCondorConfig config) : IStrategy
             Legs:            legs,
             Reason:          $"Iron Condor: IV={iv:F1}%, range-bound [{bbLower:F2},{bbUpper:F2}], " +
                              $"short Δcall={config.ShortCallDelta}, short Δput={config.ShortPutDelta}",
-            DiagnosticsJson: indicators);
+            DiagnosticsJson: indicators,
+            SpotPrice:       chain.SpotPrice,
+            NearExpiryDate:  chain.Expiry);
 
         return Task.FromResult(SignalResult.SpreadEntry(spread));
     }

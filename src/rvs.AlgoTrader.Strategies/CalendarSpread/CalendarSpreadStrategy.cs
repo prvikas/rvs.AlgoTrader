@@ -27,14 +27,32 @@ public class CalendarSpreadStrategy(CalendarSpreadConfig config) : IStrategy
 
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
-        if (context.OptionChain is null)
+        // CS-1: Use NearExpiryChain when available (populated by ForwardTestEngine / StrategyEvaluationQueue).
+        // Fall back to the legacy single OptionChain for backward compatibility.
+        var nearChain = context.NearExpiryChain ?? context.OptionChain;
+        var farChain  = context.FarExpiryChain;
+
+        if (nearChain is null)
             return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
                 "CalendarSpread requires OptionChain snapshot"));
 
-        var chain  = context.OptionChain;
-        decimal iv = chain.AtmIv;
+        decimal iv = nearChain.AtmIv;
 
-        // ── IV filter: prefer low IV (buy cheap long-dated vega) ──────────
+        // CS-2: IV term-structure slope filter.
+        // Calendar spreads earn vega P&L when near IV > far IV (sell overpriced near theta,
+        // buy cheaper far vega).  Require slope ≥ MinIvSlope to confirm the term structure
+        // supports the trade; skip when far chain is unavailable (degrade gracefully).
+        decimal ivSlope = 0m;
+        if (farChain != null)
+        {
+            ivSlope = nearChain.AtmIv - farChain.AtmIv;
+            if (ivSlope < config.MinIvSlope)
+                return Task.FromResult(SignalResult.Hold(
+                    $"IV slope {ivSlope:F1}% (near={nearChain.AtmIv:F1}% − far={farChain.AtmIv:F1}%) " +
+                    $"below minimum {config.MinIvSlope}% — near premium not elevated enough vs far expiry"));
+        }
+
+        // ── IV filter: prefer low-to-mid IV (buy cheap long-dated vega) ──
         if (iv > config.MaxAtmIv)
             return Task.FromResult(SignalResult.Hold(
                 $"ATM IV {iv:F1}% above maximum {config.MaxAtmIv}% — long vega too expensive for calendar"));
@@ -46,12 +64,12 @@ public class CalendarSpreadStrategy(CalendarSpreadConfig config) : IStrategy
         // ── Choose call or put calendar based on market bias ───────────────
         OptionType optType;
         string biasReason;
-        if (chain.IsBullishBias && config.AllowCallCalendar)
+        if (nearChain.IsBullishBias && config.AllowCallCalendar)
         {
             optType    = OptionType.Call;
             biasReason = "bullish bias (call calendar)";
         }
-        else if (chain.IsBearishBias && config.AllowPutCalendar)
+        else if (nearChain.IsBearishBias && config.AllowPutCalendar)
         {
             optType    = OptionType.Put;
             biasReason = "bearish bias (put calendar)";
@@ -84,9 +102,17 @@ public class CalendarSpreadStrategy(CalendarSpreadConfig config) : IStrategy
         var spread = new SpreadSignalResult(
             SpreadType:      "CalendarSpread",
             Legs:            [nearLeg, farLeg],
-            Reason:          $"Calendar Spread: IV={iv:F1}%, {biasReason}, " +
+            Reason:          $"Calendar Spread: nearIV={iv:F1}%, slope={ivSlope:F1}%, {biasReason}, " +
                              $"sell near-ATM {optType} + buy far-ATM {optType}",
-            DiagnosticsJson: new { atmIv = iv, optionType = optType.ToString() });
+            DiagnosticsJson: new Dictionary<string, decimal>
+            {
+                ["nearAtmIv"] = nearChain.AtmIv,
+                ["farAtmIv"]  = farChain?.AtmIv ?? 0m,
+                ["ivSlope"]   = ivSlope,
+                ["spotPrice"] = nearChain.SpotPrice,
+            },
+            SpotPrice:       nearChain.SpotPrice,
+            NearExpiryDate:  nearChain.Expiry);
 
         return Task.FromResult(SignalResult.SpreadEntry(spread));
     }
@@ -94,19 +120,36 @@ public class CalendarSpreadStrategy(CalendarSpreadConfig config) : IStrategy
 
 public class CalendarSpreadConfig
 {
-    public decimal MinAtmIv         { get; set; } = 8m;    // near leg needs some premium
-    public decimal MaxAtmIv         { get; set; } = 25m;   // above this → long vega too expensive
-    public bool    AllowCallCalendar { get; set; } = true;
-    public bool    AllowPutCalendar  { get; set; } = true;
+    public decimal MinAtmIv           { get; set; } = 8m;     // near leg needs some premium
+    public decimal MaxAtmIv           { get; set; } = 25m;    // above this → long vega too expensive
+    public bool    AllowCallCalendar   { get; set; } = true;
+    public bool    AllowPutCalendar    { get; set; } = true;
+
+    /// <summary>
+    /// CS-2: Minimum IV slope (near ATM IV − far ATM IV) required to enter.
+    /// Calendar spread is most profitable when near-expiry volatility is elevated
+    /// relative to far-expiry (sell expensive near theta, buy cheaper far vega).
+    /// Default 2.0% — requires near IV to exceed far IV by at least 2 percentage points.
+    /// Set to 0 to disable when only a single option chain is available.
+    /// </summary>
+    public decimal MinIvSlope          { get; set; } = 2.0m;
+
+    /// <summary>
+    /// Profit target as a fraction of the net debit paid (e.g. 0.50 = 50% of max debit recovered).
+    /// Used by SpreadBacktestEngine to close the position when this profit is reached.
+    /// </summary>
+    public decimal VegaProfitTargetPct { get; set; } = 0.50m;
 
     public static CalendarSpreadConfig FromJson(string json)
         => JsonSerializer.Deserialize<CalendarSpreadConfig>(json) ?? new();
 
     public static IReadOnlyList<StrategyParamDef> GetSchema() =>
     [
-        new("MinAtmIv",         "Min ATM IV %",      "decimal", 8m,   Min: 3m,  Max: 20m, Step: 1m),
-        new("MaxAtmIv",         "Max ATM IV %",      "decimal", 25m,  Min: 10m, Max: 60m, Step: 5m,   Hint: "Avoid expensive long vega above this IV"),
-        new("AllowCallCalendar","Allow Call Calendar","bool",    true,  Hint: "Enter call calendars on bullish/neutral bias"),
-        new("AllowPutCalendar", "Allow Put Calendar", "bool",    true,  Hint: "Enter put calendars on bearish bias"),
+        new("MinAtmIv",           "Min ATM IV %",           "decimal", 8m,    Min: 3m,   Max: 20m,  Step: 1m),
+        new("MaxAtmIv",           "Max ATM IV %",           "decimal", 25m,   Min: 10m,  Max: 60m,  Step: 5m,   Hint: "Avoid expensive long vega above this IV"),
+        new("AllowCallCalendar",  "Allow Call Calendar",    "bool",    true,  Hint: "Enter call calendars on bullish/neutral bias"),
+        new("AllowPutCalendar",   "Allow Put Calendar",     "bool",    true,  Hint: "Enter put calendars on bearish bias"),
+        new("MinIvSlope",         "Min IV Slope %",         "decimal", 2.0m,  Min: 0m,   Max: 10m,  Step: 0.5m, Hint: "CS-2: near IV must exceed far IV by at least this %. 0 = skip slope check."),
+        new("VegaProfitTargetPct","Vega Profit Target",     "decimal", 0.50m, Min: 0.1m, Max: 1.0m, Step: 0.05m,Hint: "Close when this fraction of net debit is recovered as profit"),
     ];
 }
