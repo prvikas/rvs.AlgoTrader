@@ -44,6 +44,7 @@ Deferred (larger scope — require architecture changes or new migrations):
 ---
 ## PROMPT-009 — DONE (2026-04-07)
 
+## TIER-1 — 🔥 HIGH (wrong financial results)
 Implemented:
 - IC-2/VS-1: OptionLegSelector.SelectOtmByCount anchors from spec.FromStrike when provided.
   SpreadOrderManager: two-pass leg resolution — short (Sell) legs first, then wing (Buy) legs
