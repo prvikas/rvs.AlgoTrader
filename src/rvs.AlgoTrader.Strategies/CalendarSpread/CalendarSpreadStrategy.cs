@@ -29,8 +29,11 @@ public class CalendarSpreadStrategy(CalendarSpreadConfig config) : IStrategy
     {
         // CS-1: Use NearExpiryChain when available (populated by ForwardTestEngine / StrategyEvaluationQueue).
         // Fall back to the legacy single OptionChain for backward compatibility.
-        var nearChain = context.NearExpiryChain ?? context.OptionChain;
-        var farChain  = context.FarExpiryChain;
+        // Filter both chains to ±ChainStrikeDepth strikes so IV slope is measured from liquid strikes only.
+        var nearChain = (context.NearExpiryChain ?? context.OptionChain)
+            ?.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
+        var farChain  = context.FarExpiryChain
+            ?.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
 
         if (nearChain is null)
             return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
@@ -139,6 +142,11 @@ public class CalendarSpreadConfig
     /// Used by SpreadBacktestEngine to close the position when this profit is reached.
     /// </summary>
     public decimal VegaProfitTargetPct { get; set; } = 0.50m;
+    /// <summary>Number of strikes on each side of ATM included for IV slope computation.
+    /// Filters out far-OTM hedges so near/far IV comparison is clean.</summary>
+    public int     ChainStrikeDepth    { get; set; } = 5;
+    /// <summary>Strike interval (50 = NIFTY, 100 = BANKNIFTY).</summary>
+    public decimal StrikeInterval      { get; set; } = 50m;
 
     public static CalendarSpreadConfig FromJson(string json)
         => JsonSerializer.Deserialize<CalendarSpreadConfig>(json) ?? new();
@@ -151,5 +159,7 @@ public class CalendarSpreadConfig
         new("AllowPutCalendar",   "Allow Put Calendar",     "bool",    true,  Hint: "Enter put calendars on bearish bias"),
         new("MinIvSlope",         "Min IV Slope %",         "decimal", 2.0m,  Min: 0m,   Max: 10m,  Step: 0.5m, Hint: "CS-2: near IV must exceed far IV by at least this %. 0 = skip slope check."),
         new("VegaProfitTargetPct","Vega Profit Target",     "decimal", 0.50m, Min: 0.1m, Max: 1.0m, Step: 0.05m,Hint: "Close when this fraction of net debit is recovered as profit"),
+        new("ChainStrikeDepth",   "Chain Strike Depth",     "int",     5,     Min: 1,    Max: 20,   Hint: "Strikes each side of ATM for IV slope analytics. Excludes far-OTM hedges."),
+        new("StrikeInterval",     "Strike Interval (pts)",  "decimal", 50m,   Min: 10m,  Max: 500m, Step: 10m,  Hint: "50 for NIFTY, 100 for BANKNIFTY"),
     ];
 }

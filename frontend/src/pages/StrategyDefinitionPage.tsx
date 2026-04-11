@@ -74,6 +74,10 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [indicatorModalOpen, setIndicatorModalOpen] = useState(false)
   const [editingIndicatorId, setEditingIndicatorId] = useState<string | undefined>()
+  // Track which layer's "+ Add" button was clicked — pre-selects layer in IndicatorModal
+  const [addForLayer, setAddForLayer] = useState<SignalLayer | undefined>()
+  // Option strategy template state
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
 
   // Form state
   const [name, setName] = useState(initialData?.name ?? '')
@@ -240,8 +244,234 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
     { key: 'risk',  label: 'Risk & Regime' },
   ]
 
+  // ── Option-strategy template definitions ─────────────────────────────────
+  // Applying a template pre-fills name, description, trading style and recommended
+  // indicators so the user starts from a best-practice baseline.
+  type OptionTemplate = {
+    id: string
+    label: string
+    emoji: string
+    category: 'options' | 'equity'
+    description: string
+    style: TradingStyle
+    nameSuggestion: string
+    tip: string
+  }
+  const OPTION_TEMPLATES: OptionTemplate[] = [
+    {
+      id: 'iron-condor',
+      label: 'Iron Condor',
+      emoji: '🦅',
+      category: 'options',
+      description: 'Sell OTM call + buy further OTM call, sell OTM put + buy further OTM put. Profits when index stays range-bound.',
+      style: TradingStyle.Intraday,
+      nameSuggestion: 'Iron Condor — Range Day',
+      tip: 'Best on low-IV days. Add ATRPercentile ≤ 40 in HTF Bias to avoid trending sessions. Set max loss = net credit collected.',
+    },
+    {
+      id: 'short-straddle',
+      label: 'Short Straddle',
+      emoji: '⚡',
+      category: 'options',
+      description: 'Sell ATM CE + ATM PE. Profits from IV crush and time decay. High risk — always define stops.',
+      style: TradingStyle.Intraday,
+      nameSuggestion: 'Short Straddle — IV Crush',
+      tip: 'Enter after 10:00 AM once opening volatility settles. Use ATM IV Rank > 50 as entry filter. Max loss 2× credit received.',
+    },
+    {
+      id: 'bull-call-spread',
+      label: 'Bull Call Spread',
+      emoji: '📈',
+      category: 'options',
+      description: 'Buy ATM CE + sell OTM CE. Defined risk bullish play with lower capital.',
+      style: TradingStyle.Swing,
+      nameSuggestion: 'Bull Call Spread — Swing Directional',
+      tip: 'Ideal when you expect a moderate upside move. Add EMA(20) > EMA(50) in HTF Bias to confirm trend.',
+    },
+    {
+      id: 'bear-put-spread',
+      label: 'Bear Put Spread',
+      emoji: '📉',
+      category: 'options',
+      description: 'Buy ATM PE + sell OTM PE. Defined risk bearish play with limited capital.',
+      style: TradingStyle.Swing,
+      nameSuggestion: 'Bear Put Spread — Swing Directional',
+      tip: 'Add SuperTrend in bearish mode in Primary Signal layer. Keep width = 100 pts for NIFTY, 200 for BANKNIFTY.',
+    },
+    {
+      id: 'calendar-spread',
+      label: 'Calendar Spread',
+      emoji: '📅',
+      category: 'options',
+      description: 'Sell near-expiry option + buy far-expiry same strike. Profits from theta differential.',
+      style: TradingStyle.Swing,
+      nameSuggestion: 'Calendar Spread — Theta Harvest',
+      tip: 'Enter 10–15 DTE on front month. Exit when front month < 3 DTE to avoid gamma risk.',
+    },
+    {
+      id: 'vcp-swing',
+      label: 'VCP Swing (Equity)',
+      emoji: '🔬',
+      category: 'equity',
+      description: 'Volatility Contraction Pattern on daily chart. Mark Minervini-style breakout entry.',
+      style: TradingStyle.Swing,
+      nameSuggestion: 'VCP Breakout — Daily Swing',
+      tip: 'Add SMA(200), SMA(50) in HTF Bias. Use Volume Spike + Inside Bar in Entry Trigger.',
+    },
+    {
+      id: 'intraday-pcr',
+      label: 'Intraday PCR Momentum',
+      emoji: '⚡',
+      category: 'options',
+      description: 'Trade index direction based on Put-Call Ratio OI shifts + VWAP position.',
+      style: TradingStyle.Intraday,
+      nameSuggestion: 'Intraday PCR + VWAP Momentum',
+      tip: 'Use STRAT-003 engine preset. PCR < 0.8 = bullish bias. Entry only when price is above VWAP.',
+    },
+  ]
+
+  function applyTemplate(t: OptionTemplate) {
+    setSelectedTemplate(t.id)
+    if (!name) setName(t.nameSuggestion)
+    if (!description) setDescription(t.description)
+    setTradingStyle(t.style)
+  }
+
+  // ── Intelligent setup completeness guide ──────────────────────────────────
+  const completionSteps = [
+    { done: name.trim().length > 0,               label: 'Name your strategy' },
+    { done: instruments.length > 0,               label: 'Add at least one instrument' },
+    { done: indicators.length > 0,                label: 'Add at least one indicator to Signal Layer Chain' },
+    { done: indicators.some(i => i.signalLayer === SignalLayer.PrimarySignal), label: 'Assign a Primary Signal indicator' },
+    { done: longEntry.enabled || shortEntry.enabled, label: 'Enable Long or Short entry rules (Rules tab)' },
+    { done: stopLoss.baseValue > 0,               label: 'Configure a stop-loss (Risk & Regime tab)' },
+  ]
+  const completionPct = Math.round((completionSteps.filter(s => s.done).length / completionSteps.length) * 100)
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 16px' }}>
+
+      {/* ── Option / Equity Strategy Templates ──────────────────────────────── */}
+      {!strategyId && (
+        <div style={{
+          marginBottom: SP.lg,
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8, padding: '14px 16px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Start from a Template</span>
+              <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>
+                Pre-fills name, style, and guidance. You can customise everything after.
+              </span>
+            </div>
+            {selectedTemplate && (
+              <button
+                onClick={() => setSelectedTemplate(null)}
+                style={{ background: 'none', border: 'none', color: C.textMuted, fontSize: 11, cursor: 'pointer' }}
+              >
+                Clear template
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {OPTION_TEMPLATES.map(t => (
+              <button
+                key={t.id}
+                onClick={() => applyTemplate(t)}
+                title={t.tip}
+                style={{
+                  padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
+                  fontWeight: selectedTemplate === t.id ? 700 : 400,
+                  background: selectedTemplate === t.id
+                    ? (t.category === 'options' ? '#1e3a5f' : '#14352a')
+                    : C.surface2,
+                  color: selectedTemplate === t.id
+                    ? (t.category === 'options' ? C.blue : C.green)
+                    : C.textSub,
+                  border: `1px solid ${selectedTemplate === t.id
+                    ? (t.category === 'options' ? C.blue + '66' : C.green + '66')
+                    : C.border}`,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {t.emoji} {t.label}
+              </button>
+            ))}
+          </div>
+          {/* Tip box for selected template */}
+          {selectedTemplate && (() => {
+            const t = OPTION_TEMPLATES.find(x => x.id === selectedTemplate)
+            if (!t) return null
+            return (
+              <div style={{
+                marginTop: 10, padding: '8px 12px',
+                background: t.category === 'options' ? C.blueBg : C.greenBg,
+                border: `1px solid ${t.category === 'options' ? C.blue + '33' : C.green + '33'}`,
+                borderRadius: 6, fontSize: 11,
+              }}>
+                <span style={{ fontWeight: 700, color: t.category === 'options' ? C.blue : C.green }}>
+                  {t.emoji} {t.label}
+                </span>
+                <span style={{ color: C.textSub, marginLeft: 8 }}>{t.description}</span>
+                <div style={{ marginTop: 4, color: C.amber }}>
+                  💡 {t.tip}
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* ── Intelligent Setup Guide ──────────────────────────────────────────── */}
+      {!strategyId && (
+        <div style={{
+          marginBottom: SP.lg,
+          background: C.surface,
+          border: `1px solid ${completionPct === 100 ? C.green + '44' : C.border}`,
+          borderRadius: 8, padding: '10px 14px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.textSub }}>Setup Guide</span>
+            <div style={{ flex: 1, height: 6, background: C.surface2, borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', borderRadius: 3, transition: 'width 0.3s',
+                width: `${completionPct}%`,
+                background: completionPct === 100 ? C.green : completionPct >= 50 ? C.blue : C.amber,
+              }} />
+            </div>
+            <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: 'nowrap' }}>
+              {completionPct}% complete
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+            {completionSteps.map((step, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11 }}>
+                <span style={{
+                  width: 16, height: 16, borderRadius: '50%',
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 9, fontWeight: 700, flexShrink: 0,
+                  background: step.done ? C.green + '33' : C.surface2,
+                  color: step.done ? C.green : C.textDim,
+                  border: `1px solid ${step.done ? C.green + '55' : C.border}`,
+                }}>
+                  {step.done ? '✓' : i + 1}
+                </span>
+                <span style={{ color: step.done ? C.textSub : C.textMuted, textDecoration: step.done ? 'none' : 'none' }}>
+                  {step.label}
+                </span>
+              </div>
+            ))}
+          </div>
+          {completionPct === 100 && (
+            <div style={{ marginTop: 8, fontSize: 11, color: C.green }}>
+              ✅ All required fields filled — click <strong>Save & Go to Scenarios</strong> to run your first backtest.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Sub-tab nav */}
       <div style={{ display: 'flex', gap: 0, marginBottom: SP.lg, borderBottom: `1px solid ${C.border}` }}>
         {TABS.map(t => (
@@ -409,45 +639,86 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
             <Block title="Signal Layer Chain">
               <div style={{ fontSize: 10, color: C.textMuted, marginBottom: SP.sm }}>
                 Layers evaluate top → bottom. If a higher layer fails, downstream layers are not evaluated.
+                Each layer has its own <strong style={{ color: C.textSub }}>+ Add</strong> button — it opens the indicator modal
+                with that layer pre-selected.
               </div>
               {Object.values(SignalLayer).map(layer => {
                 const layerInds = indicators
                   .filter(i => i.signalLayer === layer)
                   .sort((a, b) => a.layerOrder - b.layerOrder)
+                const LAYER_HELP: Record<SignalLayer, string> = {
+                  [SignalLayer.HTFBias]:            'Higher-timeframe trend gate. E.g. EMA(200) on Daily — only trade in the direction of the HTF trend.',
+                  [SignalLayer.MTFContext]:         'Medium-timeframe context filter. E.g. RSI on 1h to confirm momentum direction.',
+                  [SignalLayer.PrimarySignal]:      'Main entry signal. E.g. SuperTrend flip, MACD crossover, price breakout.',
+                  [SignalLayer.ConfirmationFilter]: 'Extra confirmation to reduce false signals. E.g. Volume spike, ADX > 20.',
+                  [SignalLayer.EntryTrigger]:       'Precise bar-level trigger. E.g. close crosses above EMA on current bar.',
+                  [SignalLayer.Invalidation]:       'If this indicator fires, the entry is cancelled. E.g. insidebar on entry bar.',
+                }
                 return (
                   <div key={layer} style={{
                     marginBottom: 8, borderRadius: 5,
-                    border: `1px solid ${C.border}`, overflow: 'hidden',
+                    border: `1px solid ${layerInds.length > 0 ? C.border3 : C.border}`,
+                    overflow: 'hidden',
                   }}>
-                    {/* Layer header */}
+                    {/* Layer header with per-layer + Add button */}
                     <div style={{
-                      padding: '5px 10px',
-                      background: C.surface2,
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '5px 8px 5px 10px',
+                      background: layerInds.length > 0 ? C.surface3 : C.surface2,
+                      display: 'flex', alignItems: 'center', gap: 6,
                     }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: C.textSub }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: C.textSub, flex: 1 }}>
                         {SIGNAL_LAYER_LABELS[layer]}
                       </span>
-                      <span style={{ fontSize: 10, color: C.textDim }}>
+                      <span
+                        title={LAYER_HELP[layer]}
+                        style={{
+                          fontSize: 11, color: C.textDim, cursor: 'help',
+                          padding: '1px 5px', borderRadius: 3,
+                          background: C.surface2, border: `1px solid ${C.border}`,
+                        }}
+                      >?</span>
+                      <span style={{ fontSize: 10, color: C.textDim, minWidth: 60, textAlign: 'right' }}>
                         {layerInds.length} indicator{layerInds.length !== 1 ? 's' : ''}
                       </span>
+                      <button
+                        onClick={() => {
+                          setEditingIndicatorId(undefined)
+                          setAddForLayer(layer)
+                          setIndicatorModalOpen(true)
+                        }}
+                        title={`Add indicator to ${SIGNAL_LAYER_LABELS[layer]}`}
+                        style={{
+                          padding: '2px 9px', fontSize: 11, cursor: 'pointer',
+                          background: C.blueBg, color: C.blue,
+                          border: `1px solid ${C.blue}44`, borderRadius: 4,
+                          fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
+                        }}
+                      >
+                        + Add
+                      </button>
                     </div>
-                    {/* Layer rows */}
+                    {/* Indicator rows */}
                     {layerInds.length > 0 && (
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                         <tbody>
                           {layerInds.map(ind => (
                             <tr key={ind.id} style={{ borderBottom: `1px solid ${C.border2}` }}>
-                              <td style={{ ...tdStyle, fontWeight: 600 }}>{ind.type}</td>
+                              <td style={{ ...tdStyle, fontWeight: 600, color: C.text }}>{ind.type}</td>
                               <td style={{ ...tdStyle, color: C.textMuted }}>{ind.timeframe}</td>
                               <td style={{ ...tdStyle, color: C.textMuted }}>{ind.role}</td>
                               <td style={{ ...tdStyle, fontSize: 10, color: C.textDim }}>
                                 {Object.entries(ind.baseParams).map(([k, v]) => `${k}:${v}`).join(', ')}
                               </td>
-                              <td style={{ ...tdStyle, width: 60 }}>
+                              <td style={{ ...tdStyle, width: 68 }}>
                                 <div style={{ display: 'flex', gap: 4 }}>
-                                  <button onClick={() => { setEditingIndicatorId(ind.id); setIndicatorModalOpen(true) }} style={smallBtnStyle}>Edit</button>
-                                  <button onClick={() => setIndicators(prev => prev.filter(i => i.id !== ind.id))} style={{ ...smallBtnStyle, color: C.red }}>×</button>
+                                  <button
+                                    onClick={() => { setEditingIndicatorId(ind.id); setAddForLayer(undefined); setIndicatorModalOpen(true) }}
+                                    style={smallBtnStyle}
+                                  >Edit</button>
+                                  <button
+                                    onClick={() => setIndicators(prev => prev.filter(i => i.id !== ind.id))}
+                                    style={{ ...smallBtnStyle, color: C.red }}
+                                  >×</button>
                                 </div>
                               </td>
                             </tr>
@@ -456,15 +727,29 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
                       </table>
                     )}
                     {layerInds.length === 0 && (
-                      <div style={{ padding: '6px 10px', fontSize: 10, color: C.textDim, fontStyle: 'italic' }}>
-                        No indicators — drag here or use + Add Indicator
+                      <div
+                        onClick={() => { setEditingIndicatorId(undefined); setAddForLayer(layer); setIndicatorModalOpen(true) }}
+                        style={{
+                          padding: '8px 10px', fontSize: 10, color: C.textDim, fontStyle: 'italic',
+                          cursor: 'pointer', textAlign: 'center',
+                          transition: 'background 0.1s',
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = C.surface2)}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                        title={`Click to add an indicator to ${SIGNAL_LAYER_LABELS[layer]}`}
+                      >
+                        Click + Add or here to add an indicator to this layer
                       </div>
                     )}
                   </div>
                 )
               })}
-              <button onClick={() => { setEditingIndicatorId(undefined); setIndicatorModalOpen(true) }} style={addBtnStyle}>
-                + Add Indicator
+              {/* Global add button still available for those who prefer it */}
+              <button
+                onClick={() => { setEditingIndicatorId(undefined); setAddForLayer(undefined); setIndicatorModalOpen(true) }}
+                style={addBtnStyle}
+              >
+                + Add Indicator (choose layer in modal)
               </button>
             </Block>
 
@@ -1068,8 +1353,13 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
           indicatorId={editingIndicatorId}
           strategyIndicators={indicators}
           primaryTimeframe={primaryTf}
+          defaultLayer={addForLayer}
           onSave={saveIndicator}
-          onClose={() => { setIndicatorModalOpen(false); setEditingIndicatorId(undefined) }}
+          onClose={() => {
+            setIndicatorModalOpen(false)
+            setEditingIndicatorId(undefined)
+            setAddForLayer(undefined)
+          }}
         />
       )}
     </div>

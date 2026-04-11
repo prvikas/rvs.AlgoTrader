@@ -35,7 +35,8 @@ public class IronCondorStrategy(IronCondorConfig config) : IStrategy
             return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
                 "IronCondor requires OptionChain snapshot"));
 
-        var chain  = context.OptionChain;
+        // Filter to ±ChainStrikeDepth strikes from ATM to exclude far-OTM hedges from IV/PCR analytics.
+        var chain  = context.OptionChain.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
         decimal iv = chain.AtmIv;
 
         // IC-3: AtmIv == 0 means the chain snapshot has no valid IV data — do not enter.
@@ -109,6 +110,13 @@ public class IronCondorConfig
     public int     WingWidthStrikes  { get; set; } = 2;       // strike intervals for each wing
     public int     BollingerPeriod   { get; set; } = 20;
     public decimal BollingerStdDev   { get; set; } = 2.0m;
+    /// <summary>Number of strikes on each side of ATM included in chain analytics (AtmIv, PCR, MaxPain).
+    /// Set 5 for NIFTY (±5 × 50 = ±250 pts), 5 for BANKNIFTY (±5 × 100 = ±500 pts).
+    /// Higher values include more OTM strikes; lower values tighten focus to liquid near-ATM strikes.</summary>
+    public int     ChainStrikeDepth  { get; set; } = 5;
+    /// <summary>Strike interval for the underlying (50 = NIFTY, 100 = BANKNIFTY).
+    /// Used with ChainStrikeDepth to define the analytics radius in points.</summary>
+    public decimal StrikeInterval    { get; set; } = 50m;
 
     public static IronCondorConfig FromJson(string json)
         => JsonSerializer.Deserialize<IronCondorConfig>(json) ?? new();
@@ -122,5 +130,7 @@ public class IronCondorConfig
         new("WingWidthStrikes", "Wing Width (Strikes)",   "int",     2,     Min: 1,    Max: 10),
         new("BollingerPeriod",  "Bollinger Period",       "int",     20,    Min: 10,   Max: 50),
         new("BollingerStdDev",  "Bollinger Std Dev",      "decimal", 2.0m,  Min: 1.0m, Max: 3.0m, Step: 0.5m),
+        new("ChainStrikeDepth", "Chain Strike Depth",     "int",     5,     Min: 1,    Max: 20,   Hint: "Strikes on each side of ATM used for IV/PCR analytics. Excludes far-OTM hedges."),
+        new("StrikeInterval",   "Strike Interval (pts)",  "decimal", 50m,   Min: 10m,  Max: 500m, Step: 10m, Hint: "50 for NIFTY, 100 for BANKNIFTY"),
     ];
 }

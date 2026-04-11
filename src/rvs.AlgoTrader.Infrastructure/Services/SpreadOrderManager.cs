@@ -22,6 +22,10 @@ public class SpreadOrderManager(
     IBrokerClientFactory brokerFactory,
     IKillSwitchService killSwitch,
     IClock clock,
+    // SO-4: Required to compute per-leg expiry for CalendarSpread.
+    // Far-dated legs (NearestWeekly=false) must resolve against the monthly expiry chain,
+    // not the near (weekly) expiry that governs the overall spread position.
+    IOptionChainService optionChainService,
     ILogger<SpreadOrderManager> logger) : ISpreadOrderManager
 {
     public async Task<Guid?> ExecuteSpreadAsync(
@@ -49,6 +53,18 @@ public class SpreadOrderManager(
             && diag.TryGetValue("atmIv", out var ivPct) && ivPct > 0)
             atmIvFraction = (double)(ivPct / 100m);
 
+        // SO-4: Per-leg expiry resolution.
+        // Most spreads (IronCondor, VerticalSpread, ShortStraddle) have all legs on the same
+        // near (weekly) expiry — expiryDate is used directly.
+        // CalendarSpread has legs on two different expiries: the short (sell) leg is near-weekly
+        // and the long (buy) leg is far-monthly. The NearestWeekly flag on SpreadLeg distinguishes them.
+        // Far expiry is computed lazily to avoid an unnecessary service call for non-calendar spreads.
+        LocalDate? cachedFarExpiry = null;
+        LocalDate LegExpiry(SpreadLeg leg) =>
+            leg.NearestWeekly
+                ? expiryDate
+                : (cachedFarExpiry ??= optionChainService.GetNearestMonthlyExpiry(instance.InternalSymbol).Date);
+
         // Resolve all legs to concrete instruments.
         // IC-2/VS-1: Sell (short) legs are resolved first so their resolved strike can be
         // passed as FromStrike to the corresponding buy (wing) leg of the same option type.
@@ -62,7 +78,7 @@ public class SpreadOrderManager(
             var spec = new OptionsLegSpec(leg.OptionType, leg.SelectionMode,
                 leg.OtmPct, leg.OtmStrikes, leg.FixedStrike, leg.TargetDelta, leg.NearestWeekly);
             var resolution = await legSelector.ResolveAsync(
-                instance.InternalSymbol, spec, spotPrice, expiryDate, brokerName, ct, atmIvFraction);
+                instance.InternalSymbol, spec, spotPrice, LegExpiry(leg), brokerName, ct, atmIvFraction);
 
             if (resolution == null)
             {
@@ -85,7 +101,7 @@ public class SpreadOrderManager(
                 leg.OtmPct, leg.OtmStrikes, leg.FixedStrike, leg.TargetDelta, leg.NearestWeekly,
                 FromStrike: fromStrike);
             var resolution = await legSelector.ResolveAsync(
-                instance.InternalSymbol, spec, spotPrice, expiryDate, brokerName, ct, atmIvFraction);
+                instance.InternalSymbol, spec, spotPrice, LegExpiry(leg), brokerName, ct, atmIvFraction);
 
             if (resolution == null)
             {

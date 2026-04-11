@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { strategyDomainApi } from '../../api/client'
+import { backtestApi, BacktestTradeLeg, BacktestTradeResult, strategyDomainApi } from '../../api/client'
 import { RunMode, TradeRecord } from '../../types/strategy'
 import { C, F, SP, TABLE_CELL } from '../../styles/tokens'
 import { useEnums } from '../../context/EnumsContext'
@@ -311,16 +311,236 @@ function EmptyChartState({ label }: { label: string }) {
   )
 }
 
+// ── Professional Trades Table ─────────────────────────────────────────────────
+
+function TradesTable({ trades }: { trades: BacktestTradeResult[] }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null)
+  const [sortKey, setSortKey]         = useState<keyof BacktestTradeResult>('entryTime')
+  const [sortAsc, setSortAsc]         = useState(true)
+
+  if (trades.length === 0) return null
+
+  function toggleSort(key: keyof BacktestTradeResult) {
+    if (sortKey === key) setSortAsc(a => !a)
+    else { setSortKey(key); setSortAsc(true) }
+  }
+
+  const sorted = [...trades].sort((a, b) => {
+    const va = a[sortKey] ?? 0, vb = b[sortKey] ?? 0
+    return sortAsc
+      ? (va < vb ? -1 : va > vb ? 1 : 0)
+      : (va > vb ? -1 : va < vb ? 1 : 0)
+  })
+
+  const isSpread = (t: BacktestTradeResult) =>
+    t.direction.includes('SPREAD') || t.direction.includes('CREDIT') || t.direction.includes('DEBIT')
+
+  const dirColor = (d: string) =>
+    d === 'BUY' || d === 'CREDIT-SPREAD' ? C.green : C.red
+
+  const pnlColor = (v: number) => v >= 0 ? C.green : C.red
+
+  const rColor = (r?: number) =>
+    r == null ? C.textMuted : r >= 2 ? C.green : r >= 0 ? '#f0b429' : C.red
+
+  const fmt = (v: number, dec = 2) => v.toLocaleString('en-IN', { maximumFractionDigits: dec, minimumFractionDigits: dec })
+  const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+
+  const SortTh = ({ label, k }: { label: string; k: keyof BacktestTradeResult }) => (
+    <th
+      onClick={() => toggleSort(k)}
+      style={{ ...tradeTh, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
+    >
+      {label}{sortKey === k ? (sortAsc ? ' ▲' : ' ▼') : ''}
+    </th>
+  )
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>
+        Click column headers to sort · Click row to expand spread legs
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: C.surface2 }}>
+              <th style={tradeTh}>#</th>
+              <SortTh label="Date (IST)" k="entryTime" />
+              <SortTh label="Dir" k="direction" />
+              <SortTh label="Qty" k="quantity" />
+              <SortTh label="Entry ₹" k="entryPrice" />
+              <SortTh label="Exit ₹" k="exitPrice" />
+              <SortTh label="SL ₹" k="stopLoss" />
+              <SortTh label="Target ₹" k="takeProfit" />
+              <SortTh label="Bars" k="holdingBars" />
+              <SortTh label="Brokerage ₹" k="totalCost" />
+              <SortTh label="Slip ₹" k="slippageAmount" />
+              <SortTh label="Gross ₹" k="grossPnl" />
+              <SortTh label="Net ₹" k="netPnl" />
+              <SortTh label="R" k="rMultiple" />
+              <SortTh label="MAE" k="mae" />
+              <SortTh label="MFE" k="mfe" />
+              <th style={tradeTh}>Exit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((t, idx) => {
+              const legs: BacktestTradeLeg[] = t.legsJson
+                ? (() => { try { return JSON.parse(t.legsJson) } catch { return [] } })()
+                : []
+              const hasLegs = legs.length > 0 && isSpread(t)
+              const isExpanded = expandedIdx === idx
+
+              return (
+                <React.Fragment key={idx}>
+                  <tr
+                    onClick={() => hasLegs ? setExpandedIdx(isExpanded ? null : idx) : undefined}
+                    style={{
+                      borderBottom: `1px solid ${C.border2}`,
+                      background: isExpanded ? `${C.blue}0a` : 'transparent',
+                      cursor: hasLegs ? 'pointer' : 'default',
+                    }}
+                  >
+                    <td style={{ ...tradeTd, color: C.textDim }}>{idx + 1}</td>
+                    <td style={{ ...tradeTd, color: C.textSub, whiteSpace: 'nowrap' }}>
+                      {fmtDate(t.entryTime)}
+                    </td>
+                    <td style={{ ...tradeTd, fontWeight: 600, color: dirColor(t.direction) }}>
+                      {hasLegs ? `${isExpanded ? '▼' : '▶'} ` : ''}
+                      {t.direction.replace('-SPREAD', '')}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono }}>{t.quantity}</td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono }}>{fmt(t.entryPrice)}</td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono }}>{fmt(t.exitPrice)}</td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.red, opacity: 0.8 }}>
+                      {t.stopLoss ? fmt(t.stopLoss) : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.green, opacity: 0.8 }}>
+                      {t.takeProfit ? fmt(t.takeProfit) : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.textMuted }}>
+                      {t.holdingBars ?? '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.amber }}>
+                      {t.totalCost != null ? fmt(t.totalCost) : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.textDim }}>
+                      {t.slippageAmount != null && t.slippageAmount > 0 ? fmt(t.slippageAmount) : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: pnlColor(t.grossPnl) }}>
+                      {t.grossPnl >= 0 ? '+' : ''}{fmt(t.grossPnl)}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, fontWeight: 700, color: pnlColor(t.netPnl) }}>
+                      {t.netPnl >= 0 ? '+' : ''}{fmt(t.netPnl)}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: rColor(t.rMultiple) }}>
+                      {t.rMultiple != null ? `${t.rMultiple >= 0 ? '+' : ''}${fmt(t.rMultiple)}R` : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.red, opacity: 0.7 }}>
+                      {t.mae != null ? fmt(t.mae) : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.green, opacity: 0.7 }}>
+                      {t.mfe != null ? fmt(t.mfe) : '—'}
+                    </td>
+                    <td style={{ ...tradeTd, color: C.textMuted, fontSize: 10 }}>{t.exitReason}</td>
+                  </tr>
+
+                  {/* ── Per-leg expansion row for spreads ── */}
+                  {isExpanded && hasLegs && (
+                    <tr>
+                      <td colSpan={17} style={{ padding: '0 0 8px 32px', background: `${C.blue}06` }}>
+                        <div style={{ fontSize: 10, color: C.textMuted, padding: '6px 0 4px' }}>
+                          Leg Breakdown — {legs.length} legs
+                        </div>
+                        <table style={{ borderCollapse: 'collapse', fontSize: 10 }}>
+                          <thead>
+                            <tr>
+                              {['Leg', 'Strike', 'Type', 'Dir', 'Premium ₹', 'Expiry', 'Brokerage ₹'].map(h => (
+                                <th key={h} style={{ ...tradeTh, fontSize: 10, background: C.surface3 }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {legs.map((leg, li) => (
+                              <tr key={li} style={{ borderBottom: `1px solid ${C.border2}` }}>
+                                <td style={{ ...tradeTd, color: C.textDim }}>{li + 1}</td>
+                                <td style={{ ...tradeTd, fontFamily: F.mono, fontWeight: 600 }}>{fmt(leg.strike, 0)}</td>
+                                <td style={{ ...tradeTd, color: leg.type === 'CE' ? C.blue : C.amber, fontWeight: 600 }}>{leg.type}</td>
+                                <td style={{ ...tradeTd, color: leg.direction === 'SELL' ? C.red : C.green, fontWeight: 600 }}>{leg.direction}</td>
+                                <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono }}>{fmt(leg.premium)}</td>
+                                <td style={{ ...tradeTd, color: C.textMuted }}>{leg.expiry}</td>
+                                <td style={{ ...tradeTd, textAlign: 'right', fontFamily: F.mono, color: C.amber }}>{fmt(leg.brokerage)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+const tradeTh: React.CSSProperties = {
+  padding: '5px 8px', textAlign: 'left', fontSize: 10, color: C.textMuted,
+  fontWeight: 600, borderBottom: `1px solid ${C.border}`, background: C.surface2,
+}
+const tradeTd: React.CSSProperties = { padding: '4px 8px', fontSize: 11, color: C.text }
+
 // ── Trade Analysis section ────────────────────────────────────────────────────
 
 function TradeAnalysisSection({ strategyId, scenarioId, runId }: {
   strategyId: string; scenarioId: string; runId: string
 }) {
-  const { data: trades = [], isLoading } = useQuery({
+  // Prefer real API if runId is a GUID (saved run), else use mock
+  const isRealRun = /^[0-9a-f-]{36}$/i.test(runId)
+
+  const { data: realTrades, isLoading: loadingReal } = useQuery({
+    queryKey: ['bt-trades-real', runId],
+    queryFn: async () => {
+      const r = await backtestApi.trades(runId)
+      return r.data?.data ?? []
+    },
+    enabled: isRealRun,
+  })
+
+  const { data: mockTrades = [], isLoading: loadingMock } = useQuery({
     queryKey: ['trades', strategyId, scenarioId, runId],
     queryFn: () => strategyDomainApi.listTrades(strategyId, scenarioId, runId),
-    enabled: !!runId,
+    enabled: !isRealRun,
   })
+
+  const isLoading = isRealRun ? loadingReal : loadingMock
+
+  // Adapt real trades or convert mock TradeRecord → BacktestTradeResult shape
+  const btTrades: BacktestTradeResult[] = isRealRun
+    ? (realTrades ?? [])
+    : mockTrades.map(t => ({
+        direction:   t.direction === 'Long' ? 'BUY' : 'SELL',
+        entryPrice:  t.entryPrice,
+        exitPrice:   t.exitPrice,
+        quantity:    1,
+        exitReason:  t.exitReason,
+        grossPnl:    t.pnlAbsolute,
+        netPnl:      t.pnlAbsolute,
+        entryTime:   t.entryTime,
+        exitTime:    t.exitTime,
+        mae:         t.mae,
+        mfe:         t.mfe,
+        stopLoss:    t.stopPrice,
+        takeProfit:  t.targetPrice,
+        holdingBars: t.barsHeld,
+        rMultiple:   t.pnlR,
+      }))
+
+  // Convert for legacy chart components (still use TradeRecord)
+  const chartTrades = mockTrades.length > 0 ? mockTrades : []
 
   if (isLoading) {
     return (
@@ -335,24 +555,52 @@ function TradeAnalysisSection({ strategyId, scenarioId, runId }: {
       marginTop: SP.lg, borderTop: `1px solid ${C.border}`,
       paddingTop: SP.lg, display: 'flex', flexDirection: 'column', gap: SP.xl,
     }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
-        Trade Analysis — {trades.length} trades
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>
+          Trade Breakdown — {btTrades.length} trades
+        </div>
+        {btTrades.length > 0 && (
+          <div style={{ display: 'flex', gap: 16, fontSize: 11 }}>
+            <TradeStat label="Avg Brokerage" value={`₹${(btTrades.reduce((s, t) => s + (t.totalCost ?? 0), 0) / btTrades.length).toFixed(0)}`} />
+            <TradeStat label="Total Slippage" value={`₹${btTrades.reduce((s, t) => s + (t.slippageAmount ?? 0), 0).toFixed(0)}`} />
+            <TradeStat label="Total Cost" value={`₹${btTrades.reduce((s, t) => s + (t.totalCost ?? 0) + (t.slippageAmount ?? 0), 0).toFixed(0)}`} />
+            <TradeStat label="Avg Hold" value={`${(btTrades.reduce((s, t) => s + (t.holdingBars ?? 0), 0) / btTrades.length).toFixed(1)} bars`} />
+          </div>
+        )}
       </div>
-      {trades.length === 0 ? (
+
+      {btTrades.length === 0 ? (
         <div style={{ color: C.textMuted, fontSize: 12, textAlign: 'center', padding: SP.lg }}>
           No trade data available for this run yet.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.xl }}>
-          <MAEMFEScatterChart trades={trades} />
-          <PnLHistogram trades={trades} />
-          <TimeOfDayHeatmap trades={trades} />
-          <ExitReasonDonut trades={trades} />
-          <div style={{ gridColumn: '1 / -1' }}>
-            <StreakAnalysis trades={trades} />
-          </div>
-        </div>
+        <>
+          {/* Full trades table */}
+          <TradesTable trades={btTrades} />
+
+          {/* Charts section — only rendered when mock data available (has pnlR etc.) */}
+          {chartTrades.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.xl, marginTop: SP.lg }}>
+              <MAEMFEScatterChart trades={chartTrades} />
+              <PnLHistogram trades={chartTrades} />
+              <TimeOfDayHeatmap trades={chartTrades} />
+              <ExitReasonDonut trades={chartTrades} />
+              <div style={{ gridColumn: '1 / -1' }}>
+                <StreakAnalysis trades={chartTrades} />
+              </div>
+            </div>
+          )}
+        </>
       )}
+    </div>
+  )
+}
+
+function TradeStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <div style={{ fontSize: 9, color: C.textDim }}>{label}</div>
+      <div style={{ fontFamily: F.mono, color: C.text, fontSize: 11 }}>{value}</div>
     </div>
   )
 }

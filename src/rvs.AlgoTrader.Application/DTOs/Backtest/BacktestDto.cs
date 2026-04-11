@@ -117,6 +117,7 @@ public record BacktestChartBarDto(
 
 /// <summary>
 /// Individual trade for the per-trade breakdown table in the frontend.
+/// Contains all fields needed for professional trade analysis.
 /// </summary>
 public record BacktestTradeDto(
     string Direction,
@@ -128,11 +129,32 @@ public record BacktestTradeDto(
     decimal NetPnl,
     string EntryTime,   // ISO UTC string
     string ExitTime,    // ISO UTC string
-    // Maximum adverse/favorable excursion from entry price (price units)
-    decimal Mae = 0m,
-    decimal Mfe = 0m,
+    // ── Excursion analytics ─────────────────────────────────────────────────
+    decimal Mae = 0m,   // Maximum Adverse Excursion (price units from entry)
+    decimal Mfe = 0m,   // Maximum Favorable Excursion (price units from entry)
+    // ── Cost breakdown ──────────────────────────────────────────────────────
     decimal EntryCommission = 0m,
-    decimal ExitCommission  = 0m);
+    decimal ExitCommission  = 0m,
+    decimal TotalCost       = 0m,  // EntryCommission + ExitCommission
+    decimal SlippageAmount  = 0m,  // ₹ cost of slippage at entry fill
+    // ── Risk levels ─────────────────────────────────────────────────────────
+    decimal StopLoss   = 0m,       // initial stop-loss price
+    decimal TakeProfit = 0m,       // take-profit / premium-capture target
+    // ── Duration & R ────────────────────────────────────────────────────────
+    int     HoldingBars = 0,       // candle bars from entry fill to exit
+    decimal RMultiple   = 0m,      // NetPnl ÷ initial risk ₹ (R-multiple)
+    // ── Spread legs ─────────────────────────────────────────────────────────
+    // For spread trades only: JSON [{strike, type, direction, premium, expiry, brokerage}]
+    string? LegsJson = null);
+
+/// <summary>Single option leg inside a spread trade (deserialised from LegsJson).</summary>
+public record BacktestTradeLegDto(
+    decimal Strike,
+    string  Type,       // "CE" | "PE"
+    string  Direction,  // "BUY" | "SELL"
+    decimal Premium,    // entry premium per contract
+    string  Expiry,     // "YYYY-MM-DD"
+    decimal Brokerage); // flat brokerage for this leg
 
 /// <summary>Status of a running/completed async backtest job.</summary>
 public record BacktestJobStatusDto(

@@ -167,6 +167,22 @@ public record OptionChainSnapshot(
     public bool IsBullishBias => PutCallRatioOI < 0.8m || SpotPrice > MaxPainStrike + (MaxPainStrike * 0.005m);
 
     /// <summary>
+    /// Returns a new snapshot containing only legs within ±(nStrikes × strikeInterval) of SpotPrice.
+    /// Use this before reading AtmIv, PCR, MaxPain, or bias flags to exclude far-OTM hedges
+    /// that distort liquid-strike analytics (configurable via ChainStrikeDepth parameter).
+    /// SpotPrice and Expiry are preserved unchanged.
+    /// </summary>
+    public OptionChainSnapshot FilteredAroundAtm(decimal strikeInterval, int nStrikes)
+    {
+        if (nStrikes <= 0 || strikeInterval <= 0) return this;
+        var radius   = strikeInterval * nStrikes;
+        var filtered = Options
+            .Where(o => Math.Abs(o.StrikePrice - SpotPrice) <= radius)
+            .ToList();
+        return this with { Options = filtered };
+    }
+
+    /// <summary>
     /// Determines if the option chain signals a bearish bias.
     /// Bearish = PCR above 1.2 (heavy PE writing = hedging downside) OR
     ///           spot well below max pain.

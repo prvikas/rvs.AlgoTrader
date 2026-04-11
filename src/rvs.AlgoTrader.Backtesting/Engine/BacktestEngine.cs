@@ -208,7 +208,9 @@ public class BacktestEngine(
                         NetPnl:          netSpreadPnl,
                         ExitReason:      closeReason,
                         EntryCommission: openSpread.EntryCommission,
-                        ExitCommission:  exitComm);
+                        ExitCommission:  exitComm,
+                        HoldingBars:     Math.Max(0, i - openSpread.EntryBarIndex),
+                        LegsJson:        BuildLegsJson(openSpread, request.BrokerageFlatPerSide));
                     trades.Add(spreadTrade);
                     openSpread = null;
 
@@ -261,7 +263,8 @@ public class BacktestEngine(
                     closed = closed with
                     {
                         ExitCommission = exitCosts.Total,
-                        NetPnl         = closed.GrossPnl - closed.EntryCommission - exitCosts.Total
+                        NetPnl         = closed.GrossPnl - closed.EntryCommission - exitCosts.Total,
+                        HoldingBars    = Math.Max(0, i - closed.EntryBarIndex),
                     };
                     equity += closed.GrossPnl - exitCosts.Total; // EntryCommission already deducted at open
                     trades.Add(closed);
@@ -326,6 +329,44 @@ public class BacktestEngine(
                 e.EventDate >= barDate &&
                 e.EventDate <= barDate.PlusDays(BacktestEventWindow));
 
+            // BT-OPT-1: Build synthetic OptionChainSnapshot from historical IV so option strategies
+            // can evaluate their IV filters and chain-based conditions in backtest mode.
+            // Only built when IBlackScholesEngine is registered (spread simulation enabled).
+            //
+            // Multi-strike OI ladder (5 strikes each side of ATM):
+            //   • OI decays as 200,000 × 0.65^n from ATM outward (realistic pyramid)
+            //   • OI skew driven by prior bar direction: bullish → CE OI > PE OI → PCR ≈ 0.54
+            //     bearish → PE OI > CE OI → PCR ≈ 2.0 (matches real NIFTY/BANKNIFTY patterns)
+            //   • OiChange sign mirrors bar direction for PutCallRatioChangeOI
+            //   • Put IV skew: +0.5%/strike for OTM puts (negative-gamma / vol-skew realism)
+            //   • Call IV discount: -0.3%/strike for OTM calls
+            //   • MaxPain and CeMaxOiStrike/PeMaxOiStrike now reflect OI walls correctly
+            //   • Far chain IV = 85% of near IV (normal term structure)
+            OptionChainSnapshot? syntheticNearChain = null;
+            OptionChainSnapshot? syntheticFarChain  = null;
+            if (bsEngine != null)
+            {
+                var (_, _, si)  = ExtractSpreadConfig(request.ParametersJson);
+                decimal atmIv   = barIvRank?.CurrentIv ?? 15m;
+                decimal atmK    = Math.Round(current.Close / si) * si;
+                var nearExpiry  = NearestWeeklyExpiry(barDate);
+                var farExpiry   = NearestMonthlyExpiry(barDate);
+
+                bool prevBarBullish = i > 0 && allCandles[i - 1].Close > allCandles[i - 1].Open;
+                var nearLegs = BuildSyntheticLegs(atmK, si, atmIv, prevBarBullish, nStrikes: 5);
+                syntheticNearChain = new OptionChainSnapshot(
+                    request.InternalSymbol, current.OpenTime.ToInstant(),
+                    current.Close, nearExpiry, nearLegs);
+
+                // CalendarSpread CS-2: far chain must have lower IV to produce a positive slope.
+                // 85% of near IV approximates the normal term structure seen in NIFTY/BANKNIFTY.
+                decimal farIv  = Math.Max(5m, atmIv * 0.85m);
+                var farLegs = BuildSyntheticLegs(atmK, si, farIv, prevBarBullish, nStrikes: 5);
+                syntheticFarChain = new OptionChainSnapshot(
+                    request.InternalSymbol, current.OpenTime.ToInstant(),
+                    current.Close, farExpiry, farLegs);
+            }
+
             var ctx = new StrategyContext(
                 Guid.Empty,
                 request.InternalSymbol,
@@ -333,8 +374,11 @@ public class BacktestEngine(
                 visibleCandles,
                 request.ParametersJson,
                 "backtest",
+                OptionChain:     syntheticNearChain,
                 SymbolIvRank:    barIvRank,
-                HasUpcomingEvent: hasUpcomingEvent);
+                HasUpcomingEvent: hasUpcomingEvent,
+                NearExpiryChain: syntheticNearChain,
+                FarExpiryChain:  syntheticFarChain);
 
             SignalResult signal;
             try { signal = await strategy.EvaluateAsync(ctx, ct); }
@@ -394,6 +438,7 @@ public class BacktestEngine(
                 openSpread = EnterSpreadSim(signal.Spread, current, barDate, entryIvPct, request, bsEngine);
                 if (openSpread != null)
                 {
+                    openSpread = openSpread with { EntryBarIndex = i }; // for HoldingBars at close
                     equity -= openSpread.EntryCommission;
                     logger.LogDebug("[Backtest] Spread entered {Type} bar={Bar} credit={Credit:F2} legs={Legs}",
                         signal.Spread.SpreadType, i, openSpread.NetCredit, openSpread.Legs.Count);
@@ -418,25 +463,31 @@ public class BacktestEngine(
 
             decimal entryPrice;
             ZonedDateTime entryTime;
+            decimal slipAmount    = 0m;
+            int     entryBarIndex = i;  // bar index at fill
 
             if (request.FillModel == FillModel.SignalBarClose)
             {
                 entryPrice = current.Close;
                 entryTime  = current.CloseTime;
+                // entryBarIndex stays at i (signal bar = fill bar)
             }
             else
             {
                 if (i + 1 >= totalBars) break;
                 var nextBar = allCandles[i + 1];
-                entryPrice  = nextBar.Open;
-                entryTime   = nextBar.OpenTime;
+                entryPrice    = nextBar.Open;
+                entryTime     = nextBar.OpenTime;
+                entryBarIndex = i + 1; // fills on next bar's open
 
                 if (request.FillModel == FillModel.NextBarOpenPlusSlippage && request.SlippageBasisPoints > 0)
                 {
                     var slipFraction = request.SlippageBasisPoints / 10_000m;
+                    var rawEntry     = entryPrice;
                     entryPrice = signal.Signal == SignalType.Buy
                         ? entryPrice * (1m + slipFraction)
                         : entryPrice * (1m - slipFraction);
+                    slipAmount = Math.Abs(entryPrice - rawEntry) * positionSize; // ₹ cost of slippage
                 }
             }
 
@@ -464,7 +515,9 @@ public class BacktestEngine(
                 BestPrice:       entryPrice,   // will track high (longs) or low (shorts) from entry
                 WorstPrice:      entryPrice,   // will track low (longs) or high (shorts) from entry
                 TrailActive:     false,
-                EntryCommission: entryCostsOnOpen.Total);
+                EntryCommission: entryCostsOnOpen.Total,
+                SlippageAmount:  slipAmount,
+                EntryBarIndex:   entryBarIndex);
         }
 
         if (openTrade != null && allCandles.Count > 0)
@@ -484,7 +537,8 @@ public class BacktestEngine(
                 GrossPnl       = grossPnl,
                 NetPnl         = netPnlEod,
                 ExitReason     = "END_OF_DATA",
-                ExitCommission = exitCostsEod.Total
+                ExitCommission = exitCostsEod.Total,
+                HoldingBars    = Math.Max(0, totalBars - 1 - openTrade.EntryBarIndex),
             });
         }
 
@@ -512,7 +566,9 @@ public class BacktestEngine(
                 NetPnl:          netEodPnl,
                 ExitReason:      "END_OF_DATA",
                 EntryCommission: openSpread.EntryCommission,
-                ExitCommission:  exitComm));
+                ExitCommission:  exitComm,
+                HoldingBars:     Math.Max(0, totalBars - 1 - openSpread.EntryBarIndex),
+                LegsJson:        BuildLegsJson(openSpread, request.BrokerageFlatPerSide)));
         }
 
         // Final progress (100%)
@@ -605,7 +661,8 @@ public class BacktestEngine(
         ZonedDateTime              EntryTime,
         decimal                    EntrySpot,
         double                     EntryIvFraction,    // e.g. 0.15 = 15%
-        decimal                    EntryCommission
+        decimal                    EntryCommission,
+        int                        EntryBarIndex = 0   // allCandles[] index at entry bar
     );
 
     /// <summary>
@@ -718,6 +775,92 @@ public class BacktestEngine(
             return (true, "PROFIT_TARGET", runningPnl, currentValue);
 
         return (false, "", 0m, currentValue);
+    }
+
+    /// <summary>
+    /// Builds a realistic multi-strike synthetic option chain for backtest simulation.
+    /// Generates ATM + nStrikes OTM legs on each side with OI pyramid and directional skew.
+    ///
+    /// OI structure:
+    ///   • Base OI at ATM = 200,000 lots; decays by factor 0.65 per strike outward
+    ///   • Bullish prev bar  → CE OI inflated ×1.20, PE OI compressed ×0.65 → PCR ≈ 0.54
+    ///   • Bearish prev bar  → CE OI compressed ×0.70, PE OI inflated ×1.40  → PCR ≈ 2.0
+    ///   • OiChange sign: bullish → CE adds OI (call writing), PE removes OI; vice versa
+    /// IV structure:
+    ///   • Put IV skew: +0.5% per OTM strike (realistic negative-gamma skew)
+    ///   • Call IV discount: -0.3% per OTM strike (lower demand for OTM calls in India)
+    ///   • ATM delta ≈ ±0.50; OTM legs scale by 0.5^(n+1) approximation
+    /// </summary>
+    internal static List<OptionLeg> BuildSyntheticLegs(
+        decimal atmStrike, decimal strikeInterval, decimal atmIv,
+        bool prevBarBullish, int nStrikes = 5)
+    {
+        // OI skew multipliers based on prior bar direction
+        decimal ceSkim = prevBarBullish ? 1.20m : 0.70m;
+        decimal peSkim = prevBarBullish ? 0.65m : 1.40m;
+
+        // OiChange direction: on bullish bar, call writers add CE OI (+), put writers close PE OI (-)
+        int ceChangeSign = prevBarBullish ? +1 : -1;
+        int peChangeSign = prevBarBullish ? -1 : +1;
+
+        var legs = new List<OptionLeg>(capacity: (nStrikes + 1) * 2);
+
+        for (int n = 0; n <= nStrikes; n++)
+        {
+            // OI pyramid: decays 35% per strike outward from ATM
+            long baseOi     = (long)(200_000 * Math.Pow(0.65, n));
+            long ceOi       = (long)(baseOi * (double)ceSkim);
+            long peOi       = (long)(baseOi * (double)peSkim);
+            long ceOiChange = (long)(baseOi * 0.08) * ceChangeSign;
+            long peOiChange = (long)(baseOi * 0.08) * peChangeSign;
+            long ceVol      = Math.Max(1_000L, baseOi / 20);
+            long peVol      = Math.Max(1_000L, baseOi / 20);
+
+            // IV skew: puts are more expensive OTM, calls cheaper OTM
+            decimal ceIv    = Math.Max(5m, atmIv - 0.3m * n);
+            decimal peIv    = Math.Max(5m, atmIv + 0.5m * n);
+
+            // Delta approximation: ATM ≈ ±0.50, halves every strike
+            decimal ceDelta =  (decimal)(0.50 * Math.Pow(0.55, n));
+            decimal peDelta = -(decimal)(0.50 * Math.Pow(0.55, n));
+
+            decimal ceStrike = atmStrike + strikeInterval * n;
+            decimal peStrike = atmStrike - strikeInterval * n;
+
+            if (n == 0)
+            {
+                // ATM: single strike, one CE + one PE
+                legs.Add(new OptionLeg(atmStrike, "CE", 0m, ceOi, ceOiChange, ceVol, ceIv, 0m, 0m, ceDelta));
+                legs.Add(new OptionLeg(atmStrike, "PE", 0m, peOi, peOiChange, peVol, peIv, 0m, 0m, peDelta));
+            }
+            else
+            {
+                // OTM CE above ATM
+                legs.Add(new OptionLeg(ceStrike, "CE", 0m, ceOi, ceOiChange, ceVol, ceIv, 0m, 0m, ceDelta));
+                // OTM PE below ATM
+                legs.Add(new OptionLeg(peStrike, "PE", 0m, peOi, peOiChange, peVol, peIv, 0m, 0m, peDelta));
+            }
+        }
+
+        return legs;
+    }
+
+    /// <summary>
+    /// Serialises per-leg entry details for storage in BacktestTrade.LegsJson.
+    /// Each element: { strike, type ("CE"/"PE"), direction ("BUY"/"SELL"), premium, expiry, brokerage }.
+    /// </summary>
+    private static string BuildLegsJson(OpenSpreadSim pos, decimal brokeragePerLeg)
+    {
+        var legs = pos.Legs.Select(l => new
+        {
+            strike    = l.Strike,
+            type      = l.Leg.OptionType == OptionType.Call ? "CE" : "PE",
+            direction = l.Leg.Direction  == OrderDirection.Sell ? "SELL" : "BUY",
+            premium   = Math.Round(l.EntryLegPrice, 2),
+            expiry    = l.LegExpiry.ToString(),
+            brokerage = brokeragePerLeg,
+        });
+        return System.Text.Json.JsonSerializer.Serialize(legs);
     }
 
     /// <summary>

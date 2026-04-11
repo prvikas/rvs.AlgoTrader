@@ -52,10 +52,12 @@ public class VerticalSpreadStrategy(VerticalSpreadConfig config) : IStrategy
                 $"{config.SpreadType}: trend not aligned (close={current.Close:F2}, SMA{config.TrendSmaPeriod}={sma:F2})"));
 
         // ── Optional: OptionChain bias confirmation ────────────────────────
+        // Filter to liquid near-ATM strikes so PCR/MaxPain bias is not distorted by far-OTM hedges.
         if (context.OptionChain is not null)
         {
-            bool chainBullish = context.OptionChain.IsBullishBias;
-            bool chainBearish = context.OptionChain.IsBearishBias;
+            var filteredChain = context.OptionChain.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
+            bool chainBullish = filteredChain.IsBullishBias;
+            bool chainBearish = filteredChain.IsBearishBias;
             bool chainAligned = config.SpreadType switch
             {
                 VerticalSpreadType.BullCallSpread => !chainBearish,
@@ -146,6 +148,10 @@ public class VerticalSpreadConfig
     public decimal LongLegDelta                  { get; set; } = 0.40m;  // ~ATM for debit spreads
     public decimal ShortLegDelta                 { get; set; } = 0.25m;  // OTM for credit spreads
     public int     SpreadWidthStrikes            { get; set; } = 2;
+    /// <summary>Number of strikes each side of ATM for bias (PCR/MaxPain) analytics.</summary>
+    public int     ChainStrikeDepth              { get; set; } = 5;
+    /// <summary>Strike interval (50 = NIFTY, 100 = BANKNIFTY).</summary>
+    public decimal StrikeInterval                { get; set; } = 50m;
 
     public static VerticalSpreadConfig FromJson(string json)
         => JsonSerializer.Deserialize<VerticalSpreadConfig>(json) ?? new();
@@ -163,5 +169,7 @@ public class VerticalSpreadConfig
         new("LongLegDelta",       "Long Leg Delta",         "decimal", 0.40m, Min: 0.2m, Max: 0.55m, Step: 0.05m, Hint: "Delta of the long leg (debit spreads)"),
         new("ShortLegDelta",      "Short Leg Delta",        "decimal", 0.25m, Min: 0.1m, Max: 0.45m, Step: 0.05m, Hint: "Delta of the short leg (credit spreads)"),
         new("SpreadWidthStrikes", "Spread Width (Strikes)", "int",     2,     Min: 1,    Max: 10),
+        new("ChainStrikeDepth",   "Chain Strike Depth",     "int",     5,     Min: 1,    Max: 20,    Hint: "Strikes each side of ATM for PCR/bias analytics."),
+        new("StrikeInterval",     "Strike Interval (pts)",  "decimal", 50m,   Min: 10m,  Max: 500m,  Step: 10m, Hint: "50 for NIFTY, 100 for BANKNIFTY"),
     ];
 }

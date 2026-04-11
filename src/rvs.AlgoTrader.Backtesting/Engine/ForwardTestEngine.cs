@@ -236,6 +236,9 @@ public class ForwardTestEngine(
             var nearExpiry = BacktestEngine.NearestWeeklyExpiry(barDate);
             var farExpiry  = BacktestEngine.NearestMonthlyExpiry(barDate);
 
+            // Extract spread config once, before the loop — StrikeInterval is per-strategy
+            // (50 for NIFTY, 100 for BANKNIFTY). Using it here matches BacktestEngine behaviour.
+            var (maxLoss, profitTarget, strikeInterval) = BacktestEngine.ExtractSpreadConfig(instance.ParametersJson);
             decimal netCredit = 0m;
             int     legCount  = 0;
             const double RFR  = 0.065;
@@ -244,16 +247,13 @@ public class ForwardTestEngine(
             {
                 var expiry = leg.NearestWeekly ? nearExpiry : farExpiry;
                 double tte = Math.Max(0.001, (expiry - barDate).Days / 365.0);
-                decimal si = 50m; // default NIFTY strike interval
-                decimal strike = BacktestEngine.ResolveStrike(leg, candle.Close, ivFrac, tte, RFR, si, bsEngine);
+                decimal strike = BacktestEngine.ResolveStrike(leg, candle.Close, ivFrac, tte, RFR, strikeInterval, bsEngine);
                 var g = bsEngine.Compute(candle.Close, strike, tte, ivFrac, RFR,
                     leg.OptionType == OptionType.Call);
                 decimal prem = Math.Max(0m, g.TheoreticalPrice);
                 netCredit += leg.Direction == OrderDirection.Sell ? prem : -prem;
                 legCount++;
             }
-
-            var (maxLoss, profitTarget, _) = BacktestEngine.ExtractSpreadConfig(instance.ParametersJson);
             state.OpenSpread = new ForwardTestSpreadState(
                 SpreadType:       signal.Spread.SpreadType,
                 ExpiryDate:       nearExpiry,

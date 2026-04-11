@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { instrumentsApi, historicalApi, Instrument } from '../api/client'
+import { instrumentsApi, historicalApi, dataManagerApi, brokerApi, DataQualityReport, Instrument } from '../api/client'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface DownloadForm {
   timeframe: string
   fromDate: string
+  toDate: string
+  brokerName: string
 }
 
 type SortDir = 'asc' | 'desc'
@@ -38,11 +40,12 @@ interface ColDef {
 
 const COLUMNS: ColDef[] = [
   { label: 'Internal Symbol', sortKey: 'symbol',   width: '2fr' },
-  { label: 'Name',            sortKey: 'name',     width: '1.6fr' },
+  { label: 'Name',            sortKey: 'name',     width: '1.4fr' },
   { label: 'Trading Symbol',  sortKey: 'trading',  width: '1fr' },
-  { label: 'Exchange',        sortKey: 'exchange', width: '90px' },
-  { label: 'Type',            sortKey: 'type',     width: '90px' },
-  { label: 'Brokers',                              width: '90px' },
+  { label: 'Exchange',        sortKey: 'exchange', width: '80px' },
+  { label: 'Type',            sortKey: 'type',     width: '80px' },
+  { label: 'Brokers',                              width: '80px' },
+  { label: 'Data Through',                         width: '110px' },
   { label: 'Status',                               width: '72px' },
   { label: 'Actions',                              width: '90px' },
 ]
@@ -58,19 +61,23 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
   const [exchange, setExchange]               = useState<string>('all')
   const [instrType, setInstrType]             = useState<string>('All Types')
   const [activeOnly, setActiveOnly]           = useState(true)
+  const [mergeDuplicates, setMergeDuplicates] = useState(true)   // on by default
   const [page, setPage]                       = useState(1)
   const [sortBy, setSortBy]                   = useState<string>('symbol')
   const [sortDir, setSortDir]                 = useState<SortDir>('asc')
 
   // Download modal
+  const todayStr = new Date().toISOString().slice(0, 10)
   const [downloadTarget, setDownloadTarget] = useState<Instrument | null>(null)
   const [downloadForm, setDownloadForm]     = useState<DownloadForm>({
-    timeframe: '5m',
+    timeframe: '1D',
     fromDate: (() => {
       const d = new Date()
-      d.setMonth(d.getMonth() - 6)
+      d.setFullYear(d.getFullYear() - 2)
       return d.toISOString().slice(0, 10)
     })(),
+    toDate: todayStr,
+    brokerName: 'MStock',
   })
   const [downloadMsg, setDownloadMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
   const [downloadPending, setDownloadPending] = useState(false)
@@ -118,28 +125,102 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
     placeholderData: (prev) => prev,   // keep old data visible while fetching next page
   })
 
-  const instruments = data?.items ?? []
-  const totalCount  = data?.totalCount ?? 0
-  const totalPages  = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+  // ── Broker status — pre-select connected broker in download modal ─────────
+  const { data: brokerStatuses } = useQuery({
+    queryKey: ['broker-status'],
+    queryFn: () => brokerApi.status().then(r => r.data.data ?? []),
+    staleTime: 60_000,
+  })
+  // Determine default broker (first authenticated one, prefer MStock)
+  const connectedBroker = (() => {
+    if (!brokerStatuses) return 'MStock'
+    const authed = brokerStatuses.filter(b => b.isAuthenticated)
+    return authed.find(b => b.brokerName === 'MStock')?.brokerName
+        ?? authed.find(b => b.brokerName === 'Zerodha')?.brokerName
+        ?? authed[0]?.brokerName
+        ?? 'MStock'
+  })()
+
+  // ── Data quality / history-downloaded dates ───────────────────────────────
+  const { data: qualityReports } = useQuery({
+    queryKey: ['data-quality-all'],
+    queryFn: () => dataManagerApi.qualityAll('1D').then(r => r.data.data ?? []),
+    staleTime: 5 * 60_000,
+  })
+  // Build a fast lookup: internalSymbol → report
+  const qualityMap: Record<string, DataQualityReport> = {}
+  for (const q of qualityReports ?? []) qualityMap[q.internalSymbol] = q
+
+  const rawInstruments = data?.items ?? []
+  const totalCount     = data?.totalCount ?? 0
+  const totalPages     = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
+
+  // ── Duplicate detection + merge (same tradingSymbol+exchange from multiple broker refreshes) ──
+  // Different brokers assign different internal codes to the same underlying script.
+  // When mergeDuplicates=true (default) combine all broker tokens onto one row so the user
+  // sees a single entry with all broker availability dots populated correctly.
+  const tradingSymbolCounts: Record<string, number> = {}
+  for (const inst of rawInstruments) {
+    const key = `${inst.exchange}:${inst.tradingSymbol}`
+    tradingSymbolCounts[key] = (tradingSymbolCounts[key] ?? 0) + 1
+  }
+  const duplicateGroupCount = Object.values(tradingSymbolCounts).filter(n => n > 1).length
+
+  const instruments: Instrument[] = mergeDuplicates
+    ? (() => {
+        // Merge: group by tradingSymbol+exchange, union all brokerTokens.
+        // Prefer the MStock row as the "primary" (for internalSymbol display), then Zerodha, then first seen.
+        const groups = new Map<string, Instrument[]>()
+        for (const inst of rawInstruments) {
+          const key = `${inst.exchange}:${inst.tradingSymbol}`
+          const g = groups.get(key) ?? []
+          g.push(inst)
+          groups.set(key, g)
+        }
+        return Array.from(groups.values()).map(rows => {
+          // Pick primary row: prefer MStock, else Zerodha, else first
+          const primary =
+            rows.find(r => 'MStock'  in r.brokerTokens) ??
+            rows.find(r => 'Zerodha' in r.brokerTokens) ??
+            rows[0]
+          // Merge all broker tokens into the primary
+          const mergedTokens = Object.assign({}, ...rows.map(r => r.brokerTokens))
+          return { ...primary, brokerTokens: mergedTokens }
+        })
+      })()
+    : rawInstruments
+
+  // ── Sync connected broker into modal default when modal opens ────────────
+  // (runs whenever downloadTarget changes from null → instrument)
+  useEffect(() => {
+    if (downloadTarget) {
+      setDownloadForm(f => ({ ...f, brokerName: connectedBroker }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [downloadTarget])
 
   // ── Download handler ──────────────────────────────────────────────────────
-
   const handleDownload = async () => {
     if (!downloadTarget) return
     setDownloadPending(true)
     setDownloadMsg(null)
     try {
       await historicalApi.downloadHistory(
-        downloadTarget.internalSymbol, downloadForm.timeframe, downloadForm.fromDate)
+        downloadTarget.internalSymbol,
+        downloadForm.timeframe,
+        downloadForm.fromDate,
+        downloadForm.toDate,
+        downloadForm.brokerName,
+      )
       setDownloadMsg({
         type: 'ok',
-        text: `Download job queued for ${downloadTarget.internalSymbol} (${downloadForm.timeframe} from ${downloadForm.fromDate}). Check Hangfire for progress.`,
+        text: `Job queued — ${downloadTarget.internalSymbol} ${downloadForm.timeframe} via ${downloadForm.brokerName} (${downloadForm.fromDate} → ${downloadForm.toDate}).`,
       })
       setTimeout(() => setDownloadTarget(null), 3000)
     } catch (err: any) {
       setDownloadMsg({
         type: 'err',
-        text: err?.response?.data?.error ?? 'Download failed. Ensure historical data service is running.',
+        text: err?.response?.data?.error ?? 'Download failed. Check broker connection and logs.',
       })
     } finally {
       setDownloadPending(false)
@@ -205,9 +286,35 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
           Active only
         </label>
 
+        {duplicateGroupCount > 0 && (
+          <label
+            title="Same script appears from multiple brokers with different internal codes. Merging combines all broker tokens into one row."
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            <input
+              type="checkbox"
+              checked={mergeDuplicates}
+              onChange={e => setMergeDuplicates(e.target.checked)}
+            />
+            <span style={{
+              padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+              background: mergeDuplicates ? '#14532d22' : '#7c2d1222',
+              color: mergeDuplicates ? '#10b981' : '#f97316',
+              border: `1px solid ${mergeDuplicates ? '#14532d44' : '#7c2d1244'}`,
+            }}>
+              {mergeDuplicates
+                ? `✓ ${duplicateGroupCount} scripts merged (multi-broker)`
+                : `${duplicateGroupCount} duplicate trading symbols — merge?`}
+            </span>
+          </label>
+        )}
+
         {!isLoading && totalCount > 0 && (
           <span style={{ fontSize: 12, color: '#475569', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
-            {totalCount.toLocaleString()} result{totalCount !== 1 ? 's' : ''}
+            {instruments.length.toLocaleString()} of {totalCount.toLocaleString()} shown
+            {mergeDuplicates && instruments.length < rawInstruments.length && (
+              <span style={{ color: '#10b981' }}> ({rawInstruments.length - instruments.length} merged)</span>
+            )}
           </span>
         )}
       </div>
@@ -269,6 +376,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
               key={inst.internalSymbol}
               instrument={inst}
               even={idx % 2 === 0}
+              quality={qualityMap[inst.internalSymbol]}
               onDownload={() => { setDownloadTarget(inst); setDownloadMsg(null) }}
             />
           ))}
@@ -346,7 +454,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
               <Msg type={downloadMsg.type} text={downloadMsg.text} onClose={() => setDownloadMsg(null)} />
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Timeframe</label>
                 <select
@@ -358,6 +466,34 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
                 </select>
               </div>
               <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+                  Broker
+                  {connectedBroker && (
+                    <span style={{ marginLeft: 6, fontSize: 10, color: '#10b981', fontWeight: 400 }}>
+                      ● {connectedBroker} connected
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={downloadForm.brokerName}
+                  onChange={e => setDownloadForm({ ...downloadForm, brokerName: e.target.value })}
+                  style={{ ...inp, width: '100%' }}
+                >
+                  {(['MStock', 'Zerodha', 'Upstox'] as const).map(b => {
+                    const status = brokerStatuses?.find(s => s.brokerName === b)
+                    const connected = status?.isAuthenticated
+                    return (
+                      <option key={b} value={b}>
+                        {b}{connected ? ' ✓' : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+              <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>From Date</label>
                 <input
                   type="date"
@@ -366,11 +502,20 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
                   style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
                 />
               </div>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>To Date</label>
+                <input
+                  type="date"
+                  value={downloadForm.toDate}
+                  onChange={e => setDownloadForm({ ...downloadForm, toDate: e.target.value })}
+                  style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
             </div>
 
             <p style={{ fontSize: 11, color: '#64748b', marginBottom: 16, lineHeight: 1.5 }}>
-              Broker API rate limits apply (Zerodha: max 60 days/request, 3 req/s).
-              The system chunks and respects rate limits automatically. Large ranges may take a few minutes.
+              Broker API rate limits apply. The system automatically chunks the date range and
+              respects per-broker limits. Large ranges may take a few minutes in the background.
             </p>
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -382,7 +527,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
               </button>
               <button
                 onClick={handleDownload}
-                disabled={downloadPending || !downloadForm.fromDate}
+                disabled={downloadPending || !downloadForm.fromDate || !downloadForm.toDate || !downloadForm.brokerName}
                 style={{
                   padding: '8px 20px',
                   background: downloadPending ? '#4b5563' : '#3b82f6',
@@ -409,14 +554,17 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
 
 // ─── InstrumentRow ────────────────────────────────────────────────────────────
 
-function InstrumentRow({ instrument: inst, even, onDownload }: {
-  instrument: Instrument; even: boolean; onDownload: () => void
+function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
+  instrument: Instrument
+  even: boolean
+  quality?: DataQualityReport
+  onDownload: () => void
 }) {
   return (
     <div style={{
       display: 'grid',
       gridTemplateColumns: gridCols,
-      padding: '8px 16px',
+      padding: '5px 16px',
       borderBottom: '1px solid #1e1e2e',
       background: even ? '#1a1a2e' : '#1c1c2e',
       alignItems: 'center',
@@ -457,6 +605,20 @@ function InstrumentRow({ instrument: inst, even, onDownload }: {
         <BrokerDot label="M" active={'MStock'  in inst.brokerTokens} color="#10b981" />
       </div>
 
+      {/* Data Through (history downloaded) */}
+      <div>
+        {quality?.hasData ? (
+          <span
+            title={`${quality.totalCandles.toLocaleString()} candles · ${quality.gapCount} gaps · from ${quality.firstCandle}`}
+            style={{ fontSize: 11, color: '#10b981', fontFamily: 'monospace', cursor: 'help' }}
+          >
+            {quality.lastCandle}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, color: '#374151' }}>No data</span>
+        )}
+      </div>
+
       {/* Status */}
       <div>
         <span style={{
@@ -473,13 +635,16 @@ function InstrumentRow({ instrument: inst, even, onDownload }: {
         <button
           onClick={onDownload}
           style={{
-            padding: '4px 10px', background: '#1e3a5f', color: '#60a5fa',
-            border: '1px solid #1e4a7f', borderRadius: 4, fontSize: 11,
+            padding: '4px 10px',
+            background: quality?.hasData ? '#14353a' : '#1e3a5f',
+            color:      quality?.hasData ? '#34d399'  : '#60a5fa',
+            border: `1px solid ${quality?.hasData ? '#1e5a4f' : '#1e4a7f'}`,
+            borderRadius: 4, fontSize: 11,
             fontWeight: 600, cursor: 'pointer',
           }}
-          title="Download historical candle data"
+          title={quality?.hasData ? `Last candle: ${quality.lastCandle} — click to update` : 'Download historical candle data'}
         >
-          ↓ History
+          {quality?.hasData ? '↻ Update' : '↓ History'}
         </button>
       </div>
     </div>

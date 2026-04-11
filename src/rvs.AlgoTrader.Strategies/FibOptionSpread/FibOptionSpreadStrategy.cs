@@ -49,11 +49,13 @@ public class FibOptionSpreadStrategy(FibOptionSpreadConfig config) : IStrategy
         }
 
         // ── IV (ATM) filter ───────────────────────────────────────────────
+        // Filter to liquid near-ATM strikes before reading AtmIv (excludes far-OTM hedges).
         if (context.OptionChain is not null)
         {
-            if (context.OptionChain.AtmIv < config.MinAtmIv)
+            var filteredChain = context.OptionChain.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
+            if (filteredChain.AtmIv < config.MinAtmIv)
                 return Task.FromResult(SignalResult.Hold(
-                    $"ATM IV {context.OptionChain.AtmIv:F1}% below minimum {config.MinAtmIv}% — spread premium insufficient"));
+                    $"ATM IV {filteredChain.AtmIv:F1}% below minimum {config.MinAtmIv}% — spread premium insufficient"));
         }
 
         // ── SMA50 trend ───────────────────────────────────────────────────
@@ -200,6 +202,10 @@ public class FibOptionSpreadConfig
     public decimal EntryZonePct     { get; set; } = 2.0m;   // % buffer around Fib 1.618 extension zone
     public decimal ShortLegDelta    { get; set; } = 0.25m;  // sell ~25-delta option
     public int     WingWidthStrikes { get; set; } = 2;       // strike intervals for hedge leg
+    /// <summary>Number of strikes each side of ATM for AtmIv filter (excludes far-OTM hedges).</summary>
+    public int     ChainStrikeDepth { get; set; } = 5;
+    /// <summary>Strike interval (50 = NIFTY, 100 = BANKNIFTY).</summary>
+    public decimal StrikeInterval   { get; set; } = 50m;
 
     public static FibOptionSpreadConfig FromJson(string json)
     {
@@ -222,5 +228,7 @@ public class FibOptionSpreadConfig
         new("EntryZonePct",     "Entry Zone Buffer %",    "decimal", 2.0m,  Min: 0.5m, Max: 10m,  Step: 0.5m, Hint: "% buffer around Fib 1.618 extension level for entry zone"),
         new("ShortLegDelta",    "Short Leg Delta",        "decimal", 0.25m, Min: 0.1m, Max: 0.5m, Step: 0.05m, Hint: "Delta of the short option leg (~0.25 = 25-delta)"),
         new("WingWidthStrikes", "Wing Width (Strikes)",   "int",     2,     Min: 1,    Max: 10,   Hint: "Number of strike intervals between short and long leg"),
+        new("ChainStrikeDepth", "Chain Strike Depth",     "int",     5,     Min: 1,    Max: 20,   Hint: "Strikes each side of ATM for AtmIv filter. Excludes far-OTM hedges."),
+        new("StrikeInterval",   "Strike Interval (pts)",  "decimal", 50m,   Min: 10m,  Max: 500m, Step: 10m, Hint: "50 for NIFTY, 100 for BANKNIFTY"),
     ];
 }

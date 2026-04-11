@@ -118,25 +118,37 @@ public class BacktestService(
         DataHash: r.DataHash,
         Error: r.Error,
         StartedAt: DateTimeOffset.UtcNow,
-        Trades: r.Trades.Select(t => new BacktestTradeDto(
-            Direction: t.Direction,
-            EntryPrice: t.EntryPrice,
-            ExitPrice: t.ExitPrice,
-            Quantity: t.Quantity,
-            ExitReason: t.ExitReason,
-            GrossPnl: t.GrossPnl,
-            NetPnl: t.NetPnl,
-            EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
-            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o"),
-            Mae: t.Direction == "BUY"
-                ? Math.Max(0m, t.EntryPrice - t.WorstPrice)
-                : Math.Max(0m, t.WorstPrice - t.EntryPrice),
-            Mfe: t.Direction == "BUY"
-                ? Math.Max(0m, t.BestPrice - t.EntryPrice)
-                : Math.Max(0m, t.EntryPrice - t.BestPrice),
-            EntryCommission: t.EntryCommission,
-            ExitCommission:  t.ExitCommission
-        )).ToList(),
+        Trades: r.Trades.Select(t =>
+        {
+            // R-multiple: NetPnl ÷ initial monetary risk
+            var riskPerUnit = Math.Abs(t.EntryPrice - t.InitialStopLoss);
+            var initialRisk = riskPerUnit > 0 ? riskPerUnit * t.Quantity : 1m;
+            return new BacktestTradeDto(
+                Direction: t.Direction,
+                EntryPrice: t.EntryPrice,
+                ExitPrice: t.ExitPrice,
+                Quantity: t.Quantity,
+                ExitReason: t.ExitReason,
+                GrossPnl: t.GrossPnl,
+                NetPnl: t.NetPnl,
+                EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
+                ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o"),
+                Mae: t.Direction == "BUY"
+                    ? Math.Max(0m, t.EntryPrice - t.WorstPrice)
+                    : Math.Max(0m, t.WorstPrice - t.EntryPrice),
+                Mfe: t.Direction == "BUY"
+                    ? Math.Max(0m, t.BestPrice - t.EntryPrice)
+                    : Math.Max(0m, t.EntryPrice - t.BestPrice),
+                EntryCommission: t.EntryCommission,
+                ExitCommission:  t.ExitCommission,
+                TotalCost:       t.EntryCommission + t.ExitCommission,
+                SlippageAmount:  t.SlippageAmount,
+                StopLoss:        t.StopLoss,
+                TakeProfit:      t.TakeProfit,
+                HoldingBars:     t.HoldingBars,
+                RMultiple:       Math.Round(t.NetPnl / initialRisk, 2),
+                LegsJson:        t.LegsJson);
+        }).ToList(),
         MonthlyBreakdown: r.MonthlyBreakdown.Select(m => new BacktestMonthlyBreakdownDto(m.Year, m.Month, m.Pnl, m.Trades, m.WinRate)).ToList(),
         YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList(),
         ChartSample: r.ChartSample?.Select(b => new BacktestChartBarDto(

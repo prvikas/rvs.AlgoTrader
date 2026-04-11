@@ -160,12 +160,19 @@ export function UniversePage() {
   const [showSuggestions, setShowSuggestions] = useState(false)
   const symbolInputRef = useRef<HTMLDivElement>(null)
 
-  // Typeahead: search instruments master (not universe) when user types ≥ 2 chars
+  // Typeahead: search instruments master filtered by the selected exchange + category
+  // so the dropdown only shows instruments that are compatible with the current selection.
   const { data: suggestions } = useQuery({
-    queryKey: ['instrument-search-universe', symbolQuery],
+    queryKey: ['instrument-search-universe', symbolQuery, newExchange, newCategory],
     queryFn: () =>
       instrumentsApi
-        .list({ search: symbolQuery, pageSize: 15 })
+        .list({
+          search:   symbolQuery,
+          exchange: newExchange,
+          // Map category → instrument type filter (equity categories → Equity, options → Options)
+          instrumentType: newCategory === 'OPTIONS_UNDERLYING' ? 'Options' : 'Equity',
+          pageSize: 15,
+        })
         .then(r => r.data.data?.items ?? []),
     enabled: symbolQuery.length >= 2,
     staleTime: 10_000,

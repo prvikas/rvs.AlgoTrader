@@ -186,10 +186,25 @@ export const instrumentsApi = {
 
 // Historical Data
 export const historicalApi = {
-  /** Triggers a Hangfire job to download candle history for one instrument.
-   *  fromDate format: "YYYY-MM-DD". Returns a job ID or status message. */
-  downloadHistory: (internalSymbol: string, timeframe: string, fromDate: string) =>
-    apiClient.post<ApiResponse<string>>('/historical/download', { internalSymbol, timeframe, fromDate }),
+  /**
+   * Enqueues a Hangfire job to download candle history for one instrument.
+   * Routes to POST /api/data-manager/download (DataManagerController).
+   * fromDate / toDate format: "YYYY-MM-DD". brokerName: "MStock" | "Zerodha" | "Upstox".
+   */
+  downloadHistory: (
+    internalSymbol: string,
+    timeframe: string,
+    fromDate: string,
+    toDate: string,
+    brokerName: string,
+  ) =>
+    apiClient.post<ApiResponse<string>>('/data-manager/download', {
+      internalSymbol,
+      timeframe,
+      fromDate,
+      toDate,
+      brokerName,
+    }),
   /** List recent download jobs and their status. */
   listJobs: () =>
     apiClient.get<ApiResponse<HistoricalDownloadJob[]>>('/historical/jobs'),
@@ -204,6 +219,27 @@ export interface HistoricalDownloadJob {
   createdAt: string
   completedAt?: string
   error?: string
+}
+
+// Data Manager — quality reports
+export interface DataQualityReport {
+  internalSymbol: string
+  timeframe: string
+  firstCandle?: string   // "YYYY-MM-DD"
+  lastCandle?:  string   // "YYYY-MM-DD"
+  totalCandles: number
+  gapCount: number
+  duplicateCount: number
+  hasData: boolean
+}
+
+export const dataManagerApi = {
+  /** Per-symbol quality report (firstCandle, lastCandle, gaps, duplicates). */
+  quality: (symbol: string, timeframe = '1D') =>
+    apiClient.get<ApiResponse<DataQualityReport>>(`/data-manager/quality/${encodeURIComponent(symbol)}/${timeframe}`),
+  /** Quality summary for ALL symbols at a given timeframe — use for bulk table display. */
+  qualityAll: (timeframe = '1D') =>
+    apiClient.get<ApiResponse<DataQualityReport[]>>(`/data-manager/quality?timeframe=${timeframe}`),
 }
 
 // Backtest
@@ -229,6 +265,9 @@ export const backtestApi = {
   /** Fetch a single saved result by ID (includes chartSample). */
   get: (id: string) =>
     apiClient.get<ApiResponse<BacktestResult>>(`/backtest/${id}`),
+  /** Fetch full per-trade breakdown for a saved run (entry/exit, brokerage, R, legs, etc.). */
+  trades: (id: string) =>
+    apiClient.get<ApiResponse<BacktestTradeResult[]>>(`/backtest/${id}/trades`),
   report: (id: string) =>
     apiClient.get(`/backtest/${id}/report`, { responseType: 'blob' }),
 }
@@ -417,16 +456,41 @@ export interface BacktestResult {
   circuitBreakerReason?: string
 }
 
+export interface BacktestTradeLeg {
+  strike:    number
+  type:      'CE' | 'PE'
+  direction: 'BUY' | 'SELL'
+  premium:   number   // entry premium per contract
+  expiry:    string   // "YYYY-MM-DD"
+  brokerage: number   // flat brokerage for this leg
+}
+
 export interface BacktestTradeResult {
-  direction: string
-  entryPrice: number
-  exitPrice: number
-  quantity: number
-  exitReason: string
-  grossPnl: number
-  netPnl: number
-  entryTime: string  // UTC ISO
-  exitTime: string   // UTC ISO
+  direction:       string
+  entryPrice:      number
+  exitPrice:       number
+  quantity:        number
+  exitReason:      string
+  grossPnl:        number
+  netPnl:          number
+  entryTime:       string  // UTC ISO
+  exitTime:        string  // UTC ISO
+  // ── Excursion ──────────────────────────────────────────────────────────
+  mae?:            number  // Maximum Adverse Excursion (price units)
+  mfe?:            number  // Maximum Favorable Excursion (price units)
+  // ── Cost breakdown ─────────────────────────────────────────────────────
+  entryCommission?: number
+  exitCommission?:  number
+  totalCost?:       number  // entryCommission + exitCommission
+  slippageAmount?:  number  // ₹ slippage cost at entry
+  // ── Risk levels ────────────────────────────────────────────────────────
+  stopLoss?:        number  // initial stop-loss price
+  takeProfit?:      number  // take-profit / target
+  // ── Duration & R ───────────────────────────────────────────────────────
+  holdingBars?:     number  // candle bars from entry to exit
+  rMultiple?:       number  // NetPnl ÷ initial risk (R-multiple)
+  // ── Spread legs ────────────────────────────────────────────────────────
+  legsJson?:        string  // JSON array of BacktestTradeLeg; parse to show per-leg table
 }
 
 /**

@@ -10,6 +10,8 @@ interface Props {
   indicatorId?: string
   strategyIndicators: IndicatorConfig[]
   primaryTimeframe?: Timeframe   // inherit default from strategy Basic Details
+  /** Pre-select this layer when opening the modal from a layer's own + button */
+  defaultLayer?: SignalLayer
   onSave: (i: IndicatorConfig) => void
   onClose: () => void
 }
@@ -51,7 +53,7 @@ const DEFAULT_PARAMS: Record<string, Record<string, number>> = {
   ADX:              { period: 14, threshold: 20 },
 }
 
-export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimeframe, onSave, onClose }: Props) {
+export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimeframe, defaultLayer, onSave, onClose }: Props) {
   const existing = strategyIndicators.find(i => i.id === indicatorId)
   const { enums } = useEnums()
 
@@ -71,7 +73,10 @@ export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimefra
   const [allowedRanges, setAllowedRanges] = useState<Record<string, ParamRange | string[]>>(
     existing?.allowedParamRanges ?? {}
   )
-  const [signalLayer, setSignalLayer] = useState<SignalLayer>(existing?.signalLayer ?? SignalLayer.PrimarySignal)
+  // Pre-select layer from: (1) existing indicator's layer, (2) defaultLayer prop (from layer's + button), (3) PrimarySignal
+  const [signalLayer, setSignalLayer] = useState<SignalLayer>(
+    existing?.signalLayer ?? defaultLayer ?? SignalLayer.PrimarySignal
+  )
   const [layerOrder, setLayerOrder] = useState<number>(existing?.layerOrder ?? 0)
 
   const tfOptions = enums.timeframe ?? []

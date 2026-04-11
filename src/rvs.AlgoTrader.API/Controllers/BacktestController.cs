@@ -125,6 +125,23 @@ public class BacktestController(
     }
 
     /// <summary>
+    /// Returns the full per-trade breakdown for a saved backtest run.
+    /// Includes entry/exit prices, quantity, brokerage per leg, slippage, R-multiple,
+    /// holding bars, MAE/MFE, and per-leg JSON for spread trades.
+    /// </summary>
+    [HttpGet("{id:guid}/trades")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<BacktestTradeDto>>>> GetTrades(
+        Guid id, CancellationToken ct)
+    {
+        var result = await mediator.Send(new GetBacktestResultQuery(id), ct);
+        if (result == null)
+            return NotFound(ApiResponse.Fail<IReadOnlyList<BacktestTradeDto>>($"Backtest run '{id}' not found"));
+
+        var trades = result.Trades ?? [];
+        return Ok(ApiResponse<IReadOnlyList<BacktestTradeDto>>.Ok(trades));
+    }
+
+    /// <summary>
     /// Runs a Monte Carlo simulation on a completed backtest's trade sequence.
     /// Shuffles trade order N times to compute confidence intervals for drawdown and final equity.
     /// </summary>

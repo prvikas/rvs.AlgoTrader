@@ -30,7 +30,8 @@ public class ShortStraddleStrangleStrategy(ShortStraddleStrangleConfig config) :
             return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
                 "ShortStraddleStrangle requires OptionChain snapshot"));
 
-        var chain  = context.OptionChain;
+        // Filter to ±ChainStrikeDepth strikes from ATM before reading IV or DTE.
+        var chain  = context.OptionChain.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
         decimal iv = chain.AtmIv;
 
         // ── SS-3: DTE filter — only sell premium in the optimal theta decay window ─
@@ -116,6 +117,11 @@ public class ShortStraddleStrangleConfig
     /// Used by SpreadBacktestEngine. Default 0.50 — close at 50% of max profit.
     /// </summary>
     public decimal ProfitTargetPct                  { get; set; } = 0.50m;
+    /// <summary>Number of strikes on each side of ATM included in chain analytics (AtmIv, PCR).
+    /// 5 = ±5 strikes. Excludes far-OTM hedges from IV measurement.</summary>
+    public int     ChainStrikeDepth                 { get; set; } = 5;
+    /// <summary>Strike interval (50 = NIFTY, 100 = BANKNIFTY). Used with ChainStrikeDepth.</summary>
+    public decimal StrikeInterval                   { get; set; } = 50m;
 
     // SS-3: DTE filter — sell premium only in the optimal theta-decay window.
     // Too close to expiry (< MinDte): gamma risk spikes; small moves cause outsized losses.
@@ -139,5 +145,7 @@ public class ShortStraddleStrangleConfig
         new("ProfitTargetPct",   "Profit Target %",      "decimal", 0.50m, Min: 0.10m, Max: 1.0m,  Step: 0.05m,Hint: "Close when this fraction of entry credit is captured (backtest engine)"),
         new("MinDte",            "Min DTE",              "int",     3,     Min: 0,    Max: 30,    Hint: "Minimum days to expiry for entry (SS-3). 0 = disabled."),
         new("MaxDte",            "Max DTE",              "int",     14,    Min: 0,    Max: 90,    Hint: "Maximum days to expiry for entry (SS-3). 0 = no upper cap."),
+        new("ChainStrikeDepth",  "Chain Strike Depth",   "int",     5,     Min: 1,    Max: 20,    Hint: "Strikes each side of ATM for IV analytics. Excludes far-OTM hedges."),
+        new("StrikeInterval",    "Strike Interval (pts)","decimal", 50m,   Min: 10m,  Max: 500m,  Step: 10m, Hint: "50 for NIFTY, 100 for BANKNIFTY"),
     ];
 }

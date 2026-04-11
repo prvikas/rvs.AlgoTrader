@@ -228,4 +228,9 @@ public record BacktestTrade(
     decimal WorstPrice       = 0m,   // running low (longs) or running high (shorts) since entry — used for MAE
     bool TrailActive         = false, // true once trailing has been activated
     decimal EntryCommission  = 0m,   // commission deducted from equity at trade open
-    decimal ExitCommission   = 0m);  // commission deducted from equity at trade close
+    decimal ExitCommission   = 0m,   // commission deducted from equity at trade close
+    // ── Professional analysis fields ────────────────────────────────────────
+    int     HoldingBars      = 0,    // candle bars held from entry fill to exit
+    decimal SlippageAmount   = 0m,   // slippage cost in ₹ (qty × rawPrice × basisPoints/10000)
+    string? LegsJson         = null, // spread trades: JSON array of per-leg details
+    int     EntryBarIndex    = -1);  // internal: allCandles[] index at entry fill (used to compute HoldingBars)

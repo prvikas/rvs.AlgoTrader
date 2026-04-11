@@ -165,7 +165,10 @@
       "Bash(grep -n \"DateTime\\\\.\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Commands/ForwardTest/*.cs)",
       "Bash(grep -n \"DateTime\\\\.\" /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Application/Queries/ForwardTest/*.cs)",
       "Bash(grep -rn DateTime. /c/Users/prvik/Downloads/algotrader-claude-kit/src/rvs.AlgoTrader.Backtesting --include=*.cs)",
-      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *SpreadSignalResult* -o -name *SpreadLeg* -o -name *SignalType*)"
+      "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *SpreadSignalResult* -o -name *SpreadLeg* -o -name *SignalType*)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/frontend/src -name *NewStrategy* -o -name *Create* -o -name *Modal*)"
     ]
   }
 }

@@ -377,44 +377,70 @@ export default function ScenariosPanel({
                 </span>
               )}
 
-              {/* Backtest result metrics */}
+              {/* Backtest result metrics + direct Results button */}
               {(() => {
                 const m = compareById[s.id]
                 if (!m || m.totalReturn == null) return null
                 return (
-                  <button
-                    onClick={() => setView('compare')}
-                    title="Click to see full comparison"
-                    style={{
-                      display: 'flex', gap: 6, alignItems: 'center', background: 'none',
-                      border: 'none', padding: 0, cursor: 'pointer', flexShrink: 0,
-                    }}
-                  >
-                    <span style={{
-                      fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
-                      background: m.totalReturn >= 0 ? C.greenBg : C.redBg,
-                      color: m.totalReturn >= 0 ? C.green : C.red,
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {pct(m.totalReturn)}
-                    </span>
-                    {m.sharpeRatio != null && (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                    {/* Inline metric badges — click to see full compare table */}
+                    <button
+                      onClick={() => setView('compare')}
+                      title="Click to see full comparison table"
+                      style={{
+                        display: 'flex', gap: 4, alignItems: 'center', background: 'none',
+                        border: 'none', padding: 0, cursor: 'pointer',
+                      }}
+                    >
                       <span style={{
                         fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
-                        background: C.surface2, color: C.textSub, whiteSpace: 'nowrap',
+                        background: m.totalReturn >= 0 ? C.greenBg : C.redBg,
+                        color: m.totalReturn >= 0 ? C.green : C.red,
+                        whiteSpace: 'nowrap',
                       }}>
-                        S:{fmt2(m.sharpeRatio)}
+                        {pct(m.totalReturn)}
                       </span>
+                      {m.sharpeRatio != null && (
+                        <span style={{
+                          fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
+                          background: C.surface2, color: C.textSub, whiteSpace: 'nowrap',
+                        }}>
+                          S:{fmt2(m.sharpeRatio)}
+                        </span>
+                      )}
+                      {m.totalTrades != null && (
+                        <span style={{
+                          fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
+                          background: C.surface2, color: C.textSub, whiteSpace: 'nowrap',
+                        }}>
+                          {fmtN(m.totalTrades)}T
+                        </span>
+                      )}
+                      {m.maxDrawdown != null && (
+                        <span style={{
+                          fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
+                          background: C.redBg, color: C.red, whiteSpace: 'nowrap',
+                        }}>
+                          DD:{pct(m.maxDrawdown)}
+                        </span>
+                      )}
+                    </button>
+                    {/* Results button — use scenario's own lastBacktestRunId (authoritative) */}
+                    {s.lastBacktestRunId && onOpenBacktestResult && (
+                      <button
+                        onClick={() => onOpenBacktestResult(s.lastBacktestRunId!)}
+                        title="Open backtest chart, P&L, and trade-by-trade breakdown for this scenario's last run"
+                        style={{
+                          padding: '2px 8px', background: C.blueBg,
+                          border: `1px solid ${C.blue}55`, borderRadius: 4,
+                          color: C.blue, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Results ↗
+                      </button>
                     )}
-                    {m.maxDrawdown != null && (
-                      <span style={{
-                        fontSize: 11, fontFamily: 'monospace', padding: '2px 6px', borderRadius: 4,
-                        background: C.redBg, color: C.red, whiteSpace: 'nowrap',
-                      }}>
-                        DD:{pct(m.maxDrawdown)}
-                      </span>
-                    )}
-                  </button>
+                  </div>
                 )
               })()}
 
@@ -598,15 +624,15 @@ export default function ScenariosPanel({
                       {r.lastBacktestRunId && onOpenBacktestResult && (
                         <button
                           onClick={() => onOpenBacktestResult(r.lastBacktestRunId!)}
-                          title="View chart and trades for this scenario's last backtest"
+                          title="Open full backtest: chart, equity curve, trades and per-leg breakdown"
                           style={{
-                            padding: '3px 8px', background: C.blueBg,
-                            border: `1px solid ${C.blue}44`, borderRadius: 3,
+                            padding: '3px 10px', background: C.blueBg,
+                            border: `1px solid ${C.blue}55`, borderRadius: 3,
                             color: C.blue, fontSize: 10, fontWeight: 600, cursor: 'pointer',
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          Chart
+                          View Results ↗
                         </button>
                       )}
                     </td>

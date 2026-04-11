@@ -61,7 +61,10 @@ public class IntradayPcrOptionsStrategy(IntradayPcrOptionsConfig config) : IStra
             return Task.FromResult(SignalResult.Skip(SkippedReason.FilterFailed,
                 "IntradayPcrOptions requires OptionChain snapshot — not available"));
 
-        var chain = context.OptionChain;
+        // Filter to ±ChainStrikeDepth liquid strikes before computing PCR.
+        // Far-OTM hedges/institutional positions distort the ratio; near-ATM OI reflects
+        // genuine intraday directional positioning.
+        var chain = context.OptionChain.FilteredAroundAtm(config.StrikeInterval, config.ChainStrikeDepth);
 
         // ── PCR by change in OI (spec: PCR(change in OI)) ─────────────────
         // Use OI change ratio when CE side has positive build; fall back to static OI ratio
@@ -161,6 +164,11 @@ public class IntradayPcrOptionsConfig
     public int ObserveEndMinute         { get; set; } = 0;
     public int DeferredStartHour        { get; set; } = 13;
     public int DeferredStartMinute      { get; set; } = 0;
+    /// <summary>Number of strikes each side of ATM used for PCR / OI computation.
+    /// Default 5 = ±5 strikes (±250 pts for NIFTY). Excludes institutional hedges at far strikes.</summary>
+    public int     ChainStrikeDepth     { get; set; } = 5;
+    /// <summary>Strike interval (50 = NIFTY, 100 = BANKNIFTY).</summary>
+    public decimal StrikeInterval       { get; set; } = 50m;
 
     public static IntradayPcrOptionsConfig FromJson(string json)
     {
@@ -188,5 +196,7 @@ public class IntradayPcrOptionsConfig
         new("ObserveEndHour",    "Observe End Hour",    "int",     11,    Min: 10,    Max: 12,   Hint: "IST hour for observation end / earliest entry time"),
         new("ObserveEndMinute",  "Observe End Min",     "int",     0,     Min: 0,     Max: 59),
         new("DeferredStartHour", "Deferred Start Hour", "int",     13,    Min: 12,    Max: 14,   Hint: "IST hour for entry after large gap (default 13:00)"),
+        new("ChainStrikeDepth",  "Chain Strike Depth",  "int",     5,     Min: 1,     Max: 20,   Hint: "Strikes each side of ATM for PCR analytics. Excludes far-OTM institutional hedges."),
+        new("StrikeInterval",    "Strike Interval (pts)","decimal", 50m,   Min: 10m,   Max: 500m, Step: 10m, Hint: "50 for NIFTY, 100 for BANKNIFTY"),
     ];
 }
