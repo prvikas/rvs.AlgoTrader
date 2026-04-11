@@ -3,7 +3,15 @@ namespace rvs.AlgoTrader.Domain.Enums;
 public enum OrderType { Market, Limit, SL, SLM }
 public enum OrderDirection { Buy, Sell }
 public enum OrderStatus { Pending, Open, PartiallyFilled, Complete, Rejected, Cancelled }
-public enum SignalType { Buy, Sell, Hold }
+/// <summary>
+/// Buy / Sell = new entry signal (no open position required).
+/// ExitLong / ExitShort = strategy-driven close of an existing position.
+///   Used by strategies where exit is triggered by an indicator condition (e.g. SMA crossover),
+///   not by a fixed SL/TP price level. BacktestEngine executes these at next-candle-open.
+///   Backward-compatible: existing strategies never return these values.
+/// Hold = no action this bar.
+/// </summary>
+public enum SignalType { Buy, Sell, Hold, ExitLong, ExitShort }
 public enum StrategyStatus { Draft, Scheduled, Running, Paused, Stopped }
 public enum StrategyMode { Backtest, Forward, Live }
 public enum InstrumentType { Equity, Futures, Options, Index }

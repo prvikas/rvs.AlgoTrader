@@ -99,6 +99,10 @@ public class BacktestEngine(
         var circuitBreakerFloor = request.CircuitBreakerPct > 0
             ? request.InitialCapital * request.CircuitBreakerPct
             : 0m;
+        // Strategy-driven exit: set to true when the strategy returns ExitLong/ExitShort.
+        // The actual close is deferred to the OPEN of the next candle (matching PineScript next-bar fill).
+        bool pendingStrategyExit = false;
+        string  pendingExitReason = string.Empty;
 
         // Progress reporting: every 1% of bars (minimum 1)
         var jobId        = request.JobId ?? "backtest";
@@ -180,6 +184,51 @@ public class BacktestEngine(
             if (i % 500 == 0) ct.ThrowIfCancellationRequested();
 
             var current = allCandles[i];
+
+            // ── Strategy-driven exit: execute deferred close at this bar's open ──────────
+            // Set by the exit-signal evaluation block below (previous bar returned ExitLong/ExitShort).
+            // PineScript semantics: signal fires on bar close, fill executes at next bar's open.
+            if (pendingStrategyExit && openTrade != null)
+            {
+                var seExitPrice = current.Open;
+                var seGross     = openTrade.Direction == "BUY"
+                    ? (seExitPrice - openTrade.EntryPrice) * openTrade.Quantity
+                    : (openTrade.EntryPrice - seExitPrice) * openTrade.Quantity;
+                var seCosts     = costCalc.Calculate(seExitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
+                trades.Add(openTrade with
+                {
+                    ExitPrice      = seExitPrice,
+                    ExitTime       = current.OpenTime,
+                    GrossPnl       = seGross,
+                    NetPnl         = seGross - openTrade.EntryCommission - seCosts.Total,
+                    ExitReason     = $"STRATEGY_EXIT:{pendingExitReason}",
+                    ExitCommission = seCosts.Total,
+                    HoldingBars    = Math.Max(0, i - openTrade.EntryBarIndex),
+                });
+                equity    += seGross - seCosts.Total;
+                openTrade          = null;
+                pendingStrategyExit = false;
+
+                if (equity > peakEquity) peakEquity = equity;
+                var seDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                if (seDd > maxDrawdown) maxDrawdown = seDd;
+
+                if (equity <= 0)
+                {
+                    circuitBreakerHit    = true;
+                    circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt (strategy exit). Backtest stopped.";
+                    logger.LogWarning("[Backtest] Bankruptcy after strategy exit at bar {I}", i);
+                    break;
+                }
+                if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
+                {
+                    circuitBreakerHit    = true;
+                    circuitBreakerReason = $"Equity ₹{equity:F0} fell below circuit breaker floor after strategy exit.";
+                    logger.LogWarning("[Backtest] Circuit breaker hit after strategy exit at bar {I}", i);
+                    break;
+                }
+                // Fall through — evaluate for new entry on this bar (position is now flat).
+            }
 
             // ── ALL-SPREADS-1: monitor open spread position ───────────────────
             if (openSpread != null)
@@ -293,13 +342,43 @@ public class BacktestEngine(
                     }
                 }
 
-                // Chart: add bar without indicators (strategy not evaluated on open-trade bars)
+                // ── Strategy-driven exit evaluation ───────────────────────────────────
+                // Re-evaluate the strategy with CurrentPosition set so that strategies using
+                // indicator-based exits (e.g. SMA crossover) can return ExitLong / ExitShort.
+                // Backward-compatible: existing strategies return Buy/Sell/Hold and are unaffected.
+                // If an exit signal fires, set pendingStrategyExit = true; fill executes at the
+                // OPEN of the next candle (consistent with the PineScript next-bar fill model).
+                if (openTrade != null) // guard: may have been closed by SL/TP above
+                {
+                    var exitVisibleCandles = new ReadOnlyListSlice<ClosedCandle>(allCandles, i + 1);
+                    var exitCtx = new StrategyContext(
+                        Guid.Empty, request.InternalSymbol, request.Timeframe,
+                        exitVisibleCandles, request.ParametersJson, "backtest",
+                        CurrentPosition: openTrade.Direction == "BUY" ? "LONG" : "SHORT");
+                    try
+                    {
+                        var exitSignal = await strategy.EvaluateAsync(exitCtx, ct);
+                        if ((openTrade.Direction == "BUY"  && exitSignal.Signal == SignalType.ExitLong) ||
+                            (openTrade.Direction == "SELL" && exitSignal.Signal == SignalType.ExitShort))
+                        {
+                            pendingStrategyExit = true;
+                            pendingExitReason   = exitSignal.Reason ?? "strategy condition";
+                            logger.LogDebug("[Backtest] Strategy exit queued at bar {I}: {Reason}", i, pendingExitReason);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "[Backtest] Strategy exit evaluation failed at bar {I} — continuing with SL/TP only", i);
+                    }
+                }
+
+                // Chart: add bar (strategy indicators available when exit check ran)
                 AddChartBar(new BacktestChartBar(
                     TimeMs: current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
                     Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
                     Volume: current.Volume,
-                    Signal: null, SignalPrice: null, StopLoss: null, TakeProfit: null,
-                    Indicators: null));
+                    Signal: pendingStrategyExit ? "EXIT" : null, SignalPrice: null,
+                    StopLoss: null, TakeProfit: null, Indicators: null));
 
                 // Progress reporting (for open-trade bars with no signal)
                 if (progress != null && i % progressStep == 0)
@@ -418,6 +497,7 @@ public class BacktestEngine(
                     ChartBatch: SnapshotRollingWindow()));
             }
 
+            // ExitLong/ExitShort with no open position = ignore (already handled above when position was open).
             if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) continue;
 
             // ALL-SPREADS-1: Simulate spread entry via Black-Scholes pricing.

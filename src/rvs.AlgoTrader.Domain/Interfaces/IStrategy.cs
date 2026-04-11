@@ -92,7 +92,14 @@ public record StrategyContext(
     // Populated by StrategyEvaluationQueue and ForwardTestEngine for CalendarSpread strategies.
     // Null for all other strategies or when chain fetch fails.
     OptionChainSnapshot? NearExpiryChain = null,
-    OptionChainSnapshot? FarExpiryChain  = null
+    OptionChainSnapshot? FarExpiryChain  = null,
+
+    // Current open position held by the strategy. Populated by BacktestEngine when it
+    // re-evaluates the strategy during an open trade to check for strategy-driven exits.
+    // "LONG", "SHORT", or null (no position / not applicable).
+    // Strategies that use signal-based exits (e.g. SMA crossover) read this to decide
+    // whether to check entry conditions or exit conditions on the current bar.
+    string? CurrentPosition = null
 );
 
 /// <summary>
@@ -193,6 +200,22 @@ public record SignalResult(
 
     public static SignalResult Skip(SkippedReason skippedReason, string reason = "Signal skipped")
         => new(SignalType.Hold, null, null, null, reason, null, skippedReason.ToString(), null);
+
+    /// <summary>
+    /// Signals that the strategy wants to close an existing LONG position.
+    /// BacktestEngine executes at the OPEN of the next candle (next-candle-open fill model).
+    /// Ignored if there is no open long position.
+    /// </summary>
+    public static SignalResult ExitLong(string reason, IReadOnlyDictionary<string, decimal>? indicatorValues = null)
+        => new(SignalType.ExitLong, null, null, null, reason, null, null, indicatorValues);
+
+    /// <summary>
+    /// Signals that the strategy wants to close an existing SHORT position.
+    /// BacktestEngine executes at the OPEN of the next candle (next-candle-open fill model).
+    /// Ignored if there is no open short position.
+    /// </summary>
+    public static SignalResult ExitShort(string reason, IReadOnlyDictionary<string, decimal>? indicatorValues = null)
+        => new(SignalType.ExitShort, null, null, null, reason, null, null, indicatorValues);
 
     /// <summary>Entry signal for a multi-leg spread. ISpreadOrderManager places all legs atomically.</summary>
     public static SignalResult SpreadEntry(SpreadSignalResult spread)

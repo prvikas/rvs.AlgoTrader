@@ -7,6 +7,8 @@ using rvs.AlgoTrader.Strategies.IntradayPcrOptions;
 using rvs.AlgoTrader.Strategies.IronCondor;
 using rvs.AlgoTrader.Strategies.PriceActionBreakout;
 using rvs.AlgoTrader.Strategies.ShortStraddleStrangle;
+using rvs.AlgoTrader.Strategies.GenericRules;
+using rvs.AlgoTrader.Strategies.SmaDualThreshold;
 using rvs.AlgoTrader.Strategies.VcpSwing;
 using rvs.AlgoTrader.Strategies.VerticalSpread;
 
@@ -29,6 +31,8 @@ namespace rvs.AlgoTrader.Strategies;
 /// │ ShortStraddleStrangle    │ Short ATM straddle or OTM strangle (2 legs, theta decay)  │
 /// │ CalendarSpread           │ Sell near-expiry + buy far-expiry ATM (theta + vega)      │
 /// │ VerticalSpread           │ Bull/Bear call/put spreads (4 types, debit or credit)     │
+/// │ SmaDualThreshold         │ SMA20/50 dual-threshold trend (Nitin Joshi, 1Hr, skip 15:15)│
+/// │ GenericRules             │ UI-defined strategy — any indicator + condition tree         │
 /// └──────────────────────────┴───────────────────────────────────────────────────────────┘
 /// </summary>
 public class StrategyFactory : IStrategyFactory
@@ -57,6 +61,10 @@ public class StrategyFactory : IStrategyFactory
                                            CalendarSpreadConfig.FromJson(parametersJson ?? "{}")),
             "VerticalSpread"        => new VerticalSpreadStrategy(
                                            VerticalSpreadConfig.FromJson(parametersJson ?? "{}")),
+            "SmaDualThreshold"      => new SmaDualThresholdStrategy(
+                                           SmaDualThresholdConfig.FromJson(parametersJson ?? "{}")),
+            "GenericRules"          => new GenericRulesStrategy(
+                                           GenericRulesConfig.FromJson(parametersJson ?? "{}")),
 
             _ => throw new InvalidOperationException(
                 $"Unknown strategy: '{strategyName}'. Registered: {string.Join(", ", GetRegisteredNames())}. " +
@@ -69,6 +77,8 @@ public class StrategyFactory : IStrategyFactory
         "PriceActionBreakout", "EmaVwapMomentum", "AlertCandleShort",
         "VcpSwing", "FibOptionSpread", "IntradayPcrOptions",
         "IronCondor", "ShortStraddleStrangle", "CalendarSpread", "VerticalSpread",
+        "SmaDualThreshold",
+        "GenericRules",
     ];
 
     public IReadOnlyList<StrategyParamDef> GetParameterSchema(string strategyName)
@@ -84,6 +94,8 @@ public class StrategyFactory : IStrategyFactory
             "ShortStraddleStrangle" => ShortStraddleStrangleConfig.GetSchema(),
             "CalendarSpread"        => CalendarSpreadConfig.GetSchema(),
             "VerticalSpread"        => VerticalSpreadConfig.GetSchema(),
+            "SmaDualThreshold"      => SmaDualThresholdConfig.GetSchema(),
+            "GenericRules"          => [],  // schema is free-form JSON (full UI strategy definition)
             _ => throw new InvalidOperationException(
                 $"Unknown strategy: '{strategyName}'. Registered: {string.Join(", ", GetRegisteredNames())}")
         };
