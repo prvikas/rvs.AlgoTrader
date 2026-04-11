@@ -264,6 +264,20 @@ public class InstrumentRefreshService(
 
     // ── Shared upsert (extracted from RefreshAsync) ──────────────────────────
 
+    /// <summary>
+    /// Two-phase broker-aware upsert.
+    ///
+    /// Phase 1 — match by InternalSymbol (same broker refreshed before).
+    /// Phase 2 — for anything still unmatched, fall back to (TradingSymbol, Exchange).
+    ///   This catches the cross-broker duplicate scenario: Zerodha saves "NSE:IRFC"
+    ///   and MStock sends "NSE:IRFC-EQ" — different InternalSymbols but the same
+    ///   underlying script. Without phase 2 we would INSERT a second row; with it we
+    ///   find the existing row and write the new broker's token into the right column.
+    ///
+    /// AP-rule: the UNIQUE(trading_symbol, exchange) DB constraint is the canonical
+    /// natural key for deduplication. InternalSymbol is a broker-assigned identifier
+    /// that MUST NOT be used as the sole merge key when multiple brokers are connected.
+    /// </summary>
     private async Task<(int newCount, int updatedCount)> UpsertInstrumentsAsync(
         string brokerName,
         List<InstrumentTokenMapping> mappings,
@@ -273,12 +287,39 @@ public class InstrumentRefreshService(
         var symbols = mappings.Select(m => m.InternalSymbol).ToList();
 
         const int ChunkSize = 10_000;
-        var allExisting = new Dictionary<string, Instrument>(StringComparer.OrdinalIgnoreCase);
+
+        // ── Phase 1: lookup by InternalSymbol ────────────────────────────────
+        var byInternalSymbol = new Dictionary<string, Instrument>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < symbols.Count; i += ChunkSize)
         {
             var chunk = symbols.Skip(i).Take(ChunkSize).ToList();
             var batch = await instrumentRepo.GetBatchByInternalSymbolAsync(chunk, ct);
-            foreach (var kv in batch) allExisting[kv.Key] = kv.Value;
+            foreach (var kv in batch) byInternalSymbol[kv.Key] = kv.Value;
+        }
+
+        // Separate mappings not found in phase 1
+        var notFoundBySymbol = mappings
+            .Where(m => !byInternalSymbol.ContainsKey(m.InternalSymbol))
+            .ToList();
+
+        // ── Phase 2: fallback lookup by (TradingSymbol, Exchange) ─────────────
+        // Prevents duplicate rows when the same script has a different InternalSymbol
+        // across brokers (e.g. NSE:IRFC from Zerodha vs NSE:IRFC-EQ from MStock).
+        var byCompositeKey = new Dictionary<string, Instrument>(StringComparer.OrdinalIgnoreCase);
+        if (notFoundBySymbol.Count > 0)
+        {
+            var compositeKeys = notFoundBySymbol
+                .Where(m => m.TradingSymbol != null)
+                .Select(m => (m.TradingSymbol!, m.Exchange))
+                .Distinct()
+                .ToList();
+
+            for (int i = 0; i < compositeKeys.Count; i += ChunkSize)
+            {
+                var chunk = compositeKeys.Skip(i).Take(ChunkSize).ToList();
+                var batch = await instrumentRepo.GetBatchByTradingSymbolExchangeAsync(chunk, ct);
+                foreach (var kv in batch) byCompositeKey[kv.Key] = kv.Value;
+            }
         }
 
         var toAdd    = new List<Instrument>();
@@ -286,21 +327,39 @@ public class InstrumentRefreshService(
 
         foreach (var m in mappings)
         {
-            if (!allExisting.TryGetValue(m.InternalSymbol, out var existing))
+            Instrument? existing = null;
+
+            // Phase 1 hit
+            if (byInternalSymbol.TryGetValue(m.InternalSymbol, out existing))
             {
-                toAdd.Add(BuildInstrument(m, now));
+                // Normal same-broker update
+                ApplyBrokerUpdate(existing, brokerName, m, now);
+                toUpdate.Add(existing);
+                continue;
             }
-            else
+
+            // Phase 2 hit — same script, different broker's InternalSymbol
+            var ck = $"{m.Exchange.ToUpperInvariant()}:{(m.TradingSymbol ?? string.Empty).ToUpperInvariant()}";
+            if (byCompositeKey.TryGetValue(ck, out existing))
             {
+                // Merge: add this broker's token to the existing row without creating a duplicate
                 ApplyBrokerToken(existing, brokerName, m.BrokerToken);
-                if (!string.IsNullOrEmpty(m.Name))          existing.Name          = m.Name;
-                if (!string.IsNullOrEmpty(m.TradingSymbol)) existing.TradingSymbol = m.TradingSymbol;
-                if (m.LotSize > 0)                          existing.LotSize       = m.LotSize;
-                if (m.TickSize > 0)                         existing.TickSize      = m.TickSize;
                 existing.IsActive        = true;
                 existing.LastRefreshedAt = now;
+                // Prefer this broker's lot/tick size if not already set
+                if (existing.LotSize <= 1 && m.LotSize > 1) existing.LotSize = m.LotSize;
+                if (existing.TickSize == 0 && m.TickSize > 0) existing.TickSize = m.TickSize;
+                if (string.IsNullOrEmpty(existing.Name) && !string.IsNullOrEmpty(m.Name))
+                    existing.Name = m.Name;
+                logger.LogDebug(
+                    "[UpsertInstruments] Cross-broker merge: {BrokerSymbol} ({Broker}) → existing row {ExistingSymbol}",
+                    m.InternalSymbol, brokerName, existing.InternalSymbol);
                 toUpdate.Add(existing);
+                continue;
             }
+
+            // Not found anywhere — genuine new instrument
+            toAdd.Add(BuildInstrument(m, now));
         }
 
         for (int i = 0; i < toAdd.Count; i += ChunkSize)
@@ -312,7 +371,23 @@ public class InstrumentRefreshService(
         if (toAdd.Count == 0)
             await instrumentRepo.BulkUpsertAsync([], toUpdate, ct);
 
+        logger.LogInformation(
+            "[UpsertInstruments] Broker={Broker} → Added={Added} Updated={Updated} (phase-2 merges included in Updated)",
+            brokerName, toAdd.Count, toUpdate.Count);
+
         return (toAdd.Count, toUpdate.Count);
+    }
+
+    /// Applies broker token + common field updates to an existing tracked instrument.
+    private static void ApplyBrokerUpdate(Instrument existing, string brokerName, InstrumentTokenMapping m, NodaTime.Instant now)
+    {
+        ApplyBrokerToken(existing, brokerName, m.BrokerToken);
+        if (!string.IsNullOrEmpty(m.Name))          existing.Name          = m.Name;
+        if (!string.IsNullOrEmpty(m.TradingSymbol)) existing.TradingSymbol = m.TradingSymbol;
+        if (m.LotSize > 0)                          existing.LotSize       = m.LotSize;
+        if (m.TickSize > 0)                         existing.TickSize      = m.TickSize;
+        existing.IsActive        = true;
+        existing.LastRefreshedAt = now;
     }
 
     // ── Build UniverseConfig from a CommitRequest ────────────────────────────

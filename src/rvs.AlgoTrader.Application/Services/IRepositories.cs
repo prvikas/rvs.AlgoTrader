@@ -66,6 +66,16 @@ public interface IInstrumentRepository
         IReadOnlyList<string> symbols, CancellationToken ct);
 
     /// <summary>
+    /// Loads instruments by (TradingSymbol, Exchange) composite key — one DB round trip.
+    /// Returns a case-insensitive dictionary keyed by "EXCHANGE:TRADINGSYMBOL".
+    /// Used by InstrumentRefreshService as a fallback when InternalSymbol differs between
+    /// brokers for the same underlying script (e.g. NSE:IRFC from Zerodha vs NSE:IRFC-EQ
+    /// from MStock). Prevents duplicate rows when the same script is refreshed from multiple brokers.
+    /// </summary>
+    Task<Dictionary<string, Instrument>> GetBatchByTradingSymbolExchangeAsync(
+        IReadOnlyList<(string TradingSymbol, string Exchange)> keys, CancellationToken ct);
+
+    /// <summary>
     /// Inserts new instruments in one AddRange + SaveChanges.
     /// Updates to existing (already-tracked) instruments are flushed by the same SaveChanges.
     /// Replaces the N+1 UpsertAsync loop used during master-data refresh.

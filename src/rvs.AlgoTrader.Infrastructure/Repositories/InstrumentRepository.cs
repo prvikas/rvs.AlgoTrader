@@ -219,4 +219,42 @@ public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepo
 
     public async Task<Instrument?> GetByTradingSymbolAsync(string tradingSymbol, string exchange, CancellationToken ct = default)
         => await db.Instruments.FirstOrDefaultAsync(i => i.TradingSymbol == tradingSymbol && i.Exchange == exchange, ct);
+
+    /// <summary>
+    /// Batch lookup by (TradingSymbol, Exchange) composite key — single DB round trip.
+    /// Used by InstrumentRefreshService as a fallback to detect cross-broker duplicates:
+    /// when broker A sends "NSE:IRFC" and broker B sends "NSE:IRFC-EQ", both map to the
+    /// same (TradingSymbol=IRFC, Exchange=NSE) row. Without this, each refresh creates a
+    /// new row rather than adding the second broker's token to the existing record.
+    ///
+    /// Dictionary key format: "{EXCHANGE}:{TRADINGSYMBOL}" (uppercase, case-insensitive).
+    /// </summary>
+    public async Task<Dictionary<string, Instrument>> GetBatchByTradingSymbolExchangeAsync(
+        IReadOnlyList<(string TradingSymbol, string Exchange)> keys,
+        CancellationToken ct = default)
+    {
+        if (keys.Count == 0) return new Dictionary<string, Instrument>(StringComparer.OrdinalIgnoreCase);
+
+        // Build sets for efficient EF WHERE IN clause
+        var tradingSymbols = keys.Select(k => k.TradingSymbol).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var exchanges      = keys.Select(k => k.Exchange).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        // Fetch candidates (TradingSymbol IN [...] AND Exchange IN [...]) then filter precisely
+        var candidates = await db.Instruments
+            .Where(i => tradingSymbols.Contains(i.TradingSymbol) && exchanges.Contains(i.Exchange))
+            .ToListAsync(ct);
+
+        var requestedSet = new HashSet<string>(
+            keys.Select(k => $"{k.Exchange.ToUpperInvariant()}:{k.TradingSymbol.ToUpperInvariant()}"),
+            StringComparer.OrdinalIgnoreCase);
+
+        var result = new Dictionary<string, Instrument>(StringComparer.OrdinalIgnoreCase);
+        foreach (var inst in candidates)
+        {
+            var compositeKey = $"{inst.Exchange.ToUpperInvariant()}:{inst.TradingSymbol.ToUpperInvariant()}";
+            if (requestedSet.Contains(compositeKey) && !result.ContainsKey(compositeKey))
+                result[compositeKey] = inst;
+        }
+        return result;
+    }
 }
