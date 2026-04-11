@@ -1052,6 +1052,8 @@ public class BacktestEngine(
     /// <summary>
     /// Extract spread simulation config from the strategy's ParametersJson.
     /// Reads MaxLossMultiple, ProfitTargetPct (0–100 → 0–1), StrikeInterval.
+    /// For GenericRules strategies also reads nested optionsConfig.stopLossPct /
+    /// optionsConfig.profitTargetPct when top-level keys are absent.
     /// Uses safe defaults when keys are absent or JSON is malformed.
     /// </summary>
     internal static (decimal MaxLossMultiple, decimal ProfitTargetPct, decimal StrikeInterval)
@@ -1062,17 +1064,35 @@ public class BacktestEngine(
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
+
             decimal maxLoss = root.TryGetProperty("MaxLossMultiple", out var ml)
                 ? ml.GetDecimal() : 2.0m;
+
             // ProfitTargetPct stored as fraction (0.50) in ShortStraddle, as pct (50) in CalendarSpread
             decimal profitRaw = root.TryGetProperty("ProfitTargetPct", out var pt)
                 ? pt.GetDecimal()
                 : root.TryGetProperty("VegaProfitTargetPct", out var vp)
-                    ? vp.GetDecimal() : 0.50m;
-            // Normalise: values > 1 are treated as percentage
-            decimal profit = profitRaw > 1m ? profitRaw / 100m : profitRaw;
+                    ? vp.GetDecimal() : -1m;
+
             decimal si = root.TryGetProperty("StrikeInterval", out var sv)
                 ? sv.GetDecimal() : 50m;
+
+            // GenericRules: read from nested optionsConfig when top-level keys not found
+            if (root.TryGetProperty("optionsConfig", out var oc))
+            {
+                if (maxLoss == 2.0m &&
+                    oc.TryGetProperty("stopLossPct", out var slp) && slp.TryGetDecimal(out var slpVal) && slpVal > 0)
+                    maxLoss = 100m / slpVal;   // e.g. 50% stop → 2.0× max loss
+
+                if (profitRaw < 0 &&
+                    oc.TryGetProperty("profitTargetPct", out var ptp) && ptp.TryGetDecimal(out var ptpVal) && ptpVal > 0)
+                    profitRaw = ptpVal;        // stored as pct (0–100)
+            }
+
+            if (profitRaw < 0) profitRaw = 0.50m;
+
+            // Normalise: values > 1 are treated as percentage
+            decimal profit = profitRaw > 1m ? profitRaw / 100m : profitRaw;
             return (Math.Max(1m, maxLoss), Math.Clamp(profit, 0.05m, 1m), Math.Max(1m, si));
         }
         catch { return (2.0m, 0.50m, 50m); }

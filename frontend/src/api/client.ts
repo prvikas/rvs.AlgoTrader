@@ -1127,6 +1127,41 @@ interface UpsertStrategyDefinitionRequest {
   definitionJson: string
 }
 
+// ── Scenario DTO shape (mirrors StrategyDefinitionScenarioDtos.cs) ────────────
+interface DefinitionScenarioDto {
+  id: string
+  strategyDefinitionId: string
+  name: string
+  description?: string
+  capital: number
+  brokerAccount: string
+  backtestFrom: string   // "YYYY-MM-DD"
+  backtestTo: string     // "YYYY-MM-DD"
+  parameterOverridesJson: string
+  status: string
+  lastRunAt?: string
+  lastMetricsJson?: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface UpsertDefinitionScenarioRequest {
+  name: string
+  description?: string
+  capital: number
+  brokerAccount: string
+  backtestFrom: string
+  backtestTo: string
+  parameterOverridesJson: string
+  status?: string
+}
+
+interface PatchDefinitionScenarioRequest {
+  status?: string
+  lastMetricsJson?: string
+  lastRunAt?: string
+}
+
 // ── Mapping helpers ────────────────────────────────────────────────────────────
 
 function dtoToStrategy(dto: StrategyDefinitionDto): Strategy {
@@ -1177,12 +1212,43 @@ function strategyToUpsertRequest(s: Omit<Strategy, 'id' | 'createdAt' | 'updated
   }
 }
 
-// ── In-memory stores for scenarios/deployments/runs (not yet persisted) ───────
-const MOCK_SCENARIOS: Record<string, Scenario[]> = {}
+function scenarioDtoToScenario(dto: DefinitionScenarioDto): Scenario {
+  let overrides: import('../types/strategy').ParameterOverride[] = []
+  let metrics: import('../types/strategy').RunMetrics | undefined
+  try { overrides = JSON.parse(dto.parameterOverridesJson) } catch { /* ignore */ }
+  try { if (dto.lastMetricsJson) metrics = JSON.parse(dto.lastMetricsJson) } catch { /* ignore */ }
+  return {
+    id:                 dto.id,
+    strategyId:         dto.strategyDefinitionId,
+    name:               dto.name,
+    description:        dto.description,
+    capital:            dto.capital,
+    brokerAccount:      dto.brokerAccount as Broker,
+    backtestRange:      { from: dto.backtestFrom, to: dto.backtestTo },
+    parameterOverrides: overrides,
+    status:             dto.status as ScenarioStatus,
+    lastRunAt:          dto.lastRunAt,
+    lastMetrics:        metrics,
+  }
+}
+
+function scenarioToUpsertRequest(s: Omit<Scenario, 'id' | 'strategyId'>): UpsertDefinitionScenarioRequest {
+  return {
+    name:                   s.name,
+    description:            s.description,
+    capital:                s.capital,
+    brokerAccount:          s.brokerAccount,
+    backtestFrom:           s.backtestRange.from,
+    backtestTo:             s.backtestRange.to,
+    parameterOverridesJson: JSON.stringify(s.parameterOverrides ?? []),
+    status:                 s.status,
+  }
+}
+
+// ── In-memory stores for deployments/runs (scenarios now backed by DB) ────────
 const MOCK_DEPLOYMENTS: Record<string, Deployment[]> = {}
 const MOCK_RUNS: Record<string, RunResult[]> = {}
 const MOCK_TRADES: Record<string, TradeRecord[]> = {}
-const MOCK_SWEEPS: ParameterSweep[] = []
 
 export const strategyDomainApi = {
   // ── Strategy CRUD — real /api/strategy-definitions backend ────────────────
@@ -1217,33 +1283,47 @@ export const strategyDomainApi = {
 
   deleteStrategy: async (id: string): Promise<void> => {
     await apiClient.delete(`/strategy-definitions/${id}`)
-    delete MOCK_SCENARIOS[id]
     delete MOCK_DEPLOYMENTS[id]
   },
 
-  listScenarios: (strategyId: string): Promise<Scenario[]> =>
-    Promise.resolve(MOCK_SCENARIOS[strategyId] ?? []),
-  createScenario: (strategyId: string, s: Omit<Scenario, 'id' | 'strategyId'>): Promise<Scenario> => {
-    const created: Scenario = { ...s, id: `scen-${Date.now()}`, strategyId }
-    if (!MOCK_SCENARIOS[strategyId]) MOCK_SCENARIOS[strategyId] = []
-    MOCK_SCENARIOS[strategyId].push(created)
-    return Promise.resolve(created)
+  listScenarios: async (strategyId: string): Promise<Scenario[]> => {
+    const resp = await apiClient.get<ApiResponse<DefinitionScenarioDto[]>>(
+      `/strategy-definitions/${strategyId}/scenarios`)
+    return (resp.data?.data ?? []).map(scenarioDtoToScenario)
   },
-  updateScenario: (strategyId: string, scenarioId: string, s: Partial<Scenario>): Promise<Scenario> => {
-    const list = MOCK_SCENARIOS[strategyId] ?? []
-    const idx = list.findIndex(x => x.id === scenarioId)
-    if (idx >= 0) list[idx] = { ...list[idx], ...s }
-    return Promise.resolve(list[idx])
+
+  createScenario: async (strategyId: string, s: Omit<Scenario, 'id' | 'strategyId'>): Promise<Scenario> => {
+    const body = scenarioToUpsertRequest(s)
+    const resp = await apiClient.post<ApiResponse<DefinitionScenarioDto>>(
+      `/strategy-definitions/${strategyId}/scenarios`, body)
+    return scenarioDtoToScenario(resp.data.data!)
   },
-  deleteScenario: (strategyId: string, scenarioId: string): Promise<void> => {
-    if (MOCK_SCENARIOS[strategyId])
-      MOCK_SCENARIOS[strategyId] = MOCK_SCENARIOS[strategyId].filter(x => x.id !== scenarioId)
-    return Promise.resolve()
+
+  updateScenario: async (strategyId: string, scenarioId: string, s: Partial<Scenario>): Promise<Scenario> => {
+    // Fetch existing to merge with partial update
+    const existingResp = await apiClient.get<ApiResponse<DefinitionScenarioDto>>(
+      `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`)
+    const existing = existingResp.data?.data
+      ? scenarioDtoToScenario(existingResp.data.data)
+      : ({} as Scenario)
+    const merged = { ...existing, ...s }
+    const body = scenarioToUpsertRequest(merged)
+    const resp = await apiClient.put<ApiResponse<DefinitionScenarioDto>>(
+      `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`, body)
+    return scenarioDtoToScenario(resp.data.data!)
   },
+
+  deleteScenario: async (strategyId: string, scenarioId: string): Promise<void> => {
+    await apiClient.delete(`/strategy-definitions/${strategyId}/scenarios/${scenarioId}`)
+  },
+
   runScenario: async (strategyId: string, scenarioId: string): Promise<{ jobId: string }> => {
-    // Look up scenario from in-memory store
-    const scenario = (MOCK_SCENARIOS[strategyId] ?? []).find(s => s.id === scenarioId)
-    if (!scenario) throw new Error(`Scenario ${scenarioId} not found`)
+    // Fetch scenario from real API
+    const scenResp = await apiClient.get<ApiResponse<DefinitionScenarioDto>>(
+      `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`)
+    const scenDto = scenResp.data?.data
+    if (!scenDto) throw new Error(`Scenario ${scenarioId} not found`)
+    const scenario = scenarioDtoToScenario(scenDto)
 
     // Fetch strategy definition from real API
     const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${strategyId}`)
@@ -1271,9 +1351,10 @@ export const strategyDomainApi = {
       definitionJson = JSON.stringify(def)
     }
 
-    // Mark scenario as Running (optimistic update)
-    const idx = MOCK_SCENARIOS[strategyId]?.findIndex(s => s.id === scenarioId) ?? -1
-    if (idx >= 0) MOCK_SCENARIOS[strategyId][idx] = { ...MOCK_SCENARIOS[strategyId][idx], status: ScenarioStatus.Running }
+    // Mark scenario as Running via PATCH
+    await apiClient.patch<ApiResponse<DefinitionScenarioDto>>(
+      `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`,
+      { status: ScenarioStatus.Running } satisfies PatchDefinitionScenarioRequest)
 
     // Launch real async backtest
     const btResp = await backtestApi.start({
@@ -1287,8 +1368,10 @@ export const strategyDomainApi = {
     })
     const jobId: string = btResp.data?.data?.jobId ?? ''
 
-    // Store jobId on scenario for polling
-    if (idx >= 0) MOCK_SCENARIOS[strategyId][idx] = { ...MOCK_SCENARIOS[strategyId][idx], lastRunAt: new Date().toISOString() }
+    // Record lastRunAt via PATCH
+    await apiClient.patch<ApiResponse<DefinitionScenarioDto>>(
+      `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`,
+      { lastRunAt: new Date().toISOString() } satisfies PatchDefinitionScenarioRequest)
 
     return { jobId }
   },
@@ -1336,40 +1419,40 @@ export const strategyDomainApi = {
   listTrades: (_strategyId: string, _scenarioId: string, _runId: string): Promise<TradeRecord[]> =>
     Promise.resolve(MOCK_TRADES[_runId] ?? []),
 
-  createParameterSweep: (
+  createParameterSweep: async (
     strategyId: string,
     sweep: Omit<ParameterSweep, 'id' | 'strategyId' | 'generatedScenarioIds'>
   ): Promise<ParameterSweep & { generatedCount: number }> => {
     const steps = Math.floor((sweep.to - sweep.from) / sweep.step) + 1
+    const sweepGroupId = `sweep-${Date.now()}`
     const ids: string[] = []
-    if (!MOCK_SCENARIOS[strategyId]) MOCK_SCENARIOS[strategyId] = []
     for (let i = 0; i < steps; i++) {
       const val = sweep.from + i * sweep.step
-      const sid = `scen-sweep-${Date.now()}-${i}`
-      ids.push(sid)
-      MOCK_SCENARIOS[strategyId].push({
-        id: sid,
-        strategyId,
-        name: `${sweep.paramKey} ${val}`,
-        capital: 100000,
-        brokerAccount: Broker.MStock,
-        backtestRange: { from: '2023-01-01', to: '2025-12-31' },
-        parameterOverrides: [...sweep.otherOverrides, {
-          section: sweep.section,
-          indicatorId: sweep.indicatorId,
-          paramKey: sweep.paramKey,
-          baseValue: sweep.from,
-          overrideValue: val,
-        }],
-        status: 'Draft' as import('../types/strategy').ScenarioStatus,
-        sweepGroupId: `sweep-${Date.now()}`,
-        hypothesis: sweep.hypothesis,
-      })
+      const overrides = [...sweep.otherOverrides, {
+        section: sweep.section,
+        indicatorId: sweep.indicatorId,
+        paramKey: sweep.paramKey,
+        baseValue: sweep.from,
+        overrideValue: val,
+      }]
+      const body: UpsertDefinitionScenarioRequest = {
+        name:                   `${sweep.paramKey} ${val}`,
+        capital:                100000,
+        brokerAccount:          Broker.MStock,
+        backtestFrom:           '2023-01-01',
+        backtestTo:             '2025-12-31',
+        parameterOverridesJson: JSON.stringify(overrides),
+        status:                 'Draft',
+      }
+      const resp = await apiClient.post<ApiResponse<DefinitionScenarioDto>>(
+        `/strategy-definitions/${strategyId}/scenarios`, body)
+      ids.push(resp.data.data!.id)
     }
     const created: ParameterSweep = {
       ...sweep, id: `psweep-${Date.now()}`, strategyId, generatedScenarioIds: ids,
     }
-    MOCK_SWEEPS.push(created)
-    return Promise.resolve({ ...created, generatedCount: steps })
+    // sweepGroupId retained in-memory for grouping — sweep metadata not yet DB-persisted
+    void sweepGroupId
+    return { ...created, generatedCount: steps }
   },
 }

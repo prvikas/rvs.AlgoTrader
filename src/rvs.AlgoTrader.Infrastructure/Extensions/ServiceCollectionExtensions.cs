@@ -222,6 +222,7 @@ public static class ServiceCollectionExtensions
 
         // ── Strategy definitions (UI-designed GenericRules strategies) ────────
         services.AddScoped<IStrategyDefinitionService, StrategyDefinitionService>();
+        services.AddScoped<IStrategyDefinitionScenarioService, StrategyDefinitionScenarioService>();
 
         // ── Risk profiles ─────────────────────────────────────────────────────
         services.AddScoped<IRiskProfileRepository, RiskProfileRepository>();
