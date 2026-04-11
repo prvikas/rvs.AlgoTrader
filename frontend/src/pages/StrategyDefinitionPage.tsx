@@ -7,12 +7,13 @@ import {
   KillSwitch, MoveStopTo, RRConfig, RiskControls,
   StartCondition, StopTargetConfig, StopType, Strategy, StrategyStatus,
   Timeframe, TrailingConfig, TrailingType, TradingStyle,
-  ExitBehaviour, ProfitBookingRule,
+  ExitBehaviour, ProfitBookingRule, OptionsConfig,
   // PROMPT-002
   SignalLayer, EntryExecutionModel, EntryOrderType, EntryTiming, ScalingModel,
   SizingMethod, PositionSizingModel,
   StopState, StopStateMachine,
 } from '../types/strategy'
+import { OptionsConfigPanel, defaultOptionsConfig } from '../components/strategies/OptionsConfigPanel'
 import { C, SP } from '../styles/tokens'
 import { useEnums } from '../context/EnumsContext'
 import { IndicatorModal } from '../components/strategies/IndicatorModal'
@@ -26,7 +27,7 @@ interface Props {
   onSaved?: (s: Strategy) => void
 }
 
-type SubTab = 'core' | 'rules' | 'risk'
+type SubTab = 'core' | 'rules' | 'risk' | 'options'
 
 let _groupId = 0
 function newGroupId() { return `grp-${Date.now()}-${_groupId++}` }
@@ -154,6 +155,10 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
     }
   )
 
+  const [optionsConfig, setOptionsConfig] = useState<OptionsConfig>(
+    initialData?.optionsConfig ?? defaultOptionsConfig()
+  )
+
   const createMut = useMutation({
     mutationFn: (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>) =>
       strategyDomainApi.createStrategy(s),
@@ -198,6 +203,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
       positionSizing,
       stopStateMachine,
       profitBooking: profitBooking.enabled ? profitBooking : undefined,
+      optionsConfig: optionsConfig.enabled ? optionsConfig : undefined,
     }
   }
 
@@ -239,9 +245,10 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
   const isPending = createMut.isPending || updateMut.isPending
 
   const TABS: { key: SubTab; label: string }[] = [
-    { key: 'core',  label: 'Core & Indicators' },
-    { key: 'rules', label: 'Rules' },
-    { key: 'risk',  label: 'Risk & Regime' },
+    { key: 'core',    label: 'Core & Indicators' },
+    { key: 'rules',   label: 'Rules' },
+    { key: 'risk',    label: 'Risk & Regime' },
+    { key: 'options', label: `Options Spread${optionsConfig.enabled ? ' *' : ''}` },
   ]
 
   // ── Option-strategy template definitions ─────────────────────────────────
@@ -1331,6 +1338,24 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
               )}
             </Block>
           </div>
+        </div>
+      )}
+
+      {/* ── Sub-tab 4: Options Spread ── */}
+      {subTab === 'options' && (
+        <div style={{
+          background: C.surface, border: `1px solid ${C.border}`,
+          borderRadius: 6, padding: '14px 16px',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.textSub, marginBottom: 6 }}>
+            Options Spread Configuration
+          </div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginBottom: SP.lg }}>
+            Use your indicator rules (Rules tab) to define <em>when</em> to enter.
+            Configure below <em>what</em> spread structure to trade when the conditions fire.
+            Requires an option chain to be pre-fetched for the instrument (index options supported: NIFTY, BANKNIFTY, FINNIFTY).
+          </div>
+          <OptionsConfigPanel value={optionsConfig} onChange={setOptionsConfig} />
         </div>
       )}
 

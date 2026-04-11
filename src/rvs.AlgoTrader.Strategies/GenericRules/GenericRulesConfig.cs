@@ -59,6 +59,10 @@ public class GenericRulesConfig
     [JsonPropertyName("profitTarget")]
     public StopTargetConfig? ProfitTarget { get; set; }
 
+    // ── Options spread config ─────────────────────────────────────────────────
+    [JsonPropertyName("optionsConfig")]
+    public OptionsConfig? OptionsConfig { get; set; }
+
     // ── Convenience helpers ───────────────────────────────────────────────────
     public bool AllowShort => ShortEntry.Enabled;
 
@@ -286,4 +290,108 @@ public class StopTargetConfig
 
     [JsonPropertyName("value")]
     public decimal Value { get; set; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Options spread configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// When Enabled = true, GenericRulesStrategy routes entry signals through the
+/// options spread engine instead of placing a plain equity Buy/Sell.
+/// The indicator/rule sections of the strategy still define WHEN to enter;
+/// this section defines WHAT spread structure to build.
+/// </summary>
+public class OptionsConfig
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// "BullCallSpread" | "BearPutSpread" | "BullPutSpread" | "BearCallSpread" |
+    /// "IronCondor" | "ShortStraddle" | "ShortStrangle" | "CalendarSpread" |
+    /// "LongCall" | "LongPut"
+    /// </summary>
+    [JsonPropertyName("spreadType")]
+    public string SpreadType { get; set; } = "BullCallSpread";
+
+    /// <summary>
+    /// Custom leg definitions. When non-empty, overrides built-in preset defaults.
+    /// Each element maps to one SpreadLeg passed to SpreadOrderManager.
+    /// </summary>
+    [JsonPropertyName("legs")]
+    public OptionsSpreadLegDef[] Legs { get; set; } = [];
+
+    /// <summary>"Weekly" | "Monthly"</summary>
+    [JsonPropertyName("expiryPreference")]
+    public string ExpiryPreference { get; set; } = "Weekly";
+
+    /// <summary>% of net premium received/paid at which to close the spread for a loss.</summary>
+    [JsonPropertyName("stopLossPct")]
+    public decimal StopLossPct { get; set; } = 50m;
+
+    /// <summary>% of net premium at which to take profit.</summary>
+    [JsonPropertyName("profitTargetPct")]
+    public decimal ProfitTargetPct { get; set; } = 50m;
+
+    // ── IV / PCR filters ──────────────────────────────────────────────────────
+    // Checked from StrategyContext before an entry signal is fired.
+    // Add IVRank / PCR / AtmIV indicators to the indicator list to expose them
+    // in rule conditions; these numeric filters provide a fast pre-check shortcut.
+
+    [JsonPropertyName("minIvRank")]
+    public decimal? MinIvRank { get; set; }
+
+    [JsonPropertyName("maxIvRank")]
+    public decimal? MaxIvRank { get; set; }
+
+    [JsonPropertyName("minAtmIv")]
+    public decimal? MinAtmIv { get; set; }
+
+    [JsonPropertyName("maxAtmIv")]
+    public decimal? MaxAtmIv { get; set; }
+
+    [JsonPropertyName("minPcr")]
+    public decimal? MinPcr { get; set; }
+
+    [JsonPropertyName("maxPcr")]
+    public decimal? MaxPcr { get; set; }
+}
+
+/// <summary>
+/// One leg in a user-defined options spread. Serialised inside OptionsConfig.Legs.
+/// GenericRulesStrategy converts these into domain SpreadLeg records.
+/// </summary>
+public class OptionsSpreadLegDef
+{
+    /// <summary>"CE" | "PE"</summary>
+    [JsonPropertyName("optionType")]
+    public string OptionType { get; set; } = "CE";
+
+    /// <summary>"Buy" | "Sell"</summary>
+    [JsonPropertyName("direction")]
+    public string Direction { get; set; } = "Buy";
+
+    /// <summary>"Atm" | "OtmByStrike" | "OtmByPct" | "ByDelta"</summary>
+    [JsonPropertyName("selectionMode")]
+    public string SelectionMode { get; set; } = "Atm";
+
+    /// <summary>Number of strike intervals OTM (used when SelectionMode = "OtmByStrike").</summary>
+    [JsonPropertyName("otmStrikes")]
+    public int OtmStrikes { get; set; }
+
+    /// <summary>Percent OTM as a fraction, e.g. 0.02 = 2% (used when SelectionMode = "OtmByPct").</summary>
+    [JsonPropertyName("otmPct")]
+    public decimal OtmPct { get; set; }
+
+    /// <summary>Target delta, e.g. 0.30 for 30-delta (used when SelectionMode = "ByDelta").</summary>
+    [JsonPropertyName("targetDelta")]
+    public decimal TargetDelta { get; set; } = 0.30m;
+
+    /// <summary>Number of lots.</summary>
+    [JsonPropertyName("quantity")]
+    public int Quantity { get; set; } = 1;
+
+    [JsonPropertyName("nearestWeekly")]
+    public bool NearestWeekly { get; set; } = true;
 }

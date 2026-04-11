@@ -1,4 +1,5 @@
 using NodaTime;
+using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Strategies.GenericRules;
@@ -62,7 +63,8 @@ public static class IndicatorEngine
     /// </summary>
     public static Dictionary<string, ComputedIndicator> ComputeAll(
         IReadOnlyList<ClosedCandle> candles,
-        IReadOnlyList<IndicatorDef> indicators)
+        IReadOnlyList<IndicatorDef> indicators,
+        StrategyContext? context = null)
     {
         var result = new Dictionary<string, ComputedIndicator>(
             StringComparer.OrdinalIgnoreCase);
@@ -76,7 +78,7 @@ public static class IndicatorEngine
         {
             try
             {
-                var computed = Compute(ind, candles, closes);
+                var computed = Compute(ind, candles, closes, context);
                 if (computed != null)
                     result[ind.Id] = computed;
             }
@@ -94,7 +96,8 @@ public static class IndicatorEngine
     private static ComputedIndicator? Compute(
         IndicatorDef ind,
         IReadOnlyList<ClosedCandle> candles,
-        decimal[] closes)
+        decimal[] closes,
+        StrategyContext? context = null)
     {
         return ind.Type.ToUpperInvariant() switch
         {
@@ -126,7 +129,31 @@ public static class IndicatorEngine
             "SUPERTREND"     => ComputeSupertrendIndicator(candles,
                                     ind.GetInt("period", 10),
                                     ind.GetDecimal("multiplier", 3m)),
+
+            // ── Options / market-context indicators ────────────────────────────
+            // Values read from StrategyContext (pre-fetched by StrategyEvaluationQueue)
+            // rather than computed from candles. Return null when context unavailable.
+            "IVRANK"         => ComputeContextIndicator(context?.SymbolIvRank?.IvRank),
+            "IVPERCENTILE"   => ComputeContextIndicator(context?.SymbolIvRank?.IvPercentile),
+            "PCR"            => ComputeContextIndicator(context?.OptionChain?.PutCallRatioOI),
+            "PCRCHANGE"      => ComputeContextIndicator(context?.OptionChain?.PutCallRatioChangeOI),
+            "ATMIV"          => ComputeContextIndicator(context?.OptionChain?.AtmIv),
+            "MAXPAIN"        => ComputeContextIndicator(context?.OptionChain?.MaxPainStrike),
+
             _                => null   // unknown type — silently skip
+        };
+    }
+
+    // ── Context-backed indicator (single point-in-time value from StrategyContext) ──
+
+    private static ComputedIndicator? ComputeContextIndicator(decimal? value)
+    {
+        if (value is null) return null;
+        return new ComputedIndicator
+        {
+            Current  = value.Value,
+            Previous = value.Value,
+            History  = [value.Value],
         };
     }
 

@@ -2,6 +2,9 @@ using NodaTime;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using DomainOptionType      = rvs.AlgoTrader.Domain.Enums.OptionType;
+using DomainOrderDirection  = rvs.AlgoTrader.Domain.Enums.OrderDirection;
+using DomainStrikeMode      = rvs.AlgoTrader.Domain.Enums.StrikeSelectionMode;
 
 namespace rvs.AlgoTrader.Strategies.GenericRules;
 
@@ -81,24 +84,20 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
         var current = candles[^1];
 
         // ── Invalidation layer: time / session filters ────────────────────────
-        // Indicators in the Invalidation signalLayer act as gates.
-        // If any Invalidation indicator returns 0 → skip this bar entirely.
         var invalidationIndicators = config.Indicators
             .Where(i => i.SignalLayer?.Equals("Invalidation", StringComparison.OrdinalIgnoreCase) == true)
             .ToList();
 
-        // ── Compute all indicators ────────────────────────────────────────────
-        var computed = IndicatorEngine.ComputeAll(candles, config.Indicators);
+        // ── Compute all indicators (pass context for IVRank/PCR/AtmIV/MaxPain) ─
+        var computed = IndicatorEngine.ComputeAll(candles, config.Indicators, context);
 
         // Build indicator snapshot for charting
         var indicatorSnapshot = new Dictionary<string, decimal>();
         foreach (var kv in computed)
         {
-            // Use indicator type+params as label for chart overlay
             var ind = config.Indicators.FirstOrDefault(i => i.Id == kv.Key);
             var label = ind != null ? $"{ind.Type.ToLower()}{ind.GetInt("period")}" : kv.Key;
             indicatorSnapshot[label] = kv.Value.Current;
-            // Also expose sub-fields (e.g. bbUpper, bbLower)
             foreach (var field in kv.Value.Fields)
                 indicatorSnapshot[$"{label}_{field.Key}"] = field.Value;
         }
@@ -119,36 +118,60 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
         {
             if (config.LongExit.Enabled &&
                 RulesEvaluator.Evaluate(config.LongExit, computed, candles))
-            {
-                return Task.FromResult(SignalResult.ExitLong(
-                    "Long exit conditions met",
-                    indicatorSnapshot));
-            }
+                return Task.FromResult(SignalResult.ExitLong("Long exit conditions met", indicatorSnapshot));
             return Task.FromResult(SignalResult.Hold(
-                "Long: holding — exit conditions not met",
-                indicatorValues: indicatorSnapshot));
+                "Long: holding — exit conditions not met", indicatorValues: indicatorSnapshot));
         }
 
         if (position == "SHORT")
         {
             if (config.ShortExit.Enabled &&
                 RulesEvaluator.Evaluate(config.ShortExit, computed, candles))
-            {
-                return Task.FromResult(SignalResult.ExitShort(
-                    "Short exit conditions met",
-                    indicatorSnapshot));
-            }
+                return Task.FromResult(SignalResult.ExitShort("Short exit conditions met", indicatorSnapshot));
             return Task.FromResult(SignalResult.Hold(
-                "Short: holding — exit conditions not met",
-                indicatorValues: indicatorSnapshot));
+                "Short: holding — exit conditions not met", indicatorValues: indicatorSnapshot));
         }
 
         // ── No position: evaluate entry ───────────────────────────────────────
 
-        // ATR for stop-loss calculation (use any ATR indicator or compute on the fly)
+        var opts = config.OptionsConfig;
+
+        if (opts?.Enabled == true)
+        {
+            // Options mode: check IV/PCR filters, then fire a SpreadEntry signal
+            var filterBlock = CheckOptionsFilters(opts, context);
+            if (filterBlock != null)
+                return Task.FromResult(SignalResult.Hold(filterBlock, indicatorValues: indicatorSnapshot));
+
+            // Use longEntry conditions for direction — if longEntry fires it's a bullish spread,
+            // shortEntry fires it's a bearish spread (or the spread type itself is direction-neutral).
+            var longFires  = config.LongEntry.Enabled  && RulesEvaluator.Evaluate(config.LongEntry,  computed, candles);
+            var shortFires = config.ShortEntry.Enabled && RulesEvaluator.Evaluate(config.ShortEntry, computed, candles);
+
+            if (!longFires && !shortFires)
+                return Task.FromResult(SignalResult.Hold(
+                    "Options: no entry conditions met", indicatorValues: indicatorSnapshot));
+
+            var legs = BuildSpreadLegs(opts);
+            var spotPrice = context.OptionChain?.SpotPrice ?? current.Close;
+            var expiryDate = context.OptionChain?.Expiry;
+
+            var spread = new SpreadSignalResult(
+                SpreadType:        opts.SpreadType,
+                Legs:              legs,
+                Reason:            $"GenericRules options entry: {opts.SpreadType} ({(longFires ? "long" : "short")} entry)",
+                DiagnosticsJson:   indicatorSnapshot,
+                SpotPrice:         spotPrice,
+                NearExpiryDate:    expiryDate
+            );
+
+            return Task.FromResult(SignalResult.SpreadEntry(spread));
+        }
+
+        // ── Equity mode: plain Buy / Sell ─────────────────────────────────────
+
         var atrNow = GetAtrValue(computed) ?? ComputeFallbackAtr(candles);
 
-        // Long entry
         if (config.LongEntry.Enabled &&
             RulesEvaluator.Evaluate(config.LongEntry, computed, candles))
         {
@@ -164,7 +187,6 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
                 indicatorValues: indicatorSnapshot));
         }
 
-        // Short entry
         if (config.AllowShort &&
             config.ShortEntry.Enabled &&
             RulesEvaluator.Evaluate(config.ShortEntry, computed, candles))
@@ -208,4 +230,110 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
         var atr = IndicatorEngine.ComputeAtr(candles, Math.Min(14, candles.Count - 1));
         return atr.Length > 0 ? atr[^1] : candles[^1].Close * 0.02m; // 2% fallback
     }
+
+    // ── Options helpers ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Validates IV / PCR numeric filter bounds from OptionsConfig.
+    /// Returns a hold reason string if any filter fails; null if all pass.
+    /// </summary>
+    private static string? CheckOptionsFilters(OptionsConfig opts, StrategyContext ctx)
+    {
+        var ivRank = ctx.SymbolIvRank?.IvRank;
+        var atmIv  = ctx.OptionChain?.AtmIv;
+        var pcr    = ctx.OptionChain?.PutCallRatioOI;
+
+        if (opts.MinIvRank.HasValue && (ivRank == null || ivRank < opts.MinIvRank))
+            return $"Options: IVRank {ivRank:F1} below minimum {opts.MinIvRank}";
+        if (opts.MaxIvRank.HasValue && ivRank != null && ivRank > opts.MaxIvRank)
+            return $"Options: IVRank {ivRank:F1} above maximum {opts.MaxIvRank}";
+        if (opts.MinAtmIv.HasValue && (atmIv == null || atmIv < opts.MinAtmIv))
+            return $"Options: ATM IV {atmIv:F1} below minimum {opts.MinAtmIv}";
+        if (opts.MaxAtmIv.HasValue && atmIv != null && atmIv > opts.MaxAtmIv)
+            return $"Options: ATM IV {atmIv:F1} above maximum {opts.MaxAtmIv}";
+        if (opts.MinPcr.HasValue && (pcr == null || pcr < opts.MinPcr))
+            return $"Options: PCR {pcr:F2} below minimum {opts.MinPcr}";
+        if (opts.MaxPcr.HasValue && pcr != null && pcr > opts.MaxPcr)
+            return $"Options: PCR {pcr:F2} above maximum {opts.MaxPcr}";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Builds the SpreadLeg list. Uses custom legs from OptionsConfig.Legs when provided;
+    /// otherwise falls back to built-in presets for each spread type.
+    /// </summary>
+    private static IReadOnlyList<SpreadLeg> BuildSpreadLegs(OptionsConfig opts)
+    {
+        if (opts.Legs.Length > 0)
+            return opts.Legs.Select(MapLeg).ToList();
+
+        bool weekly = opts.ExpiryPreference.Equals("Weekly", StringComparison.OrdinalIgnoreCase);
+
+        return opts.SpreadType switch
+        {
+            "BullCallSpread"  => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Buy,  DomainStrikeMode.Atm,         NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Sell, DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "BearPutSpread"   => [
+                new SpreadLeg(DomainOptionType.Put, DomainOrderDirection.Buy,  DomainStrikeMode.Atm,         NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Put, DomainOrderDirection.Sell, DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "BullPutSpread"   => [
+                new SpreadLeg(DomainOptionType.Put, DomainOrderDirection.Sell, DomainStrikeMode.Atm,         NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Put, DomainOrderDirection.Buy,  DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "BearCallSpread"  => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Sell, DomainStrikeMode.Atm,         NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Buy,  DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "IronCondor"      => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Sell, DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Buy,  DomainStrikeMode.OtmByStrike, OtmStrikes: 4, NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Put,  DomainOrderDirection.Sell, DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Put,  DomainOrderDirection.Buy,  DomainStrikeMode.OtmByStrike, OtmStrikes: 4, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "ShortStraddle"   => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Sell, DomainStrikeMode.Atm, NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Put,  DomainOrderDirection.Sell, DomainStrikeMode.Atm, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "ShortStrangle"   => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Sell, DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+                new SpreadLeg(DomainOptionType.Put,  DomainOrderDirection.Sell, DomainStrikeMode.OtmByStrike, OtmStrikes: 2, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "CalendarSpread"  => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Sell, DomainStrikeMode.Atm, NearestWeekly: true,  Quantity: 1),
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Buy,  DomainStrikeMode.Atm, NearestWeekly: false, Quantity: 1),
+            ],
+            "LongCall"        => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Buy, DomainStrikeMode.Atm, NearestWeekly: weekly, Quantity: 1),
+            ],
+            "LongPut"         => [
+                new SpreadLeg(DomainOptionType.Put, DomainOrderDirection.Buy, DomainStrikeMode.Atm, NearestWeekly: weekly, Quantity: 1),
+            ],
+            _ => [
+                new SpreadLeg(DomainOptionType.Call, DomainOrderDirection.Buy, DomainStrikeMode.Atm, NearestWeekly: weekly, Quantity: 1),
+            ],
+        };
+    }
+
+    private static SpreadLeg MapLeg(OptionsSpreadLegDef d) => new(
+        OptionType:    d.OptionType.Equals("PE", StringComparison.OrdinalIgnoreCase)
+                           ? DomainOptionType.Put : DomainOptionType.Call,
+        Direction:     d.Direction.Equals("Sell", StringComparison.OrdinalIgnoreCase)
+                           ? DomainOrderDirection.Sell : DomainOrderDirection.Buy,
+        SelectionMode: d.SelectionMode.ToUpperInvariant() switch
+        {
+            "OTMBYSTRIKE" => DomainStrikeMode.OtmByStrike,
+            "OTMBYPCT"    => DomainStrikeMode.OtmByPct,
+            "BYDELTA"     => DomainStrikeMode.ByDelta,
+            _             => DomainStrikeMode.Atm,
+        },
+        OtmStrikes:    d.OtmStrikes > 0 ? d.OtmStrikes : null,
+        OtmPct:        d.OtmPct    > 0 ? d.OtmPct     : null,
+        TargetDelta:   d.TargetDelta > 0 ? d.TargetDelta : null,
+        NearestWeekly: d.NearestWeekly,
+        Quantity:      Math.Max(1, d.Quantity)
+    );
 }
