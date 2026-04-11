@@ -59,13 +59,18 @@ public class StrategyEvaluationQueue(
     // Higher-TF bars to fetch — enough for most indicators (200-bar SMA needs 200 daily bars)
     private const int HigherTfBarCount = 200;
 
-    // Strategy types that require an option chain snapshot for EvaluateAsync.
+    // Strategy types that always require an option chain snapshot for EvaluateAsync.
     // Checked against StrategyInstance.StrategyType (not display Name).
     private static readonly HashSet<string> OptionStrategyTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "IronCondor", "ShortStraddleStrangle", "CalendarSpread",
         "FibOptionSpread", "IntradayPcrOptions", "VerticalSpread"
     };
+
+    // GenericRules indicator types that read from StrategyContext.OptionChain.
+    // IVRANK/IVPERCENTILE use SymbolIvRank — already fetched separately — so not listed here.
+    private static readonly string[] _ocIndicatorTypes =
+        ["PCR", "PCRCHANGE", "ATMIV", "MAXPAIN"];
 
     public async Task Consume(ConsumeContext<CandleClosedEvent> context)
     {
@@ -156,7 +161,7 @@ public class StrategyEvaluationQueue(
             OptionChainSnapshot? nearExpiryChain = null;
             OptionChainSnapshot? farExpiryChain  = null;
 
-            if (OptionStrategyTypes.Contains(instance.StrategyType))
+            if (NeedsOptionChain(instance))
             {
                 try
                 {
@@ -279,5 +284,45 @@ public class StrategyEvaluationQueue(
         for (var i = 0; i < list.Count; i++)
             if (list[i] == value) return i;
         return -1;
+    }
+
+    /// <summary>
+    /// Returns true when the strategy instance requires an option chain pre-fetch.
+    ///
+    /// Named option strategies (IronCondor, FibOptionSpread, …) always require one.
+    ///
+    /// GenericRules strategies require one when:
+    ///   (a) optionsConfig.enabled = true  → spread entry path reads nearChain/farChain, OR
+    ///   (b) any indicator has type in {PCR, PCRCHANGE, ATMIV, MAXPAIN} → reads OptionChain.
+    ///
+    /// String search avoids JSON deserialization overhead on the hot path; the patterns are
+    /// specific enough to have negligible false-positive rate against real ParametersJson.
+    /// </summary>
+    private static bool NeedsOptionChain(StrategyInstance instance)
+    {
+        if (OptionStrategyTypes.Contains(instance.StrategyType))
+            return true;
+
+        if (!string.Equals(instance.StrategyType, "GenericRules", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var json = instance.ParametersJson;
+        if (string.IsNullOrEmpty(json)) return false;
+
+        // (a) options spread path — check both compact and spaced forms
+        if (json.Contains("\"optionsConfig\"", StringComparison.OrdinalIgnoreCase) &&
+            (json.Contains("\"enabled\":true", StringComparison.OrdinalIgnoreCase) ||
+             json.Contains("\"enabled\": true", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        // (b) context-backed indicator types — check both compact and spaced colon forms
+        foreach (var type in _ocIndicatorTypes)
+        {
+            if (json.Contains($"\"type\":\"{type}\"", StringComparison.OrdinalIgnoreCase) ||
+                json.Contains($"\"type\": \"{type}\"", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 }

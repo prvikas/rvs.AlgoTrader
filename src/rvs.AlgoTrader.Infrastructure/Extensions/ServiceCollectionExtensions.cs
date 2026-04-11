@@ -224,6 +224,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IStrategyDefinitionService, StrategyDefinitionService>();
         services.AddScoped<IStrategyDefinitionScenarioService, StrategyDefinitionScenarioService>();
 
+        // ── Option chain snapshots (FIB-5: historical EOD chains for backtest) ─
+        services.AddScoped<IOptionChainSnapshotRepository, OptionChainSnapshotRepository>();
+        services.AddScoped<IOptionChainSnapshotService, OptionChainSnapshotService>();
+
         // ── Risk profiles ─────────────────────────────────────────────────────
         services.AddScoped<IRiskProfileRepository, RiskProfileRepository>();
 

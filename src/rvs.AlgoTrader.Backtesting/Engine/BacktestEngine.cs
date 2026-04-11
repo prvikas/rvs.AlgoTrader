@@ -31,7 +31,12 @@ public class BacktestEngine(
     // ALL-SPREADS-1: Optional — enables spread simulation using Black-Scholes pricing.
     // When null, spread signals are logged as warnings and skipped (IC-1 fallback).
     // Registered as Singleton; safe to inject into a Scoped BacktestEngine.
-    IBlackScholesEngine? bsEngine = null) : IBacktestEngine
+    IBlackScholesEngine? bsEngine = null,
+    // FIB-5: Optional — pre-loads real EOD option chain snapshots for per-bar
+    // StrategyContext.OptionChain population. When null (or no data available),
+    // falls back to the synthetic chain from BuildSyntheticLegs. Requires
+    // bsEngine to be non-null; synthetic chain is still built when no real data.
+    IOptionChainSnapshotService? ocSnapshotService = null) : IBacktestEngine
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
@@ -150,6 +155,30 @@ public class BacktestEngine(
             }
         }
 
+        // ── FIB-5: Pre-fetch real EOD option chain snapshots ─────────────────
+        // Loaded once before the loop into a date-keyed dictionary for O(1) per-bar lookup.
+        // Falls back to the synthetic chain when no snapshot is found for a given bar date.
+        // Requires ocSnapshotService to be registered (optional — degrades gracefully).
+        var ocHistory = new Dictionary<LocalDate, OptionChainSnapshot>();
+        if (ocSnapshotService != null)
+        {
+            try
+            {
+                var ocRows = await ocSnapshotService.GetHistoryRangeAsync(
+                    request.InternalSymbol, request.FromDate, request.ToDate, ct);
+                foreach (var (date, snap) in ocRows)
+                    ocHistory[date] = snap;
+                logger.LogInformation(
+                    "[Backtest] FIB-5: loaded {Count} real OC snapshots for {Symbol} ({From}–{To})",
+                    ocRows.Count, request.InternalSymbol, request.FromDate, request.ToDate);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "[Backtest] FIB-5: failed to load OC snapshots — will use synthetic chain for all bars");
+            }
+        }
+
         // ── Chart accumulation ──────────────────────────────────────────────
         // Full buffer: downsampled to ≤ 2000 at completion.
         // Rolling window: last 200 bars sent with each progress event.
@@ -229,6 +258,55 @@ public class BacktestEngine(
                 }
                 // Fall through — evaluate for new entry on this bar (position is now flat).
             }
+
+            // ── Per-bar market context ────────────────────────────────────────────────────
+            // Computed once per bar so the exit-evaluation branch, spread-monitor branch,
+            // and entry-evaluation branch all share identical market context (PCR / IvRank /
+            // upcoming-event / option chain).  Previously these were declared only in the
+            // entry section, causing CS0103 when the exit branch referenced them.
+            var barDate   = current.OpenTime.Date;
+            var barIvRank = ComputeIvRankAsOf(barDate, ivHistory);
+
+            // FIB-4: conservative 7-day event window; strategies with tighter windows
+            // re-check internally — this pre-filter only prevents false negatives.
+            const int BacktestEventWindow = 7;
+            var hasUpcomingEvent = prefetchedEvents.Any(e =>
+                e.Impact == "High" &&
+                e.EventDate >= barDate &&
+                e.EventDate <= barDate.PlusDays(BacktestEventWindow));
+
+            // BT-OPT-1 / FIB-5: Build per-bar option chain.
+            // Priority: real EOD snapshot (walk back ≤5 days) → synthetic fallback.
+            OptionChainSnapshot? nearChain = null;
+            OptionChainSnapshot? farChain  = null;
+
+            for (int lookback = 0; lookback <= 5 && nearChain == null; lookback++)
+            {
+                if (ocHistory.TryGetValue(barDate.PlusDays(-lookback), out var realSnap))
+                    nearChain = realSnap;
+            }
+
+            if (nearChain == null && bsEngine != null)
+            {
+                var (_, _, si)  = ExtractSpreadConfig(request.ParametersJson);
+                decimal atmIv   = barIvRank?.CurrentIv ?? 15m;
+                decimal atmK    = Math.Round(current.Close / si) * si;
+                var nearExpiry  = NearestWeeklyExpiry(barDate);
+                var farExpiry   = NearestMonthlyExpiry(barDate);
+                bool prevBull   = i > 0 && allCandles[i - 1].Close > allCandles[i - 1].Open;
+
+                var nearLegs = BuildSyntheticLegs(atmK, si, atmIv, prevBull, nStrikes: 5);
+                nearChain = new OptionChainSnapshot(
+                    request.InternalSymbol, current.OpenTime.ToInstant(),
+                    current.Close, nearExpiry, nearLegs);
+
+                decimal farIv = Math.Max(5m, atmIv * 0.85m);
+                var farLegs  = BuildSyntheticLegs(atmK, si, farIv, prevBull, nStrikes: 5);
+                farChain = new OptionChainSnapshot(
+                    request.InternalSymbol, current.OpenTime.ToInstant(),
+                    current.Close, farExpiry, farLegs);
+            }
+            // ─────────────────────────────────────────────────────────────────────────────
 
             // ── ALL-SPREADS-1: monitor open spread position ───────────────────
             if (openSpread != null)
@@ -351,9 +429,14 @@ public class BacktestEngine(
                 if (openTrade != null) // guard: may have been closed by SL/TP above
                 {
                     var exitVisibleCandles = new ReadOnlyListSlice<ClosedCandle>(allCandles, i + 1);
+                    // Carry the same market context as the entry-evaluation ctx so that
+                    // PCR/IV/breadth conditions work correctly in exit rule trees.
                     var exitCtx = new StrategyContext(
                         Guid.Empty, request.InternalSymbol, request.Timeframe,
                         exitVisibleCandles, request.ParametersJson, "backtest",
+                        OptionChain:      nearChain,
+                        SymbolIvRank:     barIvRank,
+                        HasUpcomingEvent: hasUpcomingEvent,
                         CurrentPosition: openTrade.Direction == "BUY" ? "LONG" : "SHORT");
                     try
                     {
@@ -390,61 +473,11 @@ public class BacktestEngine(
                 continue;
             }
 
-            // *** KEY FIX: zero-copy O(1) slice — no List<T> allocation ***
+            // zero-copy O(1) slice for entry evaluation — no List<T> allocation
             var visibleCandles = new ReadOnlyListSlice<ClosedCandle>(allCandles, i + 1);
 
-            // FIB-3: Compute rolling IvRankSnapshot for this bar from the pre-fetched IV history.
-            // Uses up to 252 most recent records on or before the current bar's date.
-            var barDate = current.OpenTime.Date;
-            var barIvRank = ComputeIvRankAsOf(barDate, ivHistory);
-
-            // FIB-4: Determine HasUpcomingEvent for this bar using the pre-fetched event list.
-            // FibOptionSpreadConfig.ExclusionDays is not known here (strategy config may vary),
-            // so we use a conservative 7-day window — strategies with smaller windows will not
-            // get false positives, just a slightly broader pre-filter that is re-checked internally.
-            const int BacktestEventWindow = 7;
-            var hasUpcomingEvent = prefetchedEvents.Any(e =>
-                e.Impact == "High" &&
-                e.EventDate >= barDate &&
-                e.EventDate <= barDate.PlusDays(BacktestEventWindow));
-
-            // BT-OPT-1: Build synthetic OptionChainSnapshot from historical IV so option strategies
-            // can evaluate their IV filters and chain-based conditions in backtest mode.
-            // Only built when IBlackScholesEngine is registered (spread simulation enabled).
-            //
-            // Multi-strike OI ladder (5 strikes each side of ATM):
-            //   • OI decays as 200,000 × 0.65^n from ATM outward (realistic pyramid)
-            //   • OI skew driven by prior bar direction: bullish → CE OI > PE OI → PCR ≈ 0.54
-            //     bearish → PE OI > CE OI → PCR ≈ 2.0 (matches real NIFTY/BANKNIFTY patterns)
-            //   • OiChange sign mirrors bar direction for PutCallRatioChangeOI
-            //   • Put IV skew: +0.5%/strike for OTM puts (negative-gamma / vol-skew realism)
-            //   • Call IV discount: -0.3%/strike for OTM calls
-            //   • MaxPain and CeMaxOiStrike/PeMaxOiStrike now reflect OI walls correctly
-            //   • Far chain IV = 85% of near IV (normal term structure)
-            OptionChainSnapshot? syntheticNearChain = null;
-            OptionChainSnapshot? syntheticFarChain  = null;
-            if (bsEngine != null)
-            {
-                var (_, _, si)  = ExtractSpreadConfig(request.ParametersJson);
-                decimal atmIv   = barIvRank?.CurrentIv ?? 15m;
-                decimal atmK    = Math.Round(current.Close / si) * si;
-                var nearExpiry  = NearestWeeklyExpiry(barDate);
-                var farExpiry   = NearestMonthlyExpiry(barDate);
-
-                bool prevBarBullish = i > 0 && allCandles[i - 1].Close > allCandles[i - 1].Open;
-                var nearLegs = BuildSyntheticLegs(atmK, si, atmIv, prevBarBullish, nStrikes: 5);
-                syntheticNearChain = new OptionChainSnapshot(
-                    request.InternalSymbol, current.OpenTime.ToInstant(),
-                    current.Close, nearExpiry, nearLegs);
-
-                // CalendarSpread CS-2: far chain must have lower IV to produce a positive slope.
-                // 85% of near IV approximates the normal term structure seen in NIFTY/BANKNIFTY.
-                decimal farIv  = Math.Max(5m, atmIv * 0.85m);
-                var farLegs = BuildSyntheticLegs(atmK, si, farIv, prevBarBullish, nStrikes: 5);
-                syntheticFarChain = new OptionChainSnapshot(
-                    request.InternalSymbol, current.OpenTime.ToInstant(),
-                    current.Close, farExpiry, farLegs);
-            }
+            // barDate / barIvRank / hasUpcomingEvent / nearChain / farChain are already set
+            // above (before the openSpread / openTrade blocks) so all three branches share them.
 
             var ctx = new StrategyContext(
                 Guid.Empty,
@@ -453,11 +486,11 @@ public class BacktestEngine(
                 visibleCandles,
                 request.ParametersJson,
                 "backtest",
-                OptionChain:     syntheticNearChain,
-                SymbolIvRank:    barIvRank,
+                OptionChain:      nearChain,
+                SymbolIvRank:     barIvRank,
                 HasUpcomingEvent: hasUpcomingEvent,
-                NearExpiryChain: syntheticNearChain,
-                FarExpiryChain:  syntheticFarChain);
+                NearExpiryChain:  nearChain,
+                FarExpiryChain:   farChain ?? nearChain);
 
             SignalResult signal;
             try { signal = await strategy.EvaluateAsync(ctx, ct); }
