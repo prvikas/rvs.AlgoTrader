@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.DTOs.Common;
+using rvs.AlgoTrader.Application.DTOs.Strategy;
 using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.API.Controllers;
@@ -74,33 +75,3 @@ public class StrategyDefinitionsController(IStrategyDefinitionService service) :
         return Ok(ApiResponse<object>.Ok(null!));
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DTOs
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Returned to the frontend. DefinitionJson is the full Strategy object JSON
-/// (matching the TypeScript Strategy interface) so the frontend can hydrate
-/// the StrategyDefinitionPage form directly on edit.
-/// </summary>
-public record StrategyDefinitionDto(
-    Guid        Id,
-    string      Name,
-    string?     Description,
-    string      TradingStyle,
-    string      DefinitionJson,   // full UI Strategy JSON
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt
-);
-
-/// <summary>
-/// Request body for create/update. DefinitionJson is the full Strategy object
-/// produced by StrategyDefinitionPage.buildPayload().
-/// </summary>
-public record UpsertStrategyDefinitionRequest(
-    string  Name,
-    string? Description,
-    string  TradingStyle,
-    string  DefinitionJson   // full UI Strategy JSON (must be valid JSON)
-);

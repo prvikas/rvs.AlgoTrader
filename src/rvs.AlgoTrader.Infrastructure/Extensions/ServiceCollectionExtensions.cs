@@ -220,6 +220,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IStrategyApprovalRepository, StrategyApprovalRepository>();
         services.AddScoped<IApprovalService, ApprovalService>();
 
+        // ── Strategy definitions (UI-designed GenericRules strategies) ────────
+        services.AddScoped<IStrategyDefinitionService, StrategyDefinitionService>();
+
         // ── Risk profiles ─────────────────────────────────────────────────────
         services.AddScoped<IRiskProfileRepository, RiskProfileRepository>();
 

@@ -1098,123 +1098,127 @@ export const correlationApi = {
 }
 
 // ── Strategy domain API (PROMPT-001) ─────────────────────────────────────────
-// TODO: API — routes not yet implemented on the backend.
-// These functions return mock data shaped to the interfaces in types/strategy.ts.
+// Strategy CRUD calls the real /api/strategy-definitions backend.
+// Scenarios, deployments, runs are still in-memory (separate persistence concern).
 import type {
   Strategy, Scenario, Deployment, RunResult, ParameterSweep, TradeRecord,
 } from '../types/strategy'
 import {
-  Timeframe, TradingStyle, StrategyStatus, IndicatorType, IndicatorRole,
-  ScenarioStatus, Broker,
+  Timeframe, TradingStyle, StrategyStatus,
+  ScenarioStatus, Broker, DeploymentMode, OverrideSection,
   ExitCombineLogic, StopType, TrailingType, StartCondition, DayOfWeek,
-  SignalLayer,
 } from '../types/strategy'
 
-const MOCK_STRATEGIES: Strategy[] = [
-  {
-    id: 'strat-001',
-    name: 'VCP Swing',
-    description: 'Volatility Contraction Pattern daily equity swing',
-    primaryTimeframe: Timeframe.D1,
-    instruments: ['NSE:AXISBANK', 'NSE:HDFCBANK'],
-    tradingStyle: TradingStyle.Swing,
-    status: StrategyStatus.Backtested,
-    indicators: [
-      {
-        id: 'ind-ema50', type: IndicatorType.EMA, timeframe: Timeframe.D1,
-        role: IndicatorRole.EntryFilter,
-        signalLayer: SignalLayer.PrimarySignal, layerOrder: 1,
-        baseParams: { period: 50 },
-        allowedParamRanges: { period: { min: 20, max: 100 } },
-      },
-      {
-        id: 'ind-atr', type: IndicatorType.ATR, timeframe: Timeframe.D1,
-        role: IndicatorRole.StopLoss,
-        signalLayer: SignalLayer.EntryTrigger, layerOrder: 1,
-        baseParams: { period: 14 },
-        allowedParamRanges: { period: { min: 7, max: 28 } },
-      },
-    ],
-    longEntry: {
-      enabled: true, groupOperator: ExitCombineLogic.AND,
-      groups: [{
-        id: 'grp-1', label: 'Long Entry Group 1',
-        logicalOperator: ExitCombineLogic.AND,
-        conditions: [],
-      }],
-    },
-    shortEntry: { enabled: false, groupOperator: ExitCombineLogic.AND, groups: [] },
-    longExit: { enabled: true, groupOperator: ExitCombineLogic.OR, groups: [] },
-    shortExit: { enabled: false, groupOperator: ExitCombineLogic.OR, groups: [] },
-    exitBehaviour: {
-      exitEndOfSession: false,
-      exitAfterNBars: null,
-      exitAtStopOrTargetOnly: true,
-      combineLogic: ExitCombineLogic.OR,
-      tradableDays: [DayOfWeek.Mon, DayOfWeek.Tue, DayOfWeek.Wed, DayOfWeek.Thu, DayOfWeek.Fri],
-      sessionStart: '09:15',
-      sessionEnd: '15:20',
-    },
-    stopLoss: { type: StopType.ATRMultiple, baseValue: 2, allowedRange: { min: 1, max: 4 } },
-    profitTarget: { type: StopType.ATRMultiple, baseValue: 4, allowedRange: { min: 2, max: 8 } },
-    rrConfig: { rrMin: 2, rrMax: 4, deriveTargetFromSL: true },
-    trailing: {
-      enabled: false, trailingType: TrailingType.ATRMultiple,
-      trailingParams: { multiplier: 1.5 },
-      startCondition: StartCondition.Immediately,
-      partialExits: [],
-    },
-    riskControls: { maxRiskPerTradePercent: 1, maxTradesPerDay: 3 },
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-03-01T00:00:00Z',
-  },
-]
-
-const MOCK_SCENARIOS: Record<string, Scenario[]> = {
-  'strat-001': [
-    {
-      id: 'scen-001',
-      strategyId: 'strat-001',
-      name: 'Base scenario',
-      capital: 500000,
-      brokerAccount: Broker.MStock,
-      backtestRange: { from: '2023-01-01', to: '2025-12-31' },
-      parameterOverrides: [],
-      status: ScenarioStatus.Backtested,
-      lastRunAt: '2026-03-15T10:00:00Z',
-      lastMetrics: {
-        returnPct: 22.4, maxDrawdownPct: 8.1, sharpe: 1.82,
-        winRate: 54, profitFactor: 1.9, tradeCount: 142,
-        avgRPerTrade: 0.42, expectancy: 840, avgRealisedRR: 2.1,
-      },
-    },
-  ],
+// ── Backend DTO shape (mirrors Application/DTOs/Strategy/StrategyDefinitionDtos.cs) ──
+interface StrategyDefinitionDto {
+  id: string
+  name: string
+  description?: string
+  tradingStyle: string
+  definitionJson: string
+  createdAt: string
+  updatedAt: string
 }
 
+interface UpsertStrategyDefinitionRequest {
+  name: string
+  description?: string
+  tradingStyle: string
+  definitionJson: string
+}
+
+// ── Mapping helpers ────────────────────────────────────────────────────────────
+
+function dtoToStrategy(dto: StrategyDefinitionDto): Strategy {
+  let parsed: Partial<Strategy> = {}
+  try { parsed = JSON.parse(dto.definitionJson) as Partial<Strategy> } catch { /* ignore */ }
+  return {
+    // defaults for missing fields so form always has valid state
+    primaryTimeframe: Timeframe.D1,
+    instruments:      [],
+    status:           StrategyStatus.Draft,
+    indicators:       [],
+    longEntry:        { enabled: true,  groupOperator: ExitCombineLogic.AND, groups: [] },
+    shortEntry:       { enabled: false, groupOperator: ExitCombineLogic.AND, groups: [] },
+    longExit:         { enabled: true,  groupOperator: ExitCombineLogic.OR,  groups: [] },
+    shortExit:        { enabled: false, groupOperator: ExitCombineLogic.OR,  groups: [] },
+    exitBehaviour: {
+      exitEndOfSession: true, exitAfterNBars: null, exitAtStopOrTargetOnly: false,
+      combineLogic: ExitCombineLogic.OR,
+      tradableDays: [DayOfWeek.Mon, DayOfWeek.Tue, DayOfWeek.Wed, DayOfWeek.Thu, DayOfWeek.Fri],
+      sessionStart: '09:15', sessionEnd: '15:20',
+    },
+    stopLoss:     { type: StopType.ATRMultiple, baseValue: 2, allowedRange: { min: 1, max: 4 } },
+    profitTarget: { type: StopType.ATRMultiple, baseValue: 4, allowedRange: { min: 2, max: 8 } },
+    rrConfig:     { rrMin: 2, rrMax: 4, deriveTargetFromSL: true },
+    trailing: {
+      enabled: false, trailingType: TrailingType.ATRMultiple,
+      trailingParams: { multiplier: 1.5 }, startCondition: StartCondition.Immediately, partialExits: [],
+    },
+    riskControls: { maxRiskPerTradePercent: 1, maxTradesPerDay: 5 },
+    // overlay parsed fields (these override the defaults above)
+    ...parsed,
+    // top-level fields always come from the DB row
+    id:           dto.id,
+    name:         dto.name,
+    description:  dto.description,
+    tradingStyle: (dto.tradingStyle as TradingStyle) ?? parsed.tradingStyle ?? TradingStyle.Swing,
+    createdAt:    dto.createdAt,
+    updatedAt:    dto.updatedAt,
+  }
+}
+
+function strategyToUpsertRequest(s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'> | Strategy): UpsertStrategyDefinitionRequest {
+  return {
+    name:           s.name,
+    description:    s.description,
+    tradingStyle:   s.tradingStyle,
+    definitionJson: JSON.stringify(s),
+  }
+}
+
+// ── In-memory stores for scenarios/deployments/runs (not yet persisted) ───────
+const MOCK_SCENARIOS: Record<string, Scenario[]> = {}
 const MOCK_DEPLOYMENTS: Record<string, Deployment[]> = {}
 const MOCK_RUNS: Record<string, RunResult[]> = {}
 const MOCK_TRADES: Record<string, TradeRecord[]> = {}
 const MOCK_SWEEPS: ParameterSweep[] = []
 
 export const strategyDomainApi = {
-  // TODO: API — replace with real endpoints when implemented
-  listStrategies: (): Promise<Strategy[]> => Promise.resolve(MOCK_STRATEGIES),
-  getStrategy: (id: string): Promise<Strategy | null> =>
-    Promise.resolve(MOCK_STRATEGIES.find(s => s.id === id) ?? null),
-  createStrategy: (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>): Promise<Strategy> => {
-    const created: Strategy = { ...s, id: `strat-${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-    MOCK_STRATEGIES.push(created)
-    return Promise.resolve(created)
+  // ── Strategy CRUD — real /api/strategy-definitions backend ────────────────
+  listStrategies: async (): Promise<Strategy[]> => {
+    const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto[]>>('/strategy-definitions')
+    return (resp.data?.data ?? []).map(dtoToStrategy)
   },
-  updateStrategy: (id: string, s: Partial<Strategy>): Promise<Strategy> => {
-    const idx = MOCK_STRATEGIES.findIndex(x => x.id === id)
-    if (idx >= 0) { MOCK_STRATEGIES[idx] = { ...MOCK_STRATEGIES[idx], ...s, updatedAt: new Date().toISOString() } }
-    return Promise.resolve(MOCK_STRATEGIES[idx])
+
+  getStrategy: async (id: string): Promise<Strategy | null> => {
+    try {
+      const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${id}`)
+      return resp.data?.data ? dtoToStrategy(resp.data.data) : null
+    } catch {
+      return null
+    }
   },
-  deleteStrategy: (id: string): Promise<void> => {
-    const idx = MOCK_STRATEGIES.findIndex(x => x.id === id)
-    if (idx >= 0) MOCK_STRATEGIES.splice(idx, 1)
-    return Promise.resolve()
+
+  createStrategy: async (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>): Promise<Strategy> => {
+    const body: UpsertStrategyDefinitionRequest = strategyToUpsertRequest(s as Strategy)
+    const resp = await apiClient.post<ApiResponse<StrategyDefinitionDto>>('/strategy-definitions', body)
+    return dtoToStrategy(resp.data.data!)
+  },
+
+  updateStrategy: async (id: string, s: Partial<Strategy>): Promise<Strategy> => {
+    // Fetch existing definition to merge with partial update
+    const existing = await strategyDomainApi.getStrategy(id)
+    const merged = { ...(existing ?? {}), ...s } as Strategy
+    const body: UpsertStrategyDefinitionRequest = strategyToUpsertRequest(merged)
+    const resp = await apiClient.put<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${id}`, body)
+    return dtoToStrategy(resp.data.data!)
+  },
+
+  deleteStrategy: async (id: string): Promise<void> => {
+    await apiClient.delete(`/strategy-definitions/${id}`)
+    delete MOCK_SCENARIOS[id]
+    delete MOCK_DEPLOYMENTS[id]
   },
 
   listScenarios: (strategyId: string): Promise<Scenario[]> =>
@@ -1236,16 +1240,89 @@ export const strategyDomainApi = {
       MOCK_SCENARIOS[strategyId] = MOCK_SCENARIOS[strategyId].filter(x => x.id !== scenarioId)
     return Promise.resolve()
   },
-  runScenario: (_strategyId: string, _scenarioId: string): Promise<void> => Promise.resolve(),
+  runScenario: async (strategyId: string, scenarioId: string): Promise<{ jobId: string }> => {
+    // Look up scenario from in-memory store
+    const scenario = (MOCK_SCENARIOS[strategyId] ?? []).find(s => s.id === scenarioId)
+    if (!scenario) throw new Error(`Scenario ${scenarioId} not found`)
+
+    // Fetch strategy definition from real API
+    const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${strategyId}`)
+    const dto = resp.data?.data
+    if (!dto) throw new Error(`Strategy definition ${strategyId} not found`)
+
+    const parsed = (() => { try { return JSON.parse(dto.definitionJson) as Partial<Strategy> } catch { return {} } })()
+    const instruments = (parsed.instruments ?? [])
+    const symbol = instruments[0] ?? ''
+    const timeframe = parsed.primaryTimeframe ?? 'D1'
+
+    if (!symbol) throw new Error('Strategy has no instruments — add at least one symbol in Core & Indicators.')
+
+    // Apply parameter overrides to the definition JSON
+    let definitionJson = dto.definitionJson
+    if (scenario.parameterOverrides.length > 0) {
+      const def = JSON.parse(definitionJson) as Record<string, unknown>
+      for (const ov of scenario.parameterOverrides) {
+        if (ov.section === OverrideSection.Indicator && ov.indicatorId && Array.isArray(def.indicators)) {
+          const inds = def.indicators as Array<{ id: string; baseParams?: Record<string, unknown> }>
+          const ind = inds.find(i => i.id === ov.indicatorId)
+          if (ind?.baseParams) ind.baseParams[ov.paramKey] = ov.overrideValue
+        }
+      }
+      definitionJson = JSON.stringify(def)
+    }
+
+    // Mark scenario as Running (optimistic update)
+    const idx = MOCK_SCENARIOS[strategyId]?.findIndex(s => s.id === scenarioId) ?? -1
+    if (idx >= 0) MOCK_SCENARIOS[strategyId][idx] = { ...MOCK_SCENARIOS[strategyId][idx], status: ScenarioStatus.Running }
+
+    // Launch real async backtest
+    const btResp = await backtestApi.start({
+      strategyName:    'GenericRules',
+      parametersJson:  definitionJson,
+      internalSymbol:  symbol,
+      timeframe,
+      fromDate:        scenario.backtestRange.from,
+      toDate:          scenario.backtestRange.to,
+      initialCapital:  scenario.capital,
+    })
+    const jobId: string = btResp.data?.data?.jobId ?? ''
+
+    // Store jobId on scenario for polling
+    if (idx >= 0) MOCK_SCENARIOS[strategyId][idx] = { ...MOCK_SCENARIOS[strategyId][idx], lastRunAt: new Date().toISOString() }
+
+    return { jobId }
+  },
 
   listDeployments: (strategyId: string): Promise<Deployment[]> =>
     Promise.resolve(MOCK_DEPLOYMENTS[strategyId] ?? []),
-  createDeployment: (strategyId: string, d: Omit<Deployment, 'id' | 'strategyId'>): Promise<Deployment> => {
+
+  createDeployment: async (strategyId: string, d: Omit<Deployment, 'id' | 'strategyId'>): Promise<Deployment> => {
+    // For Forward / Live modes: create a real StrategyInstance via the backend.
+    if (d.mode === DeploymentMode.ForwardTest || d.mode === DeploymentMode.Live) {
+      const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${strategyId}`)
+      const dto = resp.data?.data
+      if (dto) {
+        const execMode = d.mode === DeploymentMode.Live ? 'Live' : 'ForwardTest'
+        await strategiesApi.create({
+          name:            d.name,
+          strategyType:    'GenericRules',
+          internalSymbol:  d.symbol,
+          timeframe:       d.timeframe,
+          brokerName:      d.broker,
+          mode:            execMode,
+          parametersJson:  dto.definitionJson,
+          allocatedCapital: d.allocatedCapital,
+          scheduleJson:    JSON.stringify({ days: d.schedule.days, startTime: d.schedule.startTime, endTime: d.schedule.endTime }),
+        })
+      }
+    }
+    // Always persist locally so the Deployments tab shows it
     const created: Deployment = { ...d, id: `dep-${Date.now()}`, strategyId }
     if (!MOCK_DEPLOYMENTS[strategyId]) MOCK_DEPLOYMENTS[strategyId] = []
     MOCK_DEPLOYMENTS[strategyId].push(created)
-    return Promise.resolve(created)
+    return created
   },
+
   deleteDeployment: (strategyId: string, deploymentId: string): Promise<void> => {
     if (MOCK_DEPLOYMENTS[strategyId])
       MOCK_DEPLOYMENTS[strategyId] = MOCK_DEPLOYMENTS[strategyId].filter(x => x.id !== deploymentId)
