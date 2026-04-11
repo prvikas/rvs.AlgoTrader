@@ -651,6 +651,38 @@ public interface IOptionIvRankService
         CancellationToken ct);
 }
 
+/// <summary>
+/// Records and retrieves daily EOD option chain snapshots for historical backtesting.
+///
+/// FIB-5: BacktestEngine calls GetHistoryRangeAsync() once before the main candle loop
+/// to pre-load all snapshots for the backtest window. Per-bar it picks the closest
+/// snapshot on or before the bar date and populates StrategyContext.OptionChain.
+/// Falls back to the synthetic chain (BuildSyntheticLegs) when no snapshot exists.
+/// </summary>
+public interface IOptionChainSnapshotService
+{
+    /// <summary>
+    /// Persist today's option chain snapshot (idempotent — upserts by symbol+date).
+    /// Called by OptionChainSnapshotJob after market close.
+    /// </summary>
+    Task RecordAsync(
+        string underlyingSymbol,
+        NodaTime.LocalDate date,
+        Domain.ValueObjects.OptionChainSnapshot snapshot,
+        CancellationToken ct);
+
+    /// <summary>
+    /// FIB-5: Pre-fetch snapshots for a date range (inclusive).
+    /// Returns list ordered by date ascending; caller picks nearest on-or-before.
+    /// </summary>
+    Task<IReadOnlyList<(NodaTime.LocalDate Date, Domain.ValueObjects.OptionChainSnapshot Snapshot)>>
+        GetHistoryRangeAsync(
+            string underlyingSymbol,
+            NodaTime.LocalDate from,
+            NodaTime.LocalDate to,
+            CancellationToken ct);
+}
+
 public interface IOptionLegSelector
 {
     /// <param name="underlyingSymbol">E.g. "NIFTY 50" or "BANKNIFTY".</param>

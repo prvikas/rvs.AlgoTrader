@@ -48,6 +48,12 @@ public static class HangfireJobRegistry
             "breadth-calculator", j => j.RunAsync(CancellationToken.None),
             "0 11 * * 1-5");
 
+        // Option chain EOD snapshot: 3:45 PM IST = 10:15 UTC (same slot as EOD report)
+        // Records live OC snapshot per running strategy symbol for historical backtest use (FIB-5).
+        RecurringJob.AddOrUpdate<OptionChainSnapshotJob>(
+            "option-chain-snapshot", j => j.RunAsync(CancellationToken.None),
+            "15 10 * * 1-5");
+
         logger.LogInformation("[HangfireJobRegistry] All recurring jobs registered");
     }
 }

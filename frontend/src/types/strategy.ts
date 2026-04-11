@@ -46,6 +46,13 @@ export enum IndicatorType {
   DayOfWeekFilter  = 'DayOfWeekFilter',
   ADX              = 'ADX',
   ATRPercentile    = 'ATRPercentile',
+  // Options market-context indicators (read from StrategyContext, not computed from candles)
+  IVRank           = 'IVRank',
+  IVPercentile     = 'IVPercentile',
+  PCR              = 'PCR',
+  PCRChange        = 'PCRChange',
+  AtmIV            = 'AtmIV',
+  MaxPain          = 'MaxPain',
 }
 
 export enum IndicatorRole {
@@ -216,6 +223,51 @@ export enum OverrideSection {
   ScaleOut      = 'scaleOut',
   ExitBehaviour = 'exitBehaviour',
   RR            = 'rr',
+}
+
+// ─── Options spread types ─────────────────────────────────────────────────────
+
+export enum SpreadType {
+  BullCallSpread = 'BullCallSpread',
+  BearPutSpread  = 'BearPutSpread',
+  BullPutSpread  = 'BullPutSpread',
+  BearCallSpread = 'BearCallSpread',
+  IronCondor     = 'IronCondor',
+  ShortStraddle  = 'ShortStraddle',
+  ShortStrangle  = 'ShortStrangle',
+  CalendarSpread = 'CalendarSpread',
+  LongCall       = 'LongCall',
+  LongPut        = 'LongPut',
+}
+
+export enum OptionLegType   { CE = 'CE', PE = 'PE' }
+export enum LegDirection    { Buy = 'Buy', Sell = 'Sell' }
+export enum StrikeSelection { Atm = 'Atm', OtmByStrike = 'OtmByStrike', OtmByPct = 'OtmByPct', ByDelta = 'ByDelta' }
+
+export interface SpreadLegDef {
+  optionType:    OptionLegType
+  direction:     LegDirection
+  selectionMode: StrikeSelection
+  otmStrikes:    number
+  otmPct:        number
+  targetDelta:   number
+  quantity:      number
+  nearestWeekly: boolean
+}
+
+export interface OptionsConfig {
+  enabled:          boolean
+  spreadType:       SpreadType
+  legs:             SpreadLegDef[]
+  expiryPreference: 'Weekly' | 'Monthly'
+  stopLossPct:      number
+  profitTargetPct:  number
+  minIvRank?:       number
+  maxIvRank?:       number
+  minAtmIv?:        number
+  maxAtmIv?:        number
+  minPcr?:          number
+  maxPcr?:          number
 }
 
 // ─── Indicators ───────────────────────────────────────────────────────────────
@@ -477,6 +529,8 @@ export interface Strategy {
   positionSizing?: PositionSizingModel
   stopStateMachine?: StopStateMachine
   profitBooking?: ProfitBookingRule
+  // Options spread config — when set, GenericRulesStrategy fires SpreadEntry signals
+  optionsConfig?: OptionsConfig
   createdAt: string
   updatedAt: string
 }
@@ -602,6 +656,11 @@ export const ENUM_VALUES = {
   scalingModel:           Object.values(ScalingModel),
   sizingMethod:           Object.values(SizingMethod),
   sessionStateProperty:   Object.values(SessionStateProperty),
+  // Options
+  spreadType:             Object.values(SpreadType),
+  optionLegType:          Object.values(OptionLegType),
+  legDirection:           Object.values(LegDirection),
+  strikeSelection:        Object.values(StrikeSelection),
 } as const
 
 // validateEnumResponse: called inside EnumsContext after fetch.

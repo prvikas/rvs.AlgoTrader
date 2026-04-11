@@ -5,6 +5,28 @@ Record only changed or new requirements.
 Do not restate stable architecture.
 
 
+## 2026-04-11
+
+### Generic strategy creation (DONE)
+
+UI-designed strategies now persist to `strategy_definitions` (migration 036).
+`strategyDomainApi` in client.ts replaced all mock functions with real `/api/strategy-definitions` API calls.
+`runScenario` launches a real backtest via `backtestApi.start` with `strategyName: 'GenericRules'`.
+`createDeployment` creates a real `StrategyInstance` for ForwardTest/Live modes.
+
+### Generic options strategies (DONE)
+
+Users can now define any options spread (Iron Condor, Short Straddle, Bull Call Spread, etc.) from the UI:
+- Spread type, legs, expiry, stop/target, IV rank / ATM IV / PCR numeric filters all configurable per strategy
+- IndicatorEngine gains IVRank, PCR, AtmIV, MaxPain as usable conditions inside rule trees
+- GenericRulesStrategy routes to SpreadEntry when OptionsConfig.Enabled; BacktestEngine already handles SpreadEntry via synthetic OptionChainSnapshot
+
+### Known gaps (accepted, not urgent)
+
+- **GR-1 stopLossPct/profitTargetPct not wired into BacktestEngine**: OptionsConfig.stopLossPct and profitTargetPct are defined and serialised but BacktestEngine.ExtractSpreadConfig only reads top-level `ProfitTargetPct` / `MaxLossMultiple`. GenericRules options strategies use engine defaults (50% profit target, 2× max loss). Fix: extend ExtractSpreadConfig to read `optionsConfig.profitTargetPct` and `optionsConfig.stopLossPct` when present.
+- **GR-2 Scenarios/Deployments still in-memory**: MOCK_SCENARIOS / MOCK_DEPLOYMENTS in client.ts are not persisted; scenario list resets on page refresh. strategy_scenarios table exists (migration 007) but no API wiring for scenarios created from StrategyDefinitionPage.
+- **GR-3 No unit tests for GenericRules options path**: No test covering OptionsConfig.Enabled → SpreadEntry flow or IV filter blocking.
+
 ## 2026-04-09
 
 ### Audit gaps found in StrategyEvaluationQueue (SEQ-1, SEQ-2)

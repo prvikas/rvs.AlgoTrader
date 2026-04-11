@@ -19,6 +19,26 @@ interface Props {
 let _indicatorId = 0
 function newId() { return `ind-${Date.now()}-${_indicatorId++}` }
 
+// Context-backed indicator types — values read from StrategyContext (option chain / IV rank).
+// No user-configurable parameters; skip Step 2 entirely.
+const CONTEXT_BACKED_TYPES = new Set<IndicatorType>([
+  IndicatorType.PCR,
+  IndicatorType.PCRChange,
+  IndicatorType.AtmIV,
+  IndicatorType.MaxPain,
+  IndicatorType.IVRank,
+  IndicatorType.IVPercentile,
+])
+
+const CONTEXT_BACKED_LABELS: Partial<Record<IndicatorType, string>> = {
+  [IndicatorType.PCR]:          'Put/Call Ratio (OI) — reads live option chain',
+  [IndicatorType.PCRChange]:    'PCR Change (OI delta) — reads live option chain',
+  [IndicatorType.AtmIV]:        'ATM Implied Volatility — reads live option chain',
+  [IndicatorType.MaxPain]:      'Max Pain Strike — reads live option chain',
+  [IndicatorType.IVRank]:       'IV Rank (0–100) — reads IV history',
+  [IndicatorType.IVPercentile]: 'IV Percentile (0–100) — reads IV history',
+}
+
 // Default parameters for every registered IndicatorType
 const DEFAULT_PARAMS: Record<string, Record<string, number>> = {
   // Trend
@@ -83,9 +103,11 @@ export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimefra
   const typeOptions = enums.indicatorType ?? []
   const roleOptions = enums.indicatorRole ?? []
 
+  const isContextBacked = CONTEXT_BACKED_TYPES.has(type)
+
   function handleTypeChange(t: IndicatorType) {
     setType(t)
-    setBaseParams(DEFAULT_PARAMS[t] ?? { period: 14 })
+    setBaseParams(CONTEXT_BACKED_TYPES.has(t) ? {} : (DEFAULT_PARAMS[t] ?? { period: 14 }))
     setAllowedRanges({})
   }
 
@@ -118,7 +140,7 @@ export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimefra
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: SP.md }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>
-            {existing ? 'Edit' : 'Add'} Indicator — Step {step} of 2
+            {existing ? 'Edit' : 'Add'} Indicator — Step {step} of {isContextBacked ? 1 : 2}
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 18 }}>×</button>
         </div>
@@ -169,9 +191,26 @@ export function IndicatorModal({ indicatorId, strategyIndicators, primaryTimefra
                 onChange={e => setLayerOrder(Number(e.target.value))}
                 style={{ ...inputStyle, width: 80 }} />
             </Field>
+            {isContextBacked && (
+              <div style={{
+                background: '#0d1f3c', border: '1px solid #2563eb44',
+                borderRadius: 5, padding: '8px 12px', fontSize: 11, color: '#93c5fd',
+                lineHeight: 1.5,
+              }}>
+                <strong>Context-backed indicator</strong><br />
+                {CONTEXT_BACKED_LABELS[type]}<br />
+                <span style={{ color: C.textMuted }}>
+                  No parameters needed — data is pre-fetched per bar from the live/historical
+                  option chain snapshot before strategy evaluation.
+                </span>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: SP.sm, marginTop: SP.sm }}>
               <button onClick={onClose} style={cancelBtnStyle}>Cancel</button>
-              <button onClick={() => setStep(2)} style={primaryBtnStyle}>Next →</button>
+              {isContextBacked
+                ? <button onClick={save} style={primaryBtnStyle}>Save Indicator</button>
+                : <button onClick={() => setStep(2)} style={primaryBtnStyle}>Next →</button>
+              }
             </div>
           </div>
         )}
