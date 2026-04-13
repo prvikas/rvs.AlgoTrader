@@ -190,7 +190,7 @@ public class Condition
 
     /// <summary>
     /// "&gt;" | "&lt;" | "&gt;=" | "&lt;=" | "==" | "!=" | "crossesAbove" | "crossesBelow"
-    /// Note: JSON stores these as the literal characters >, <, etc.
+    /// Note: JSON stores these as the literal characters &gt;, &lt;, etc.
     /// </summary>
     [JsonPropertyName("operator")]
     public string Operator { get; set; } = ">";

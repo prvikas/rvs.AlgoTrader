@@ -464,7 +464,6 @@ public static class IndicatorEngine
         var adxCount = n - 2 * period;
         if (adxCount < 1) return null;
         var adxArr = new decimal[adxCount];
-        decimal prevDx = 0;
         for (int i = period; i < n - 1; i++)
         {
             smTr = smTr - smTr / period + tr[i];

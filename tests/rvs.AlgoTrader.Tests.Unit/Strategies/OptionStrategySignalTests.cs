@@ -261,6 +261,37 @@ public class OptionStrategySignalTests
         profit.Should().Be(0.6m);
     }
 
+    [Fact]
+    public void ExtractSpreadConfig_ReadsOptionsConfig_StopLossPct()
+    {
+        // stopLossPct=40 → maxLoss = 100/40 = 2.5
+        const string json = """{"optionsConfig":{"enabled":true,"stopLossPct":40}}""";
+        var (maxLoss, profit, _) = BacktestEngine.ExtractSpreadConfig(json);
+        maxLoss.Should().Be(2.5m, "100 / stopLossPct(40) = 2.5");
+        profit.Should().Be(0.50m, "default profit when profitTargetPct absent");
+    }
+
+    [Fact]
+    public void ExtractSpreadConfig_ReadsOptionsConfig_ProfitTargetPct()
+    {
+        // profitTargetPct=60 → normalised 0.60
+        const string json = """{"optionsConfig":{"enabled":true,"profitTargetPct":60}}""";
+        var (maxLoss, _, profit) = BacktestEngine.ExtractSpreadConfig(json);
+        // Note: profit is 3rd tuple item but named _ above; re-destructure
+        var (_, actualProfit, _2) = BacktestEngine.ExtractSpreadConfig(json);
+        actualProfit.Should().Be(0.60m, "profitTargetPct(60) normalised to 0.60");
+        maxLoss.Should().Be(2.0m, "default maxLoss when stopLossPct absent");
+    }
+
+    [Fact]
+    public void ExtractSpreadConfig_TopLevel_Takes_Priority_Over_OptionsConfig()
+    {
+        // Top-level ProfitTargetPct present → optionsConfig ignored for that field
+        const string json = """{"ProfitTargetPct":0.40,"optionsConfig":{"profitTargetPct":80}}""";
+        var (_, profit, _) = BacktestEngine.ExtractSpreadConfig(json);
+        profit.Should().Be(0.40m, "explicit top-level value wins over optionsConfig");
+    }
+
     // ── FilteredAroundAtm ─────────────────────────────────────────────────────
 
     /// <summary>

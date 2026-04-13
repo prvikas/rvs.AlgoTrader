@@ -44,7 +44,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | PROMPT-001/002 strategy UI | DONE | migrations 032-033; StrategiesPage 5-tab; StrategyDefinitionPage; ScenariosTab/Drawer/Compare/Results/Deployments; IndicatorModal; RuleGroupEditor/ConditionRow; SignalLayer cards; Entry Execution; Position Sizing; Stop SM; ScenarioDrawer; PromotionChecklistModal; grouped nav; SymbolSearchInput; HelpTooltip; ProfitBookingRule; tsc clean |
 | Generic UI strategies | DONE | migration 036-038; IStrategyDefinitionService+StrategyDefinitionService; StrategyDefinitionScenarioService (GR-2); real API scenarios + parameter sweep (GR-2); GenericRulesConfig: OptionsConfig+OptionsSpreadLegDef; IndicatorEngine PCR/PCRCHANGE/ATMIV/MAXPAIN/IVRANK/IVPERCENTILE (context-backed, no params); GenericRulesStrategy: IV/PCR filters + SpreadEntry 10 types; OptionsConfigPanel; IndicatorModal: context-backed types skip Step 2, show info note; GR-1/GR-2/GR-3 audit gaps closed |
 | Master data refresh | PARTIAL | MStock parsing fixed, missing DB columns (003 migration), instrument seeding |
-| Tests | PARTIAL | 102 unit + 14 arch. Missing: GenericRules options spread tests, live spread routing integration, StrategyEvaluationQueue integration. |
+| Tests | PARTIAL | 117 unit + 14 arch. Missing: live spread routing integration, StrategyEvaluationQueue integration. |
 | Backtest trade analysis | DONE | BacktestTradeDto +StopLoss/TakeProfit/HoldingBars/RMultiple/TotalCost/SlippageAmount/LegsJson; GET /api/backtest/{id}/trades; TradesTable 17-col sortable, spread legs expandable, real API for GUID run IDs |
 
 ## Update rule: revise affected rows only; do not mark DONE without code support.

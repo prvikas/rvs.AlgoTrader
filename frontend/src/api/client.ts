@@ -300,6 +300,7 @@ export interface StrategyInstance {
   status: string
   allocatedCapital?: number
   parametersJson?: string
+  scheduleJson?: string
   createdAt: string
   /** Today's realised P&L for this instance (net of brokerage + taxes). */
   todayRealizedPnl?: number
@@ -1099,13 +1100,13 @@ export const correlationApi = {
 
 // ── Strategy domain API (PROMPT-001) ─────────────────────────────────────────
 // Strategy CRUD calls the real /api/strategy-definitions backend.
-// Scenarios, deployments, runs are still in-memory (separate persistence concern).
+// Strategy CRUD + Scenarios backed by real /api/strategy-definitions backend.
 import type {
   Strategy, Scenario, Deployment, RunResult, ParameterSweep, TradeRecord,
 } from '../types/strategy'
 import {
   Timeframe, TradingStyle, StrategyStatus,
-  ScenarioStatus, Broker, DeploymentMode, OverrideSection,
+  ScenarioStatus, Broker, DeploymentMode, DeploymentStatus, OverrideSection,
   ExitCombineLogic, StopType, TrailingType, StartCondition, DayOfWeek,
 } from '../types/strategy'
 
@@ -1245,8 +1246,42 @@ function scenarioToUpsertRequest(s: Omit<Scenario, 'id' | 'strategyId'>): Upsert
   }
 }
 
-// ── In-memory stores for deployments/runs (scenarios now backed by DB) ────────
-const MOCK_DEPLOYMENTS: Record<string, Deployment[]> = {}
+// ── In-memory stores for runs/trades (no backend yet) ────────
+
+// ── Helper: map a real StrategyInstance to the Deployment UI shape ──────────
+function instanceToDeployment(inst: StrategyInstance, strategyId: string): Deployment {
+  const modeMap: Record<string, DeploymentMode> = {
+    ForwardTest: DeploymentMode.ForwardTest,
+    Live:        DeploymentMode.Live,
+    Backtest:    DeploymentMode.Backtest,
+  }
+  const statusMap: Record<string, DeploymentStatus> = {
+    Running:   DeploymentStatus.Running,
+    Active:    DeploymentStatus.Running,
+    Paused:    DeploymentStatus.FwdTesting,
+    Scheduled: DeploymentStatus.FwdTesting,
+    Draft:     DeploymentStatus.Draft,
+    Stopped:   DeploymentStatus.Archived,
+  }
+  let schedule: Deployment['schedule'] = { days: [] }
+  try {
+    const s = JSON.parse(inst.scheduleJson ?? '{}')
+    schedule = { days: s.days ?? [], startTime: s.startTime, endTime: s.endTime }
+  } catch { /* use empty schedule */ }
+  return {
+    id:               inst.id,
+    strategyId,
+    scenarioId:       '',
+    name:             inst.name,
+    symbol:           inst.internalSymbol,
+    timeframe:        inst.timeframe as Timeframe,
+    mode:             modeMap[inst.mode] ?? DeploymentMode.ForwardTest,
+    broker:           (inst.brokerName ?? 'MStock') as Broker,
+    allocatedCapital: inst.allocatedCapital ?? 0,
+    schedule,
+    status:           statusMap[inst.status] ?? DeploymentStatus.Draft,
+  }
+}
 const MOCK_RUNS: Record<string, RunResult[]> = {}
 const MOCK_TRADES: Record<string, TradeRecord[]> = {}
 
@@ -1283,7 +1318,6 @@ export const strategyDomainApi = {
 
   deleteStrategy: async (id: string): Promise<void> => {
     await apiClient.delete(`/strategy-definitions/${id}`)
-    delete MOCK_DEPLOYMENTS[id]
   },
 
   listScenarios: async (strategyId: string): Promise<Scenario[]> => {
@@ -1376,8 +1410,17 @@ export const strategyDomainApi = {
     return { jobId }
   },
 
-  listDeployments: (strategyId: string): Promise<Deployment[]> =>
-    Promise.resolve(MOCK_DEPLOYMENTS[strategyId] ?? []),
+  listDeployments: async (strategyId: string): Promise<Deployment[]> => {
+    const resp = await strategiesApi.list()
+    const instances = resp.data?.data ?? []
+    return instances
+      .filter(inst => {
+        if (inst.strategyType !== 'GenericRules') return false
+        try { return JSON.parse(inst.parametersJson ?? '{}').id === strategyId }
+        catch { return false }
+      })
+      .map(inst => instanceToDeployment(inst, strategyId))
+  },
 
   createDeployment: async (strategyId: string, d: Omit<Deployment, 'id' | 'strategyId'>): Promise<Deployment> => {
     // For Forward / Live modes: create a real StrategyInstance via the backend.
@@ -1386,30 +1429,31 @@ export const strategyDomainApi = {
       const dto = resp.data?.data
       if (dto) {
         const execMode = d.mode === DeploymentMode.Live ? 'Live' : 'ForwardTest'
-        await strategiesApi.create({
-          name:            d.name,
-          strategyType:    'GenericRules',
-          internalSymbol:  d.symbol,
-          timeframe:       d.timeframe,
-          brokerName:      d.broker,
-          mode:            execMode,
-          parametersJson:  dto.definitionJson,
+        const createResp = await strategiesApi.create({
+          name:             d.name,
+          strategyType:     'GenericRules',
+          internalSymbol:   d.symbol,
+          timeframe:        d.timeframe,
+          brokerName:       d.broker,
+          mode:             execMode,
+          parametersJson:   dto.definitionJson,
           allocatedCapital: d.allocatedCapital,
-          scheduleJson:    JSON.stringify({ days: d.schedule.days, startTime: d.schedule.startTime, endTime: d.schedule.endTime }),
+          scheduleJson:     JSON.stringify({ days: d.schedule.days, startTime: d.schedule.startTime, endTime: d.schedule.endTime }),
         })
+        const newId = createResp.data?.data
+        if (newId) {
+          const instResp = await strategiesApi.get(newId)
+          const inst = instResp.data?.data
+          if (inst) return instanceToDeployment(inst, strategyId)
+        }
       }
     }
-    // Always persist locally so the Deployments tab shows it
-    const created: Deployment = { ...d, id: `dep-${Date.now()}`, strategyId }
-    if (!MOCK_DEPLOYMENTS[strategyId]) MOCK_DEPLOYMENTS[strategyId] = []
-    MOCK_DEPLOYMENTS[strategyId].push(created)
-    return created
+    // Fallback (e.g. Backtest mode or fetch failure): return a transient stub
+    return { ...d, id: `dep-${Date.now()}`, strategyId }
   },
 
-  deleteDeployment: (strategyId: string, deploymentId: string): Promise<void> => {
-    if (MOCK_DEPLOYMENTS[strategyId])
-      MOCK_DEPLOYMENTS[strategyId] = MOCK_DEPLOYMENTS[strategyId].filter(x => x.id !== deploymentId)
-    return Promise.resolve()
+  deleteDeployment: async (_strategyId: string, deploymentId: string): Promise<void> => {
+    await strategiesApi.delete(deploymentId)
   },
 
   listRuns: (strategyId: string): Promise<RunResult[]> =>

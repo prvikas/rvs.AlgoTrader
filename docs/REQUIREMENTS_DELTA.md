@@ -141,3 +141,20 @@ execution routing; ForwardTestEngine manages its own state machine.
 
 
 
+
+## 2026-04-13
+
+### GR-1/GR-2/GR-3 resolved
+
+**GR-1** BacktestEngine.ExtractSpreadConfig already reads optionsConfig.stopLossPct /
+optionsConfig.profitTargetPct (100/stopLossPct -> maxLossMultiple; profitTargetPct normalised
+to 0-1). Three unit tests added to OptionStrategySignalTests covering this branch.
+
+**GR-2** MOCK_DEPLOYMENTS removed from client.ts. Deployments tab now backed by real
+strategiesApi.list() filtered by parametersJson.id === strategyId. createDeployment returns
+the real StrategyInstance mapped via instanceToDeployment helper. deleteDeployment calls
+strategiesApi.delete(). scheduleJson field added to StrategyInstance interface.
+
+**GR-3** GenericRulesStrategyOptionsTests (12 tests) confirmed passing. Three new
+ExtractSpreadConfig tests added for optionsConfig branch (stopLossPct, profitTargetPct,
+top-level priority). Total unit tests: 117.
