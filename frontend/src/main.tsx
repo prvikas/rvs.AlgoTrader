@@ -8,6 +8,7 @@ import { StrategiesPage } from './pages/StrategiesPage'
 import { useAppStore } from './stores/appStore'
 import { C } from './styles/tokens'
 import { EnumsProvider } from './context/EnumsContext'
+import { UserModeProvider } from './context/UserModeContext'
 
 // ── Dev-only preview token ────────────────────────────────────────────────────
 // Injected before React mounts so the Zustand store reads it on first init.
@@ -82,6 +83,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <EnumsProvider>
+      <UserModeProvider>
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -92,6 +94,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
+      </UserModeProvider>
       </EnumsProvider>
     </QueryClientProvider>
     </ErrorBoundary>

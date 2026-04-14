@@ -4,6 +4,7 @@ import { StrategyInstance, strategiesApi, scenariosApi, brokerApi, BrokerPositio
 import { formatInr } from '../../utils/datetime'
 import { C } from '../../styles/tokens'
 import ScenariosPanel from './ScenariosPanel'
+import { PayoffChart, buildPayoffData, SpreadType as PayoffSpreadType } from './PayoffChart'
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Draft:     { bg: '#1e293b', text: C.textSub,  dot: C.textSub  },
@@ -495,6 +496,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
   const qc = useQueryClient()
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false)
   const [positionsExpanded, setPositionsExpanded] = useState(false)
+  const [payoffOpen, setPayoffOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [approvalOpen, setApprovalOpen] = useState(false)
 
@@ -544,6 +546,37 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
   const todayUnrealized = instance.todayUnrealizedPnl ?? 0
   const openPositions   = instance.openPositionCount  ?? 0
   const showPnl = isRunning || isPaused || todayRealized !== 0 || todayUnrealized !== 0
+
+  // Derive options payoff data from parametersJson (GenericRules config)
+  const optionsPayoff = (() => {
+    try {
+      const cfg = JSON.parse(instance.parametersJson ?? '{}')
+      const oc = cfg.optionsConfig
+      if (!oc?.enabled) return null
+      const typeMap: Record<string, PayoffSpreadType> = {
+        BullCallSpread: 'bull_call', BearPutSpread: 'bear_put',
+        BullPutSpread: 'bull_put', BearCallSpread: 'bear_call',
+        IronCondor: 'iron_condor', ShortStraddle: 'straddle',
+        ShortStrangle: 'strangle', LongCall: 'bull_call', LongPut: 'bear_put',
+      }
+      const payoffType = typeMap[oc.spreadType]
+      if (!payoffType) return null
+      // Derive a representative spot from symbol name
+      const symUpper = (instance.internalSymbol ?? '').toUpperCase()
+      const spot = symUpper.includes('BANK') ? 48000 : symUpper.includes('NIFTY') ? 22500 : 22500
+      const interval = 100
+      const atm = Math.round(spot / interval) * interval
+      const isShort = oc.spreadType === 'ShortStraddle' || oc.spreadType === 'ShortStrangle'
+      return buildPayoffData({
+        type: payoffType, spot: atm,
+        lowerStrike: atm - interval * 2,
+        upperStrike: atm + interval * 2,
+        netPremium: isShort ? -(atm * 0.012) : atm * 0.008,
+        innerLowerStrike: payoffType === 'iron_condor' ? atm - interval : undefined,
+        innerUpperStrike: payoffType === 'iron_condor' ? atm + interval : undefined,
+      })
+    } catch { return null }
+  })()
 
   return (
     <>
@@ -647,6 +680,31 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
             {positionsExpanded && (
               <div style={{ background: C.bg, borderRadius: 6, padding: '10px 12px', border: `1px solid ${C.border3}` }}>
                 <PositionsPanel brokerName={instance.brokerName} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Options payoff chart (collapsible, only for options-based strategies) */}
+        {optionsPayoff && (
+          <div>
+            <button
+              onClick={() => setPayoffOpen(o => !o)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: C.blue, fontSize: 11, fontWeight: 600, padding: '0 0 6px 0',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              {payoffOpen ? '▲' : '▶'} {payoffOpen ? 'Hide' : 'View'} payoff diagram
+            </button>
+            {payoffOpen && (
+              <div style={{ background: C.bg, borderRadius: 6, padding: '12px 14px', border: `1px solid ${C.border3}` }}>
+                <PayoffChart
+                  data={optionsPayoff.data}
+                  breakeven={optionsPayoff.breakeven}
+                  height={200}
+                />
               </div>
             )}
           </div>

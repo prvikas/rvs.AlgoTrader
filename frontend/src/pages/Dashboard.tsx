@@ -29,6 +29,8 @@ import { useStrategyStream } from '../hooks/useSignalR'
 import { useBacktestSignalR } from '../hooks/useBacktestSignalR'
 import { BacktestReplayChart } from '../components/Backtest/BacktestReplayChart'
 import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../styles/tokens'
+import { useUserMode } from '../context/UserModeContext'
+import { GuidedDashboard } from '../components/Dashboard/GuidedDashboard'
 
 type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation'
 
@@ -47,6 +49,7 @@ const STRATEGY_DESCS: Record<string, string> = {
 }
 
 export function Dashboard() {
+  const { mode: userMode, toggle: toggleUserMode, isGuided } = useUserMode()
   const [activePage, setActivePage] = useState<Page>('portfolio')
   const [backtestPreset, setBacktestPreset] = useState<StrategyInstance | null>(null)
   const [scenarioJobId, setScenarioJobId] = useState<string | null>(null)
@@ -237,6 +240,7 @@ export function Dashboard() {
           <MarketStatusComponent />
           <BrokerStatusBar />
           <SignalRIndicator connected={signalRConnected} />
+          <UserModeToggle mode={userMode} onToggle={toggleUserMode} />
           <LogoutButton />
         </div>
       </header>
@@ -254,7 +258,11 @@ export function Dashboard() {
         background: C.bg,
         display: 'flex', flexDirection: 'column',
       }}>
-        {activePage === 'portfolio' && <PortfolioOverview />}
+        {activePage === 'portfolio' && (
+          isGuided
+            ? <GuidedDashboard onNavigate={(page) => setActivePage(page as Page)} />
+            : <PortfolioOverview />
+        )}
         {activePage === 'strategies' && <NewStrategiesPage />}
         {activePage === 'orders' && <OrdersPage orders={orders ?? []} />}
         {activePage === 'lab' && <StrategyLabPage />}
@@ -1728,5 +1736,29 @@ function FormField({
         />
       )}
     </div>
+  )
+}
+
+// ── UserModeToggle ───────────────────────────────────────────────────────────
+
+function UserModeToggle({ mode, onToggle }: { mode: 'guided' | 'pro'; onToggle: () => void }) {
+  const isGuided = mode === 'guided'
+  return (
+    <button
+      onClick={onToggle}
+      title={isGuided ? 'Switch to Pro mode' : 'Switch to Guided mode'}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 5,
+        padding: '3px 9px', borderRadius: 12,
+        background: isGuided ? C.blue + '22' : C.surface2,
+        border: `1px solid ${isGuided ? C.blue + '44' : C.border3}`,
+        color: isGuided ? C.blue : C.textMuted,
+        cursor: 'pointer', fontSize: 10, fontWeight: 700,
+        letterSpacing: '0.06em', textTransform: 'uppercase',
+        transition: 'all 0.15s',
+      }}
+    >
+      {isGuided ? '✦ Guided' : '⚙ Pro'}
+    </button>
   )
 }

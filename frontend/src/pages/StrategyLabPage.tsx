@@ -19,6 +19,14 @@ import {
 import { formatInr, formatIst } from '../utils/datetime'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
 import { PreFlightChecklistModal } from '../components/ForwardTest/PreFlightChecklistModal'
+import { useUserMode } from '../context/UserModeContext'
+import {
+  StrategyRecommendationPanel,
+  MarketOutlook,
+  RiskTolerance,
+  InstrumentType,
+} from '../components/Strategy/StrategyRecommendationPanel'
+import { PayoffChart, buildPayoffData } from '../components/Strategy/PayoffChart'
 
 // ── Shared UI helpers ─────────────────────────────────────────────────────────
 
@@ -268,9 +276,247 @@ function MiniMetric({ label, value, color = '#94a3b8' }: { label: string; value:
   )
 }
 
+// ── Guided wizard ─────────────────────────────────────────────────────────────
+
+const OUTLOOK_OPTIONS: Array<{ value: MarketOutlook; icon: string; label: string; desc: string }> = [
+  { value: 'bullish',  icon: '↑', label: 'Bullish',  desc: 'Market going up' },
+  { value: 'bearish',  icon: '↓', label: 'Bearish',  desc: 'Market going down' },
+  { value: 'neutral',  icon: '→', label: 'Neutral',  desc: 'Moving sideways' },
+  { value: 'volatile', icon: '↕', label: 'Volatile', desc: 'Big move expected' },
+]
+
+const RISK_OPTIONS: Array<{ value: RiskTolerance; label: string; desc: string }> = [
+  { value: 'low',    label: 'Conservative', desc: 'Protect my capital' },
+  { value: 'medium', label: 'Moderate',     desc: 'Balanced risk' },
+  { value: 'high',   label: 'Aggressive',   desc: 'Maximum upside' },
+]
+
+const INSTR_OPTIONS: Array<{ value: InstrumentType; icon: string; label: string }> = [
+  { value: 'options', icon: '📊', label: 'Options' },
+  { value: 'equity',  icon: '📈', label: 'Equities' },
+]
+
+const STEP_LABELS = ['Market view', 'Risk tolerance', 'Instrument', 'Strategies', 'Visualise']
+
+// Sample payoff for demonstration in step 5
+function buildSamplePayoff(outlook: MarketOutlook, risk: RiskTolerance) {
+  const spot = 22500
+  if (outlook === 'bullish' && risk === 'low') {
+    return buildPayoffData({ type: 'bull_call', spot, lowerStrike: 22400, upperStrike: 22800, netPremium: 80 })
+  }
+  if (outlook === 'bearish' && risk === 'low') {
+    return buildPayoffData({ type: 'bear_put', spot, lowerStrike: 22200, upperStrike: 22500, netPremium: 70 })
+  }
+  if (outlook === 'neutral') {
+    return buildPayoffData({ type: 'iron_condor', spot, lowerStrike: 22000, upperStrike: 23000, netPremium: -120, innerLowerStrike: 22300, innerUpperStrike: 22700 })
+  }
+  if (outlook === 'volatile') {
+    return buildPayoffData({ type: 'straddle', spot, lowerStrike: spot, upperStrike: spot, netPremium: 200 })
+  }
+  return buildPayoffData({ type: 'bull_call', spot, lowerStrike: 22300, upperStrike: 22700, netPremium: 60 })
+}
+
+function WizardStep({ n, label, active, done }: { n: number; label: string; active: boolean; done: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{
+        width: 22, height: 22, borderRadius: '50%', display: 'flex',
+        alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700,
+        background: done ? '#10b981' : active ? '#3b82f6' : '#2d2d3f',
+        color: done || active ? '#fff' : '#6b7280',
+        flexShrink: 0,
+      }}>
+        {done ? '✓' : n}
+      </div>
+      <span style={{ fontSize: 11, color: active ? '#e2e8f0' : done ? '#94a3b8' : '#4a5568', fontWeight: active ? 700 : 400 }}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function RadioCard({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '10px 14px', textAlign: 'left', cursor: 'pointer',
+      background: selected ? '#1e3a5f' : '#1e1e2e',
+      border: `1px solid ${selected ? '#3b82f6' : '#2d2d3f'}`,
+      borderRadius: 8, color: '#e2e8f0', transition: 'all 0.15s',
+    }}>
+      {children}
+    </button>
+  )
+}
+
+function GuidedLabWizard() {
+  const [step, setStep] = useState(1)
+  const [outlook, setOutlook] = useState<MarketOutlook>('bullish')
+  const [risk, setRisk] = useState<RiskTolerance>('low')
+  const [instr, setInstr] = useState<InstrumentType>('options')
+
+  const samplePayoff = buildSamplePayoff(outlook, risk)
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      {/* Header */}
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: '0 0 4px 0', fontSize: 20, fontWeight: 800 }}>Strategy Finder</h2>
+        <p style={{ margin: 0, fontSize: 12, color: '#64748b' }}>
+          Answer a few questions and we'll recommend the right strategy for you.
+        </p>
+      </div>
+
+      {/* Stepper */}
+      <div style={{ display: 'flex', gap: 20, marginBottom: 28, flexWrap: 'wrap', alignItems: 'center' }}>
+        {STEP_LABELS.map((label, i) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <WizardStep n={i + 1} label={label} active={step === i + 1} done={step > i + 1} />
+            {i < STEP_LABELS.length - 1 && (
+              <span style={{ color: '#2d2d3f', fontSize: 10 }}>—</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Step 1 */}
+      {step === 1 && (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: '#e2e8f0' }}>
+            What's your view on the market right now?
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {OUTLOOK_OPTIONS.map(o => (
+              <RadioCard key={o.value} selected={outlook === o.value} onClick={() => setOutlook(o.value)}>
+                <div style={{ fontSize: 22, marginBottom: 4 }}>{o.icon}</div>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{o.label}</div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{o.desc}</div>
+              </RadioCard>
+            ))}
+          </div>
+          <div style={{ marginTop: 20 }}>
+            <WizardButton onClick={() => setStep(2)}>Next: Risk tolerance →</WizardButton>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2 */}
+      {step === 2 && (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: '#e2e8f0' }}>
+            How much risk are you comfortable with?
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {RISK_OPTIONS.map(r => (
+              <RadioCard key={r.value} selected={risk === r.value} onClick={() => setRisk(r.value)}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{r.label}</div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2, maxWidth: 130 }}>{r.desc}</div>
+              </RadioCard>
+            ))}
+          </div>
+          <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+            <WizardButtonSecondary onClick={() => setStep(1)}>← Back</WizardButtonSecondary>
+            <WizardButton onClick={() => setStep(3)}>Next: Instrument →</WizardButton>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3 */}
+      {step === 3 && (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: '#e2e8f0' }}>
+            What do you want to trade?
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {INSTR_OPTIONS.map(o => (
+              <RadioCard key={o.value} selected={instr === o.value} onClick={() => setInstr(o.value)}>
+                <div style={{ fontSize: 24, marginBottom: 4 }}>{o.icon}</div>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{o.label}</div>
+              </RadioCard>
+            ))}
+          </div>
+          <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+            <WizardButtonSecondary onClick={() => setStep(2)}>← Back</WizardButtonSecondary>
+            <WizardButton onClick={() => setStep(4)}>See recommendations →</WizardButton>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: Recommendations */}
+      {step === 4 && (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14, color: '#e2e8f0' }}>
+            Strategies suited to your profile
+          </div>
+          <StrategyRecommendationPanel
+            marketOutlook={outlook}
+            riskTolerance={risk}
+            instrumentType={instr}
+            onSelectStrategy={() => {}}
+          />
+          <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+            <WizardButtonSecondary onClick={() => setStep(3)}>← Back</WizardButtonSecondary>
+            <WizardButton onClick={() => setStep(5)}>Visualise payoff →</WizardButton>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5: PayoffChart */}
+      {step === 5 && (
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6, color: '#e2e8f0' }}>
+            Example payoff diagram
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>
+            This chart shows how a representative strategy for your profile might perform at expiry.
+            Your actual results will depend on entry price, lots, and market conditions.
+          </div>
+          <div style={{
+            background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 10,
+            padding: '16px 20px',
+          }}>
+            <PayoffChart
+              data={samplePayoff.data}
+              breakeven={samplePayoff.breakeven}
+              showGuided={true}
+              height={280}
+            />
+          </div>
+          <div style={{ marginTop: 20, display: 'flex', gap: 10 }}>
+            <WizardButtonSecondary onClick={() => setStep(4)}>← Back</WizardButtonSecondary>
+            <WizardButton onClick={() => setStep(1)}>Start over</WizardButton>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WizardButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '8px 18px', background: '#3b82f6', color: '#fff',
+      border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 700,
+    }}>
+      {children}
+    </button>
+  )
+}
+
+function WizardButtonSecondary({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '8px 18px', background: '#1e1e2e', color: '#94a3b8',
+      border: '1px solid #2d2d3f', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 500,
+    }}>
+      {children}
+    </button>
+  )
+}
+
 // ── Page root ─────────────────────────────────────────────────────────────────
 
 export function StrategyLabPage() {
+  const { isGuided } = useUserMode()
   const [promoteBacktest, setPromoteBacktest] = useState<BacktestResult | null>(null)
   const [promoteToLive, setPromoteToLive] = useState<ForwardTestSession | null>(null)
 
@@ -293,6 +539,9 @@ export function StrategyLabPage() {
   })
 
   const liveStrategies = allStrategies.filter(s => s.mode === 'Live')
+
+  // In guided mode, show the wizard instead of the Kanban
+  if (isGuided) return <GuidedLabWizard />
 
   return (
     <div>

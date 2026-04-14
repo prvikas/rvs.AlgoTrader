@@ -14,6 +14,8 @@ import {
   StopState, StopStateMachine,
 } from '../types/strategy'
 import { OptionsConfigPanel, defaultOptionsConfig } from '../components/strategies/OptionsConfigPanel'
+import { PayoffChart, buildPayoffData, SpreadType as PayoffSpreadType } from '../components/Strategy/PayoffChart'
+import { SpreadType } from '../types/strategy'
 import { C, SP } from '../styles/tokens'
 import { useEnums } from '../context/EnumsContext'
 import { IndicatorModal } from '../components/strategies/IndicatorModal'
@@ -72,6 +74,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
   const sizingMethodOptions = enums.sizingMethod ?? []
 
   const [subTab, setSubTab] = useState<SubTab>('core')
+  const [payoffSpot, setPayoffSpot] = useState<number>(22500)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [indicatorModalOpen, setIndicatorModalOpen] = useState(false)
   const [editingIndicatorId, setEditingIndicatorId] = useState<string | undefined>()
@@ -1356,6 +1359,9 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
             Requires an option chain to be pre-fetched for the instrument (index options supported: NIFTY, BANKNIFTY, FINNIFTY).
           </div>
           <OptionsConfigPanel value={optionsConfig} onChange={setOptionsConfig} />
+
+          {/* Payoff preview — only when spread is enabled and has a representable type */}
+          {optionsConfig.enabled && <OptionsPayoffPreview spreadType={optionsConfig.spreadType} spot={payoffSpot} onSpotChange={setPayoffSpot} />}
         </div>
       )}
 
@@ -1386,6 +1392,96 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
             setAddForLayer(undefined)
           }}
         />
+      )}
+    </div>
+  )
+}
+
+// ── OptionsPayoffPreview ──────────────────────────────────────────────────────
+// Renders a PayoffChart for the currently selected spread type.
+// Uses a user-adjustable reference spot price for realistic strikes.
+
+const SPREAD_TYPE_MAP: Partial<Record<SpreadType, PayoffSpreadType>> = {
+  [SpreadType.BullCallSpread]: 'bull_call',
+  [SpreadType.BearPutSpread]:  'bear_put',
+  [SpreadType.BullPutSpread]:  'bull_put',
+  [SpreadType.BearCallSpread]: 'bear_call',
+  [SpreadType.IronCondor]:     'iron_condor',
+  [SpreadType.ShortStraddle]:  'straddle',
+  [SpreadType.ShortStrangle]:  'strangle',
+  [SpreadType.LongCall]:       'bull_call',
+  [SpreadType.LongPut]:        'bear_put',
+}
+
+function OptionsPayoffPreview({
+  spreadType, spot, onSpotChange,
+}: { spreadType: SpreadType; spot: number; onSpotChange: (v: number) => void }) {
+  const [open, setOpen] = useState(false)
+
+  const payoffType = SPREAD_TYPE_MAP[spreadType]
+  if (!payoffType) return null
+
+  const interval = spot >= 10000 ? 100 : spot >= 1000 ? 50 : 10
+  const atm = Math.round(spot / interval) * interval
+  const isShort = spreadType === SpreadType.ShortStraddle || spreadType === SpreadType.ShortStrangle
+
+  const { data, breakeven } = buildPayoffData({
+    type: payoffType,
+    spot: atm,
+    lowerStrike: atm - interval * 2,
+    upperStrike: atm + interval * 2,
+    netPremium: isShort ? -(atm * 0.012) : atm * 0.008,
+    innerLowerStrike: payoffType === 'iron_condor' ? atm - interval : undefined,
+    innerUpperStrike: payoffType === 'iron_condor' ? atm + interval : undefined,
+  })
+
+  return (
+    <div style={{ marginTop: SP.lg }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: C.blue, fontSize: 12, fontWeight: 600, padding: 0,
+        }}
+      >
+        {open ? '▲' : '▶'} {open ? 'Hide' : 'Preview'} payoff diagram
+        <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>
+          (illustrative — based on reference spot)
+        </span>
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: SP.md, padding: '14px 16px',
+          background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
+        }}>
+          {/* Spot price input */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: SP.md }}>
+            <label style={{ fontSize: 11, color: C.textSub, whiteSpace: 'nowrap' }}>
+              Reference spot price
+            </label>
+            <input
+              type="number"
+              value={spot}
+              onChange={e => onSpotChange(Number(e.target.value))}
+              style={{
+                width: 100, padding: '3px 8px', fontSize: 12,
+                background: C.surface3, border: `1px solid ${C.border3}`,
+                borderRadius: 5, color: C.text,
+              }}
+            />
+            <span style={{ fontSize: 10, color: C.textMuted }}>
+              Strikes derived from ATM = ₹{atm.toLocaleString('en-IN')}
+            </span>
+          </div>
+
+          <PayoffChart
+            data={data}
+            breakeven={breakeven}
+            height={220}
+          />
+        </div>
       )}
     </div>
   )
