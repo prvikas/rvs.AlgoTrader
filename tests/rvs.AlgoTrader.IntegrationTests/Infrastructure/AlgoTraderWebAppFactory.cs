@@ -19,7 +19,7 @@ namespace rvs.AlgoTrader.IntegrationTests.Infrastructure;
 ///   - RabbitMQ 3.13
 /// Each test class that uses this factory gets isolated containers via IClassFixture.
 /// </summary>
-public sealed class AlgoTraderWebAppFactory : WebApplicationFactory<Program>, IAsyncLifetime
+public class AlgoTraderWebAppFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
         .WithImage("timescale/timescaledb:latest-pg16")

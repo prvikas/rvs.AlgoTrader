@@ -18,5 +18,7 @@
     <PackageReference Include="Respawn" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <PackageReference Include="WireMock.Net" />
+    <PackageReference Include="MassTransit" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
   </ItemGroup>
 </Project>

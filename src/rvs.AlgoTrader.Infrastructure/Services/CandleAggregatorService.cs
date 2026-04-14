@@ -20,6 +20,14 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// Active broker is read from config (Broker:ActiveBroker), defaulting to MStock.
 /// Reconnection uses exponential backoff (2s → 4s → 8s … capped at 120s) with
 /// <see cref="IDataFeedHealthMonitor"/> instrumentation.
+///
+/// Gap backfill (AP-014 / feed reliability):
+///   After every reconnect, BackfillAfterReconnectAsync checks the most recent bar in cache
+///   for each symbol × intraday timeframe. If the last bar is stale (older than 1 × period),
+///   it fetches up to <see cref="BackfillMaxBars"/> bars from the broker's historical data API
+///   and warms the cache — ensuring strategies never evaluate on stale pre-disconnect data.
+///   Backfill is skipped outside IST market hours (09:15–15:30) so no spurious broker calls
+///   are made overnight or on non-trading days.
 /// </summary>
 public class CandleAggregatorService(
     IBrokerClientFactory brokerFactory,
@@ -33,6 +41,16 @@ public class CandleAggregatorService(
     // Exponential backoff bounds (seconds)
     private const int BackoffInitialSeconds = 2;
     private const int BackoffMaxSeconds     = 120;
+
+    // Backfill configuration (AP-014: always bound historical queries by time)
+    private const int BackfillMaxBars = 50;  // max bars to fetch per symbol×TF on reconnect
+
+    // Intraday timeframes eligible for gap backfill (daily has no intraday gaps)
+    private static readonly IReadOnlyList<string> _intradayTimeframes =
+    [
+        Timeframes.OneMinute, Timeframes.ThreeMinute, Timeframes.FiveMinute,
+        Timeframes.FifteenMinute, Timeframes.ThirtyMinute, Timeframes.SixtyMinute,
+    ];
 
     // Active partial candles keyed by "SYMBOL:TIMEFRAME"
     private readonly Dictionary<string, PartialCandle> _partials = new();
@@ -121,7 +139,22 @@ public class CandleAggregatorService(
             backoffSeconds = Math.Min(backoffSeconds * 2, BackoffMaxSeconds);
 
             if (!stoppingToken.IsCancellationRequested)
+            {
                 healthMonitor.RecordReconnect(broker);
+
+                // AP-014: fill any bars that accumulated while the feed was down.
+                // Runs best-effort — a failure here must never block the reconnect loop.
+                try
+                {
+                    await BackfillAfterReconnectAsync(symbols, broker, stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "[CandleAggregator] Gap backfill failed for broker {Broker} — resuming live feed",
+                        broker);
+                }
+            }
         }
 
         logger.LogInformation("[CandleAggregator] Background service stopped.");
@@ -205,6 +238,163 @@ public class CandleAggregatorService(
                 candle.InternalSymbol, candle.Timeframe);
         }
     }
+
+    /// <summary>
+    /// Fetches missing intraday bars for each symbol × timeframe after the feed reconnects.
+    ///
+    /// Algorithm per (symbol, timeframe):
+    ///   1. Get the most recent bar from ICandleCache (at most 1 bar).
+    ///   2. If the last bar's close-time is within 1 × period of now → cache is fresh, skip.
+    ///   3. Otherwise compute from = lastBarCloseTime.Date (AP-014: bounded query).
+    ///   4. Fetch up to BackfillMaxBars bars via IBrokerMarketDataClient.GetHistoricalDataAsync.
+    ///   5. Warm cache with the new bars — AppendAsync on each bar.
+    ///
+    /// Only runs during IST market hours (09:15–15:30) to avoid spurious overnight calls.
+    /// Runs best-effort; individual symbol failures do not abort the overall loop.
+    /// </summary>
+    private async Task BackfillAfterReconnectAsync(
+        HashSet<string> symbols,
+        string broker,
+        CancellationToken ct)
+    {
+        using var scope  = scopeFactory.CreateScope();
+        var cache        = scope.ServiceProvider.GetRequiredService<ICandleCache>();
+        var clock        = scope.ServiceProvider.GetRequiredService<IClock>();
+        var marketCal    = scope.ServiceProvider.GetRequiredService<IMarketCalendarService>();
+        var brokerClient = brokerFactory.GetMarketDataClient(broker);
+
+        var nowIst    = clock.NowInstant().InZone(Ist);
+        var nowLocal  = nowIst.LocalDateTime;
+        var todayDate = nowIst.Date;
+
+        // Skip entirely outside IST market hours (09:15–15:30) — AP-014: bound timestamps
+        var mktOpen  = new LocalTime(9,  15, 0);
+        var mktClose = new LocalTime(15, 30, 0);
+        if (nowLocal.TimeOfDay < mktOpen || nowLocal.TimeOfDay > mktClose)
+        {
+            logger.LogDebug("[CandleAggregator] Gap backfill skipped — outside market hours ({Time} IST)", nowLocal);
+            return;
+        }
+
+        // Skip on non-trading days
+        try
+        {
+            var tradingDay = DateOnly.FromDateTime(todayDate.ToDateTimeUnspecified());
+            if (!await marketCal.IsTradingDayAsync(tradingDay, ct))
+            {
+                logger.LogDebug("[CandleAggregator] Gap backfill skipped — non-trading day {Date}", todayDate);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[CandleAggregator] Could not verify trading day — proceeding with backfill anyway");
+        }
+
+        logger.LogInformation(
+            "[CandleAggregator] Gap backfill starting for {Count} symbol(s) after reconnect",
+            symbols.Count);
+
+        var backfillCount = 0;
+        var toDate        = DateOnly.FromDateTime(todayDate.ToDateTimeUnspecified());
+
+        foreach (var symbol in symbols)
+        {
+            foreach (var tf in _intradayTimeframes)
+            {
+                if (ct.IsCancellationRequested) return;
+
+                try
+                {
+                    // 1. Get most recent bar from cache to establish anchor point
+                    var cached = await cache.GetAsync(symbol, tf, count: 1, ct);
+                    if (cached.Count == 0) continue;   // nothing in cache — warming is handled elsewhere
+
+                    var lastCached = cached[^1];
+                    var tfPeriod   = TimeframeToDuration(tf);
+
+                    // 2. Determine if cache is stale — last bar's close time + 1 period < now
+                    var staleThreshold = lastCached.CloseTime.ToInstant().Plus(tfPeriod);
+                    if (clock.NowInstant() <= staleThreshold)
+                        continue;   // cache is still fresh within one period
+
+                    // 3. Compute bounded query window (AP-014):
+                    //    from = date of last cached bar's open (inclusive of that day)
+                    //    to   = today
+                    var fromDate = DateOnly.FromDateTime(
+                        lastCached.OpenTime.LocalDateTime.ToDateTimeUnspecified());
+
+                    // 4. Fetch historical bars from broker
+                    //    BrokerToken = InternalSymbol (brokers resolve internally)
+                    var bars = await brokerClient.GetHistoricalDataAsync(
+                        new HistoricalDataQuery(
+                            BrokerToken:    symbol,
+                            InternalSymbol: symbol,
+                            Timeframe:      tf,
+                            FromDate:       fromDate,
+                            ToDate:         toDate),
+                        ct);
+
+                    if (bars.Count == 0) continue;
+
+                    // 5. Convert OhlcvBar → ClosedCandle and deduplicate against cached anchor.
+                    //    Skip bars whose OpenTime ≤ last cached bar's OpenTime (already in cache).
+                    var newBars = bars
+                        .Where(b => b.OpenTime.ToInstant() > lastCached.OpenTime.ToInstant())
+                        .Take(BackfillMaxBars)
+                        .Select(b => OhlcvBarToClosedCandle(b, tf))
+                        .ToList();
+
+                    if (newBars.Count == 0) continue;
+
+                    foreach (var bar in newBars)
+                        await cache.AppendAsync(bar, ct);
+
+                    backfillCount += newBars.Count;
+
+                    logger.LogInformation(
+                        "[CandleAggregator] Backfilled {Count} {Tf} bars for {Symbol} (gap: {From} → {To})",
+                        newBars.Count, tf, symbol, fromDate, toDate);
+                }
+                catch (Exception ex)
+                {
+                    // Per-symbol failure must never abort the outer loop
+                    logger.LogWarning(ex,
+                        "[CandleAggregator] Backfill failed for {Symbol}:{Tf} — skipping", symbol, tf);
+                }
+            }
+        }
+
+        logger.LogInformation(
+            "[CandleAggregator] Gap backfill complete — {Total} bar(s) restored across all symbols",
+            backfillCount);
+    }
+
+    /// <summary>
+    /// Converts a broker <see cref="OhlcvBar"/> to a domain <see cref="ClosedCandle"/>.
+    /// CloseTime is computed as OpenTime + period for the given timeframe.
+    /// </summary>
+    private static ClosedCandle OhlcvBarToClosedCandle(OhlcvBar bar, string timeframe)
+    {
+        var closeTime = bar.OpenTime.Plus(TimeframeToDuration(timeframe));
+        return new ClosedCandle(
+            bar.InternalSymbol, bar.Timeframe,
+            OpenTime: bar.OpenTime, CloseTime: closeTime,
+            Open: bar.Open, High: bar.High, Low: bar.Low, Close: bar.Close,
+            Volume: bar.Volume);
+    }
+
+    /// <summary>Maps a timeframe string to its period Duration for staleness checks.</summary>
+    private static Duration TimeframeToDuration(string timeframe) => timeframe switch
+    {
+        Timeframes.OneMinute     => Duration.FromMinutes(1),
+        Timeframes.ThreeMinute   => Duration.FromMinutes(3),
+        Timeframes.FiveMinute    => Duration.FromMinutes(5),
+        Timeframes.FifteenMinute => Duration.FromMinutes(15),
+        Timeframes.ThirtyMinute  => Duration.FromMinutes(30),
+        Timeframes.SixtyMinute   => Duration.FromMinutes(60),
+        _                        => Duration.FromMinutes(1),
+    };
 
     /// <summary>
     /// Called by StrategyInstanceManager when running instances change.
