@@ -1,6 +1,7 @@
 using MassTransit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
@@ -10,6 +11,7 @@ using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Infrastructure.Constants;
 using rvs.AlgoTrader.Infrastructure.Hangfire;
+using rvs.AlgoTrader.Infrastructure.Options;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -38,7 +40,8 @@ public class StartupOrchestrator(
     IAuditService audit,
     IClock clock,
     ILogger<StartupOrchestrator> logger,
-    IServiceProvider serviceProvider) : IStartupOrchestrator
+    IServiceProvider serviceProvider,
+    IOptions<FeaturesOptions> featuresOptions) : IStartupOrchestrator
 {
     public async Task RunAsync(CancellationToken ct)
     {
@@ -53,8 +56,11 @@ public class StartupOrchestrator(
         // Step 6b: Recover ForwardTestEngine in-memory state for sessions that were Running at crash
         await forwardTestEngine.RecoverActiveSessionsAsync(ct);
 
-        // Step 7: Re-authenticate brokers (restore tokens from Redis into broker clients)
-        await Step7_ReAuthBrokersAsync(ct);
+        // Step 7: Re-authenticate brokers (skipped in backtest-only mode)
+        if (featuresOptions.Value.BrokerRequired)
+            await Step7_ReAuthBrokersAsync(ct);
+        else
+            logger.LogInformation("[Startup:Step7] Skipped — BrokerRequired=false (backtest-only mode)");
 
         // Step 9: Warm candle cache
         await Step9_WarmCandleCacheAsync(ct);

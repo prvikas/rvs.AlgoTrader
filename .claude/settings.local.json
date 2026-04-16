@@ -168,7 +168,16 @@
       "Bash(find C:UsersprvikDownloadsalgotrader-claude-kitsrc -name *SpreadSignalResult* -o -name *SpreadLeg* -o -name *SignalType*)",
       "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
       "Bash(grep -E \"\\\\.\\(tsx|ts\\)$\")",
-      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/frontend/src -name *NewStrategy* -o -name *Create* -o -name *Modal*)"
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/frontend/src -name *NewStrategy* -o -name *Create* -o -name *Modal*)",
+      "Bash(r)",
+      "Bash(powershell -Command \"\\(Get-Content 'src/rvs.AlgoTrader.Strategies/GenericRules/IndicatorEngine.cs'\\) -replace '        //decimal prevDx = 0;`r`n', '' | Set-Content 'src/rvs.AlgoTrader.Strategies/GenericRules/IndicatorEngine.cs'\")",
+      "Bash(powershell -Command \"\\(Get-Content 'src/rvs.AlgoTrader.Strategies/GenericRules/GenericRulesConfig.cs'\\) -replace 'Note: JSON stores these as the literal characters >, etc\\\\.', 'Note: JSON stores these as the literal characters >, <, etc.' | Set-Content 'src/rvs.AlgoTrader.Strategies/GenericRules/GenericRulesConfig.cs'\")",
+      "Bash(node -e ':*)",
+      "Bash(printf \"// ── UserModeToggle ───────────────────────────────────────────────────────────\\\\n\\\\nfunction UserModeToggle\\({ mode, onToggle }: { mode: 'guided' | 'pro'; onToggle: \\(\\) => void }\\) {\\\\n  const isGuided = mode === 'guided'\\\\n  return \\(\\\\n    <button\\\\n      onClick={onToggle}\\\\n      title={isGuided ? 'Switch to Pro mode' : 'Switch to Guided mode'}\\\\n      style={{\\\\n        display: 'flex', alignItems: 'center', gap: 5,\\\\n        padding: '3px 9px', borderRadius: 12,\\\\n        background: isGuided ? C.blue + '22' : C.surface2,\\\\n        border: \\\\`1px solid \\\\${isGuided ? C.blue + '44' : C.border3}\\\\`,\\\\n        color: isGuided ? C.blue : C.textMuted,\\\\n        cursor: 'pointer', fontSize: 10, fontWeight: 700,\\\\n        letterSpacing: '0.06em', textTransform: 'uppercase',\\\\n        transition: 'all 0.15s',\\\\n      }}\\\\n    >\\\\n      {isGuided ? '✦ Guided' : '⚙ Pro'}\\\\n    </button>\\\\n  \\)\\\\n}\\\\n\")",
+      "Bash(dotnet list:*)",
+      "Bash(dotnet search:*)",
+      "Bash(dotnet package:*)",
+      "Bash(python3 -c ':*)"
     ]
   }
 }

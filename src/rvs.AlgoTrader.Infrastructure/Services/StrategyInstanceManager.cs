@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Options;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -22,7 +24,8 @@ public class StrategyInstanceManager(
     IForwardTestEngine forwardTestEngine,
     IAuditService audit,
     IClock clock,
-    ILogger<StrategyInstanceManager> logger) : IStrategyInstanceManager
+    ILogger<StrategyInstanceManager> logger,
+    IOptions<FeaturesOptions> featuresOptions) : IStrategyInstanceManager
 {
     // ConcurrentDictionary — safe for concurrent StartAsync/StopAsync calls (#23)
     private readonly ConcurrentDictionary<Guid, Guid> _activeRuns = new(); // instanceId → runId
@@ -34,6 +37,12 @@ public class StrategyInstanceManager(
 
         if (instance.Status == StrategyStatus.Running)
             throw new InvalidOperationException($"Instance '{instance.Name}' is already running");
+
+        // Backtest-only mode: Forward and Live modes require a broker connection
+        if (!featuresOptions.Value.BrokerRequired && instance.Mode != StrategyMode.Backtest)
+            throw new InvalidOperationException(
+                $"Cannot start '{instance.Name}' in {instance.Mode} mode: broker connection is disabled " +
+                "(Features:BrokerRequired=false). Only Backtest mode is available.");
 
         var nowInstant = clock.NowInstant();
 

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { brokerApi } from '../../api/client'
+import { useFeatures } from '../../context/FeaturesContext'
 import { BrokerLoginModal } from './BrokerLoginModal'
 
 const BROKER_API_KEYS: Record<string, string> = {
@@ -31,6 +32,7 @@ const btnBase: React.CSSProperties = {
 }
 
 export function BrokerStatusBar() {
+  const { brokerRequired, loaded } = useFeatures()
   const qc = useQueryClient()
   const [loginBroker, setLoginBroker] = useState<'MStock' | 'Zerodha' | 'Upstox' | null>(null)
   const sessionBroker = getSessionBroker()
@@ -39,7 +41,12 @@ export function BrokerStatusBar() {
     queryKey: ['broker-status'],
     queryFn: () => brokerApi.status().then(r => r.data.data ?? []),
     refetchInterval: 15_000,
+    // Skip polling entirely in backtest-only mode — no broker to check
+    enabled: loaded && brokerRequired,
   })
+
+  // In backtest-only mode the entire broker section is hidden
+  if (loaded && !brokerRequired) return null
 
   function handleLoginSuccess(_broker: string) {
     setLoginBroker(null)

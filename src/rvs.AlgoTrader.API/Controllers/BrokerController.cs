@@ -1,20 +1,32 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.Commands.Broker;
 using rvs.AlgoTrader.Application.DTOs.Broker;
 // MStockLoginRequest, ZerodhaCallbackRequest, UpstoxCallbackRequest defined in Application/DTOs/Broker/BrokerRequestDtos.cs
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Queries.Broker;
+using rvs.AlgoTrader.Infrastructure.Options;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class BrokerController(IMediator mediator) : ControllerBase
+public class BrokerController(IMediator mediator, IOptions<FeaturesOptions> featuresOptions) : ControllerBase
 {
+    /// <summary>
+    /// Returns HTTP 423 (Locked) when the system is in backtest-only mode.
+    /// Call at the top of every login endpoint.
+    /// </summary>
+    private ActionResult? BrokerLoginDisabledResult() =>
+        featuresOptions.Value.BrokerRequired
+            ? null
+            : StatusCode(423, ApiResponse<object>.Fail(
+                "Broker login is disabled — system is running in backtest-only mode (Features:BrokerRequired=false)."));
+
 
     // ── Status / Latency / Funds / Positions ─────────────────────────────────
 
@@ -68,6 +80,8 @@ public class BrokerController(IMediator mediator) : ControllerBase
     public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> MStockLogin(
         [FromBody] MStockLoginRequest req, CancellationToken ct)
     {
+        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
+
         if (string.IsNullOrWhiteSpace(req.Totp) || req.Totp.Length != 6)
             return BadRequest(ApiResponse<BrokerAuthResultDto>.Fail("TOTP must be exactly 6 digits"));
 
@@ -89,6 +103,8 @@ public class BrokerController(IMediator mediator) : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<string>>> GetZerodhaLoginUrl(CancellationToken ct)
     {
+        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
+
         var url = await mediator.Send(new GetZerodhaLoginUrlQuery(), ct);
         return Ok(ApiResponse<string>.Ok(url));
     }
@@ -102,6 +118,8 @@ public class BrokerController(IMediator mediator) : ControllerBase
     public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> ZerodhaCallback(
         [FromBody] ZerodhaCallbackRequest req, CancellationToken ct)
     {
+        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
+
         var result = await mediator.Send(new AuthenticateZerodhaCommand(req.RequestToken), ct);
         return result.Success
             ? Ok(ApiResponse<BrokerAuthResultDto>.Ok(result))
@@ -118,6 +136,8 @@ public class BrokerController(IMediator mediator) : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<string>>> GetUpstoxLoginUrl(CancellationToken ct)
     {
+        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
+
         var url = await mediator.Send(new GetUpstoxLoginUrlQuery(), ct);
         return Ok(ApiResponse<string>.Ok(url));
     }
@@ -131,6 +151,8 @@ public class BrokerController(IMediator mediator) : ControllerBase
     public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> UpstoxCallback(
         [FromBody] UpstoxCallbackRequest req, CancellationToken ct)
     {
+        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
+
         var result = await mediator.Send(new AuthenticateUpstoxCommand(req.AuthCode), ct);
         return result.Success
             ? Ok(ApiResponse<BrokerAuthResultDto>.Ok(result))

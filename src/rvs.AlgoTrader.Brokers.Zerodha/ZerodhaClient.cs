@@ -285,47 +285,92 @@ public class ZerodhaClient(
         IEnumerable<string> brokerTokens,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        // Zerodha WebSocket: wss://ws.kite.trade?api_key=xxx&access_token=yyy
-        // Binary protocol: mode=full subscription, decode binary tick packets
-        // Simplified implementation — production should use full binary decoder
+        // Zerodha Kite Connect WebSocket binary protocol
+        // Reference: https://kite.trade/docs/connect/v3/websocket/#message-structure
+        //
+        // Frame layout:
+        //   Bytes 0-1   : number of packets (big-endian uint16)
+        //   Per packet  : 2-byte length prefix, then packet data
+        //
+        // Packet modes (all fields big-endian uint32, prices in paise → divide by 100):
+        //   LTP    (8 bytes)  : [token][ltp]
+        //   Quote  (44 bytes) : [token][ltp][ltq][atp][volume][buyQty][sellQty][open][high][low][close]
+        //   Full  (184 bytes) : Quote prefix + timestamps + OI + market depth
+
         var wsUrl = $"wss://ws.kite.trade?api_key={options.Value.ApiKey}&access_token={_accessToken}";
         using var ws = new ClientWebSocket();
         await ws.ConnectAsync(new Uri(wsUrl), ct);
 
-        // Subscribe to tokens
-        var tokens = brokerTokens.Select(t => int.TryParse(t, out var n) ? n : 0).Where(n => n > 0).ToArray();
+        // Subscribe to numeric instrument tokens in "full" mode
+        var tokens = brokerTokens
+            .Select(t => int.TryParse(t, out var n) ? n : 0)
+            .Where(n => n > 0)
+            .ToArray();
         var subscribeMsg = JsonSerializer.Serialize(new { a = "subscribe", v = tokens });
-        var modeMsg = JsonSerializer.Serialize(new { a = "mode", v = new object[] { "full", tokens } });
-        await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(subscribeMsg), WebSocketMessageType.Text, true, ct);
-        await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(modeMsg), WebSocketMessageType.Text, true, ct);
+        var modeMsg      = JsonSerializer.Serialize(new { a = "mode", v = new object[] { "full", tokens } });
+        var enc = System.Text.Encoding.UTF8;
+        await ws.SendAsync(enc.GetBytes(subscribeMsg), WebSocketMessageType.Text, true, ct);
+        await ws.SendAsync(enc.GetBytes(modeMsg),      WebSocketMessageType.Text, true, ct);
 
-        var buffer = new byte[65536];
+        // Accumulate across partial ReceiveAsync calls before decoding
+        var recvBuf  = new byte[65536];
+        using var ms = new System.IO.MemoryStream(65536);
+
         while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
-            var result = await ws.ReceiveAsync(buffer, ct);
-            if (result.MessageType == WebSocketMessageType.Binary && result.Count >= 8)
+            // Collect all segments of the current message
+            ValueWebSocketReceiveResult result;
+            do
             {
-                // Simplified binary decoder — parse first packet only
-                var count = (buffer[0] << 8) | buffer[1];
-                var offset = 2;
-                for (int i = 0; i < count && offset + 4 <= result.Count; i++)
-                {
-                    var packetLen = (buffer[offset] << 8) | buffer[offset + 1];
-                    offset += 2;
-                    if (offset + packetLen > result.Count) break;
-                    if (packetLen >= 8)
-                    {
-                        var token = (buffer[offset] << 24) | (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
-                        var ltpRaw = (buffer[offset + 4] << 24) | (buffer[offset + 5] << 16) | (buffer[offset + 6] << 8) | buffer[offset + 7];
-                        var ltp = ltpRaw / 100m;
-                        yield return new BrokerTick(token.ToString(), ltp, 0,
-                            SystemClock.Instance.GetCurrentInstant().InZone(_ist));
-                    }
-                    offset += packetLen;
-                }
+                result = await ws.ReceiveAsync(new Memory<byte>(recvBuf), ct);
+                if (result.MessageType == WebSocketMessageType.Close) yield break;
+                ms.Write(recvBuf, 0, result.Count);
+            }
+            while (!result.EndOfMessage);
+
+            if (result.MessageType != WebSocketMessageType.Binary)
+            {
+                ms.SetLength(0);
+                continue; // text frames are heartbeats / connect confirmations — skip
+            }
+
+            var frame = ms.ToArray();
+            ms.SetLength(0);
+
+            if (frame.Length < 2) continue;
+
+            var packetCount = (frame[0] << 8) | frame[1];
+            var offset      = 2;
+            var now         = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
+
+            for (int i = 0; i < packetCount; i++)
+            {
+                if (offset + 2 > frame.Length) break;
+                var packetLen = (frame[offset] << 8) | frame[offset + 1];
+                offset += 2;
+                if (packetLen < 8 || offset + packetLen > frame.Length) { offset += packetLen; continue; }
+
+                // All fields are big-endian unsigned 32-bit integers
+                var tokenId = ReadU32(frame, offset);
+                var ltpRaw  = ReadU32(frame, offset + 4);
+
+                // Volume lives at byte 16 in Quote/Full mode (packetLen >= 44)
+                long volume = packetLen >= 44 ? ReadU32(frame, offset + 16) : 0L;
+
+                // OI lives at byte 48 in Full mode (packetLen == 184)
+                long oi = packetLen >= 184 ? ReadU32(frame, offset + 48) : 0L;
+
+                yield return new BrokerTick(tokenId.ToString(), ltpRaw / 100m,
+                    volume > 0 ? volume : oi, now);
+
+                offset += packetLen;
             }
         }
     }
+
+    /// <summary>Reads a big-endian unsigned 32-bit integer from <paramref name="buf"/>.</summary>
+    private static long ReadU32(byte[] buf, int offset) =>
+        (uint)((buf[offset] << 24) | (buf[offset + 1] << 16) | (buf[offset + 2] << 8) | buf[offset + 3]);
 
     public async Task SubscribeAsync(IEnumerable<string> brokerTokens, CancellationToken ct)
         => await Task.CompletedTask; // Handled in StreamAsync

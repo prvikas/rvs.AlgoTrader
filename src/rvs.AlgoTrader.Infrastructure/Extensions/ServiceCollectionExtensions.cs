@@ -25,6 +25,7 @@ using rvs.AlgoTrader.Infrastructure.Persistence;
 using rvs.AlgoTrader.Infrastructure.Redis;
 using rvs.AlgoTrader.Infrastructure.Jobs;
 using rvs.AlgoTrader.Infrastructure.Repositories;
+using rvs.AlgoTrader.Infrastructure.Options;
 using rvs.AlgoTrader.Infrastructure.Services;
 namespace rvs.AlgoTrader.Infrastructure.Extensions;
 
@@ -35,6 +36,9 @@ public static class ServiceCollectionExtensions
         IConfiguration config,
         Action<IBusRegistrationConfigurator>? configureAdditionalConsumers = null)
     {
+        // Feature flags
+        services.Configure<FeaturesOptions>(config.GetSection(FeaturesOptions.SectionName));
+
         // Clock — production singleton
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<NodaTime.IClock>(NodaTime.SystemClock.Instance);

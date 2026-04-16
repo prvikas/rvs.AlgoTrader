@@ -8,6 +8,7 @@ import {
 import { C, F, SP, TABLE_CELL } from '../../styles/tokens'
 import { RightDrawer } from '../ui/RightDrawer'
 import { useEnums } from '../../context/EnumsContext'
+import { useFeatures } from '../../context/FeaturesContext'
 
 interface Props {
   strategy: Strategy
@@ -146,8 +147,12 @@ function DeploymentDrawerForm({ strategy, scenarios, onClose, onSaved }: {
   onSaved: () => void
 }) {
   const { enums } = useEnums()
+  const { brokerRequired } = useFeatures()
   const tfOptions = enums.timeframe ?? []
-  const modeOptions = enums.deploymentMode ?? []
+  // In backtest-only mode, hide Forward and Live deployment modes
+  const modeOptions = (enums.deploymentMode ?? []).filter(o =>
+    brokerRequired || (o.value !== DeploymentMode.ForwardTest && o.value !== DeploymentMode.Live)
+  )
   const brokerOptions = enums.broker ?? []
   const dowOptions = enums.dayOfWeek ?? []
 

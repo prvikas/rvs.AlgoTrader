@@ -8,6 +8,7 @@ import { StrategiesPage } from './pages/StrategiesPage'
 import { useAppStore } from './stores/appStore'
 import { C } from './styles/tokens'
 import { EnumsProvider } from './context/EnumsContext'
+import { FeaturesProvider } from './context/FeaturesContext'
 import { UserModeProvider } from './context/UserModeContext'
 
 // ── Dev-only preview token ────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
+      <FeaturesProvider>
       <EnumsProvider>
       <UserModeProvider>
         <BrowserRouter>
@@ -96,6 +98,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         </BrowserRouter>
       </UserModeProvider>
       </EnumsProvider>
+      </FeaturesProvider>
     </QueryClientProvider>
     </ErrorBoundary>
   </React.StrictMode>

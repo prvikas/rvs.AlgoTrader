@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Google.Protobuf;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NodaTime;
@@ -287,35 +288,194 @@ public class UpstoxClient(
         [EnumeratorCancellation] CancellationToken ct)
     {
         // Upstox v3 WebSocket: wss://api.upstox.com/v3/feed/market-data-streamer
-        // Binary protobuf MarketDataFeed — simplified implementation
+        // Binary protobuf format — FeedResponse proto schema:
+        //
+        //   message FeedResponse {
+        //     map<string, Feed> feeds = 1;   // map → repeated MapEntry with key=1,value=2
+        //     int32 type               = 2;
+        //   }
+        //   message Feed {
+        //     LTPC ltpc = 1;
+        //     ...
+        //   }
+        //   message LTPC {
+        //     double ltp  = 1;   // last traded price
+        //     int64  ltt  = 2;   // last trade time
+        //     double ltq  = 3;   // last traded quantity
+        //     double cp   = 4;   // close price
+        //   }
+        //
+        // We hand-navigate the wire format using CodedInputStream to avoid
+        // needing generated proto classes.
+
         SetAuthHeader();
         var wsUrl = "wss://api.upstox.com/v3/feed/market-data-streamer";
         using var ws = new ClientWebSocket();
         ws.Options.SetRequestHeader("Authorization", $"Bearer {_accessToken}");
         await ws.ConnectAsync(new Uri(wsUrl), ct);
 
-        var tokens = brokerTokens.ToList();
+        // Upstox instrument keys are already in "NSE_EQ|SYMBOL" / "NSE_FO|..." format.
+        // Accept both raw symbols and fully qualified keys.
+        var instrKeys = brokerTokens
+            .Select(t => t.Contains('|') ? t : $"NSE_EQ|{t}")
+            .ToArray();
+
         var subscribeMsg = JsonSerializer.Serialize(new
         {
-            guid = Guid.NewGuid().ToString(),
+            guid   = Guid.NewGuid().ToString(),
             method = "sub",
-            data = new { mode = "full", instrumentKeys = tokens.Select(t => $"NSE_EQ|{t}").ToArray() }
+            data   = new { mode = "full", instrumentKeys = instrKeys }
         });
-        await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(subscribeMsg), WebSocketMessageType.Text, true, ct);
+        await ws.SendAsync(System.Text.Encoding.UTF8.GetBytes(subscribeMsg),
+            WebSocketMessageType.Text, true, ct);
 
-        var buffer = new byte[65536];
+        // Accumulate partial frames before decoding
+        var recvBuf  = new byte[65536];
+        using var ms = new System.IO.MemoryStream(65536);
+
         while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
-            var result = await ws.ReceiveAsync(buffer, ct);
-            if (result.MessageType == WebSocketMessageType.Binary)
+            ValueWebSocketReceiveResult result;
+            do
             {
-                // Protobuf decode — simplified: yield placeholder tick
-                // Production: use Google.Protobuf to decode MarketDataFeed proto
-                var now = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
-                foreach (var token in tokens)
-                    yield return new BrokerTick(token, 0m, 0, now);
+                result = await ws.ReceiveAsync(new Memory<byte>(recvBuf), ct);
+                if (result.MessageType == WebSocketMessageType.Close) yield break;
+                ms.Write(recvBuf, 0, result.Count);
+            }
+            while (!result.EndOfMessage);
+
+            if (result.MessageType != WebSocketMessageType.Binary)
+            {
+                ms.SetLength(0);
+                continue; // text = control messages, skip
+            }
+
+            var frame = ms.ToArray();
+            ms.SetLength(0);
+
+            var now = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
+            foreach (var tick in DecodeFeedResponse(frame, now))
+                yield return tick;
+        }
+    }
+
+    /// <summary>
+    /// Manually decodes a binary protobuf FeedResponse using CodedInputStream.
+    /// Each nested message is read as raw bytes and decoded in a child CodedInputStream
+    /// (avoids PushLimit/PopLimit which are not public in Google.Protobuf 3.x).
+    ///
+    /// Proto schema navigated:
+    ///   FeedResponse.feeds (field 1, map) → MapEntry.key (field 1) + MapEntry.value (field 2, Feed)
+    ///   Feed.ltpc (field 1) → LTPC.ltp (field 1, double), LTPC.ltq (field 3, double)
+    /// </summary>
+    private static IEnumerable<BrokerTick> DecodeFeedResponse(byte[] frame, ZonedDateTime now)
+    {
+        if (frame.Length == 0) yield break;
+
+        CodedInputStream root;
+        try { root = new CodedInputStream(frame); }
+        catch { yield break; }
+
+        while (!root.IsAtEnd)
+        {
+            uint tag;
+            try { tag = root.ReadTag(); } catch { yield break; }
+            if (tag == 0) break;
+
+            // Field 1 (feeds map) — each entry is a length-delimited MapEntry message
+            if (WireFormat.GetTagFieldNumber(tag) == 1 &&
+                WireFormat.GetTagWireType(tag) == WireFormat.WireType.LengthDelimited)
+            {
+                byte[] entryBytes;
+                try { entryBytes = root.ReadBytes().ToByteArray(); }
+                catch { continue; }
+
+                var (key, ltp, ltq) = DecodeMapEntry(entryBytes);
+                if (key != null && ltp > 0)
+                    yield return new BrokerTick(key, (decimal)ltp, (long)ltq, now);
+            }
+            else
+            {
+                try { root.SkipLastField(); } catch { yield break; }
             }
         }
+    }
+
+    /// <summary>Decodes one MapEntry: {string key=1; Feed value=2}.</summary>
+    private static (string? key, double ltp, double ltq) DecodeMapEntry(byte[] bytes)
+    {
+        string? key = null;
+        double ltp = 0, ltq = 0;
+        var input = new CodedInputStream(bytes);
+        while (!input.IsAtEnd)
+        {
+            uint tag;
+            try { tag = input.ReadTag(); } catch { break; }
+            if (tag == 0) break;
+
+            var f = WireFormat.GetTagFieldNumber(tag);
+            var w = WireFormat.GetTagWireType(tag);
+
+            if (f == 1 && w == WireFormat.WireType.LengthDelimited)
+                key = input.ReadString();  // map key
+            else if (f == 2 && w == WireFormat.WireType.LengthDelimited)
+            {
+                byte[] feedBytes;
+                try { feedBytes = input.ReadBytes().ToByteArray(); } catch { break; }
+                (ltp, ltq) = DecodeFeed(feedBytes);
+            }
+            else
+                input.SkipLastField();
+        }
+        return (key, ltp, ltq);
+    }
+
+    /// <summary>Decodes Feed message: {LTPC ltpc=1; ...}.</summary>
+    private static (double ltp, double ltq) DecodeFeed(byte[] bytes)
+    {
+        double ltp = 0, ltq = 0;
+        var input = new CodedInputStream(bytes);
+        while (!input.IsAtEnd)
+        {
+            uint tag;
+            try { tag = input.ReadTag(); } catch { break; }
+            if (tag == 0) break;
+
+            var f = WireFormat.GetTagFieldNumber(tag);
+            var w = WireFormat.GetTagWireType(tag);
+
+            // Field 1 = LTPC (nested message)
+            if (f == 1 && w == WireFormat.WireType.LengthDelimited)
+            {
+                byte[] ltpcBytes;
+                try { ltpcBytes = input.ReadBytes().ToByteArray(); } catch { break; }
+                (ltp, ltq) = DecodeLtpc(ltpcBytes);
+            }
+            else
+                input.SkipLastField();
+        }
+        return (ltp, ltq);
+    }
+
+    /// <summary>Decodes LTPC message: {double ltp=1; int64 ltt=2; double ltq=3; double cp=4}.</summary>
+    private static (double ltp, double ltq) DecodeLtpc(byte[] bytes)
+    {
+        double ltp = 0, ltq = 0;
+        var input = new CodedInputStream(bytes);
+        while (!input.IsAtEnd)
+        {
+            uint tag;
+            try { tag = input.ReadTag(); } catch { break; }
+            if (tag == 0) break;
+
+            switch (WireFormat.GetTagFieldNumber(tag))
+            {
+                case 1: ltp = input.ReadDouble(); break; // ltp
+                case 3: ltq = input.ReadDouble(); break; // ltq (last traded qty / volume proxy)
+                default: input.SkipLastField();   break;
+            }
+        }
+        return (ltp, ltq);
     }
 
     public async Task SubscribeAsync(IEnumerable<string> brokerTokens, CancellationToken ct)
