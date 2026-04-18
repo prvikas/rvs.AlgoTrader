@@ -373,6 +373,38 @@ public class DatabaseMigrationRunner(
                 """,
                 "forward_test_trades.realized_pnl NOT NULL"
             ),
+
+            // ── 029_restore_strategy_instance_columns ─────────────────────────
+            (
+                "029_restore_strategy_instance_columns.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'strategy_instances'
+                  AND column_name  = 'is_active';
+                """,
+                "strategy_instances.is_active"
+            ),
+            (
+                "029_restore_strategy_instance_columns.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'strategy_instances'
+                  AND column_name  = 'config_json';
+                """,
+                "strategy_instances.config_json"
+            ),
+            (
+                "029_restore_strategy_instance_columns.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'strategy_instances'
+                  AND column_name  = 'allocated_capital';
+                """,
+                "strategy_instances.allocated_capital"
+            ),
         };
 
         var toDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
