@@ -15,14 +15,15 @@ public class SetAppConfigValidator : AbstractValidator<SetAppConfigCommand>
     }
 }
 
-public class SetAppConfigHandler(IAppConfigRepository repo, IAuditService audit, Domain.Interfaces.IClock clock) : IRequestHandler<SetAppConfigCommand, bool>
+/// <summary>
+/// DEAD-1 fix: Previously used IAppConfigRepository (in-memory stub), so config changes were
+/// silently discarded. Now routes through IAppConfigService which writes to DB + Redis.
+/// </summary>
+public class SetAppConfigHandler(IAppConfigService config) : IRequestHandler<SetAppConfigCommand, bool>
 {
     public async Task<bool> Handle(SetAppConfigCommand request, CancellationToken ct)
     {
-        await repo.SetAsync(request.Key, request.Value, clock.NowInstant(), ct);
-        await audit.LogAsync(
-            "APP_CONFIG_SET", request.Actor, "AppConfig", request.Key,
-            new { request.Value }, request.CorrelationId, ct);
+        await config.SetAsync(request.Key, request.Value, request.Actor, request.CorrelationId, ct);
         return true;
     }
 }

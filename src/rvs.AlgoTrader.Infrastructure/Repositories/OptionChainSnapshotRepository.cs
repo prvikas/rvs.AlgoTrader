@@ -144,8 +144,10 @@ public class OptionChainSnapshotRepository(IConfiguration config) : IOptionChain
         while (await reader.ReadAsync(ct))
         {
             list.Add(new OptionChainSnapshotRow(
-                Date:           reader.GetFieldValue<LocalDate>(0),
-                ExpiryDate:     reader.GetFieldValue<LocalDate>(1),
+                // OCS-1: Raw NpgsqlConnection has no NodaTime type mapper — GetFieldValue<LocalDate> throws
+                // InvalidCastException. Read as DateOnly (the native Npgsql 9 mapping for 'date') and convert.
+                Date:           ToLocalDate(reader.GetFieldValue<DateOnly>(0)),
+                ExpiryDate:     ToLocalDate(reader.GetFieldValue<DateOnly>(1)),
                 SpotPrice:      reader.GetDecimal(2),
                 Pcr:            reader.IsDBNull(3)  ? null : reader.GetDecimal(3),
                 PcrChange:      reader.IsDBNull(4)  ? null : reader.GetDecimal(4),
@@ -160,6 +162,9 @@ public class OptionChainSnapshotRepository(IConfiguration config) : IOptionChain
 
         return list;
     }
+
+    // OCS-1: Convert DateOnly (Npgsql 9 'date' mapping) to NodaTime LocalDate.
+    private static LocalDate ToLocalDate(DateOnly d) => new(d.Year, d.Month, d.Day);
 }
 
 // ── JSON serialisation helpers ────────────────────────────────────────────────

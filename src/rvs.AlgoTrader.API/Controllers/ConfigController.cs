@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using rvs.AlgoTrader.Application.DTOs.Common;
-using rvs.AlgoTrader.Infrastructure.Options;
+using rvs.AlgoTrader.Application.Options;
 
 namespace rvs.AlgoTrader.API.Controllers;
 

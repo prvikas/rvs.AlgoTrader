@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { strategyDomainApi } from '../api/client'
 import {
@@ -8,13 +7,14 @@ import {
   StartCondition, StopTargetConfig, StopType, Strategy, StrategyStatus,
   Timeframe, TrailingConfig, TrailingType, TradingStyle,
   ExitBehaviour, ProfitBookingRule, OptionsConfig,
+  SpreadLegDef, OptionLegType, LegDirection, StrikeSelection,
   // PROMPT-002
   SignalLayer, EntryExecutionModel, EntryOrderType, EntryTiming, ScalingModel,
   SizingMethod, PositionSizingModel,
   StopState, StopStateMachine,
 } from '../types/strategy'
 import { OptionsConfigPanel, defaultOptionsConfig } from '../components/strategies/OptionsConfigPanel'
-import { PayoffChart, buildPayoffData, SpreadType as PayoffSpreadType } from '../components/Strategy/PayoffChart'
+import { PayoffChart, buildPayoffData, SpreadType as PayoffSpreadType, PayoffPoint } from '../components/Strategy/PayoffChart'
 import { SpreadType } from '../types/strategy'
 import { C, SP } from '../styles/tokens'
 import { useEnums } from '../context/EnumsContext'
@@ -27,6 +27,8 @@ interface Props {
   strategyId?: string
   initialData?: Strategy
   onSaved?: (s: Strategy) => void
+  onCancel?: () => void
+  strategyKind?: 'equity' | 'options'
 }
 
 type SubTab = 'core' | 'rules' | 'risk' | 'options'
@@ -54,8 +56,7 @@ function emptyBlock() {
   }
 }
 
-export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Props) {
-  const navigate = useNavigate()
+export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCancel, strategyKind }: Props) {
   const qc = useQueryClient()
   const { enums } = useEnums()
 
@@ -73,7 +74,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
   const scalingModelOptions = enums.scalingModel ?? []
   const sizingMethodOptions = enums.sizingMethod ?? []
 
-  const [subTab, setSubTab] = useState<SubTab>('core')
+  const [subTab, setSubTab] = useState<SubTab>(strategyKind === 'options' ? 'options' : 'core')
   const [payoffSpot, setPayoffSpot] = useState<number>(22500)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [indicatorModalOpen, setIndicatorModalOpen] = useState(false)
@@ -146,7 +147,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
     initialData?.stopStateMachine ?? {
       states: [{
         id: 'state-initial', label: 'Initial',
-        stopType: StopType.ATRMultiple, value: 2,
+        stopType: StopType.ATRMultiple, value: 0,
       }],
       allowedRanges: {},
     }
@@ -159,7 +160,9 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
   )
 
   const [optionsConfig, setOptionsConfig] = useState<OptionsConfig>(
-    initialData?.optionsConfig ?? defaultOptionsConfig()
+    initialData?.optionsConfig ?? (strategyKind === 'options'
+      ? { ...defaultOptionsConfig(), enabled: true }
+      : defaultOptionsConfig())
   )
 
   const createMut = useMutation({
@@ -168,7 +171,6 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
     onSuccess: (created: Strategy) => {
       qc.invalidateQueries({ queryKey: ['strategies'] })
       onSaved?.(created)
-      navigate(`/strategies?id=${created.id}`)
     },
   })
 
@@ -214,7 +216,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
     if (!validate()) return
     const payload = buildPayload()
     if (strategyId) {
-      updateMut.mutate(payload, { onSuccess: (s: Strategy) => andGoToScenarios && navigate(`/strategies?id=${s.id}`) })
+      updateMut.mutate(payload, { onSuccess: (s: Strategy) => andGoToScenarios && onSaved?.(s) })
     } else {
       createMut.mutate(payload)
     }
@@ -354,92 +356,24 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
     { done: indicators.length > 0,                label: 'Add at least one indicator to Signal Layer Chain' },
     { done: indicators.some(i => i.signalLayer === SignalLayer.PrimarySignal), label: 'Assign a Primary Signal indicator' },
     { done: longEntry.enabled || shortEntry.enabled, label: 'Enable Long or Short entry rules (Rules tab)' },
-    { done: stopLoss.baseValue > 0,               label: 'Configure a stop-loss (Risk & Regime tab)' },
+    { done: stopStateMachine.states[0]?.value > 0, label: 'Set a stop-loss value in Risk & Regime tab' },
   ]
   const completionPct = Math.round((completionSteps.filter(s => s.done).length / completionSteps.length) * 100)
 
+  // Filter templates by strategyKind (equity or options)
+  const filteredTemplates = OPTION_TEMPLATES.filter(t =>
+    !strategyKind || t.category === strategyKind
+  )
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 16px' }}>
-
-      {/* ── Option / Equity Strategy Templates ──────────────────────────────── */}
-      {!strategyId && (
-        <div style={{
-          marginBottom: SP.lg,
-          background: C.surface,
-          border: `1px solid ${C.border}`,
-          borderRadius: 8, padding: '14px 16px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <div>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Start from a Template</span>
-              <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>
-                Pre-fills name, style, and guidance. You can customise everything after.
-              </span>
-            </div>
-            {selectedTemplate && (
-              <button
-                onClick={() => setSelectedTemplate(null)}
-                style={{ background: 'none', border: 'none', color: C.textMuted, fontSize: 11, cursor: 'pointer' }}
-              >
-                Clear template
-              </button>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {OPTION_TEMPLATES.map(t => (
-              <button
-                key={t.id}
-                onClick={() => applyTemplate(t)}
-                title={t.tip}
-                style={{
-                  padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
-                  fontWeight: selectedTemplate === t.id ? 700 : 400,
-                  background: selectedTemplate === t.id
-                    ? (t.category === 'options' ? '#1e3a5f' : '#14352a')
-                    : C.surface2,
-                  color: selectedTemplate === t.id
-                    ? (t.category === 'options' ? C.blue : C.green)
-                    : C.textSub,
-                  border: `1px solid ${selectedTemplate === t.id
-                    ? (t.category === 'options' ? C.blue + '66' : C.green + '66')
-                    : C.border}`,
-                  transition: 'all 0.15s',
-                }}
-              >
-                {t.emoji} {t.label}
-              </button>
-            ))}
-          </div>
-          {/* Tip box for selected template */}
-          {selectedTemplate && (() => {
-            const t = OPTION_TEMPLATES.find(x => x.id === selectedTemplate)
-            if (!t) return null
-            return (
-              <div style={{
-                marginTop: 10, padding: '8px 12px',
-                background: t.category === 'options' ? C.blueBg : C.greenBg,
-                border: `1px solid ${t.category === 'options' ? C.blue + '33' : C.green + '33'}`,
-                borderRadius: 6, fontSize: 11,
-              }}>
-                <span style={{ fontWeight: 700, color: t.category === 'options' ? C.blue : C.green }}>
-                  {t.emoji} {t.label}
-                </span>
-                <span style={{ color: C.textSub, marginLeft: 8 }}>{t.description}</span>
-                <div style={{ marginTop: 4, color: C.amber }}>
-                  💡 {t.tip}
-                </div>
-              </div>
-            )
-          })()}
-        </div>
-      )}
 
       {/* ── Intelligent Setup Guide ──────────────────────────────────────────── */}
       {!strategyId && (
         <div style={{
           marginBottom: SP.lg,
           background: C.surface,
-          border: `1px solid ${completionPct === 100 ? C.green + '44' : C.border}`,
+          border: `1px solid ${completionPct === 100 ? C.green44 : C.border}`,
           borderRadius: 8, padding: '10px 14px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
@@ -462,9 +396,9 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
                   width: 16, height: 16, borderRadius: '50%',
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 9, fontWeight: 700, flexShrink: 0,
-                  background: step.done ? C.green + '33' : C.surface2,
+                  background: step.done ? C.green33 : C.surface2,
                   color: step.done ? C.green : C.textDim,
-                  border: `1px solid ${step.done ? C.green + '55' : C.border}`,
+                  border: `1px solid ${step.done ? C.green55 : C.border}`,
                 }}>
                   {step.done ? '✓' : i + 1}
                 </span>
@@ -505,6 +439,61 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: SP.xxl }}>
           {/* Left column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: SP.md }}>
+
+            {/* ── Template picker (new strategy only, filtered by kind) ── */}
+            {!strategyId && filteredTemplates.length > 0 && (
+              <Block title="Start from a Template">
+                <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
+                  Pre-fills name, style, and guidance. Customise everything after.
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {filteredTemplates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => applyTemplate(t)}
+                      title={t.tip}
+                      style={{
+                        padding: '5px 10px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
+                        fontWeight: selectedTemplate === t.id ? 700 : 400,
+                        background: selectedTemplate === t.id
+                          ? (t.category === 'options' ? C.blueBg : C.greenBg)
+                          : C.surface2,
+                        color: selectedTemplate === t.id
+                          ? (t.category === 'options' ? C.blue : C.green)
+                          : C.textSub,
+                        border: `1px solid ${selectedTemplate === t.id
+                          ? (t.category === 'options' ? C.blue44 : C.green44)
+                          : C.border}`,
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {t.emoji} {t.label}
+                    </button>
+                  ))}
+                </div>
+                {selectedTemplate && (() => {
+                  const t = filteredTemplates.find(x => x.id === selectedTemplate)
+                  if (!t) return null
+                  return (
+                    <div style={{
+                      marginTop: 8, padding: '8px 10px',
+                      background: t.category === 'options' ? C.blueBg : C.greenBg,
+                      border: `1px solid ${t.category === 'options' ? C.blue33 : C.green33}`,
+                      borderRadius: 5, fontSize: 11,
+                    }}>
+                      <div style={{ color: C.amber, marginBottom: 2 }}>💡 {t.tip}</div>
+                      <button
+                        onClick={() => setSelectedTemplate(null)}
+                        style={{ background: 'none', border: 'none', color: C.textMuted, fontSize: 10, cursor: 'pointer', padding: 0 }}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )
+                })()}
+              </Block>
+            )}
+
             <Block title="Basic Details">
               <Field label="Strategy Name *" error={errors.name} help="A unique name for this strategy. Used in reports, logs, and comparison views.">
                 <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
@@ -700,7 +689,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
                         style={{
                           padding: '2px 9px', fontSize: 11, cursor: 'pointer',
                           background: C.blueBg, color: C.blue,
-                          border: `1px solid ${C.blue}44`, borderRadius: 4,
+                          border: `1px solid ${C.blue44}`, borderRadius: 4,
                           fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
                         }}
                       >
@@ -1361,7 +1350,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
           <OptionsConfigPanel value={optionsConfig} onChange={setOptionsConfig} />
 
           {/* Payoff preview — only when spread is enabled and has a representable type */}
-          {optionsConfig.enabled && <OptionsPayoffPreview spreadType={optionsConfig.spreadType} spot={payoffSpot} onSpotChange={setPayoffSpot} />}
+          {optionsConfig.enabled && <OptionsPayoffPreview spreadType={optionsConfig.spreadType} legs={optionsConfig.legs} spot={payoffSpot} onSpotChange={setPayoffSpot} />}
         </div>
       )}
 
@@ -1370,7 +1359,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
         display: 'flex', gap: SP.sm, justifyContent: 'flex-end',
         paddingTop: SP.lg, marginTop: SP.lg, borderTop: `1px solid ${C.border}`,
       }}>
-        <button onClick={() => navigate('/strategies')} style={cancelBtnStyle}>Cancel</button>
+        <button onClick={() => onCancel?.()} style={cancelBtnStyle}>Cancel</button>
         <button onClick={() => save(false)} disabled={isPending} style={secondaryBtnStyle}>
           {isPending ? '…' : 'Save Strategy'}
         </button>
@@ -1398,7 +1387,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved }: Pro
 }
 
 // ── OptionsPayoffPreview ──────────────────────────────────────────────────────
-// Renders a PayoffChart for the currently selected spread type.
+// Renders a PayoffChart for the currently selected spread type or custom legs.
 // Uses a user-adjustable reference spot price for realistic strikes.
 
 const SPREAD_TYPE_MAP: Partial<Record<SpreadType, PayoffSpreadType>> = {
@@ -1413,76 +1402,241 @@ const SPREAD_TYPE_MAP: Partial<Record<SpreadType, PayoffSpreadType>> = {
   [SpreadType.LongPut]:        'bear_put',
 }
 
-function OptionsPayoffPreview({
-  spreadType, spot, onSpotChange,
-}: { spreadType: SpreadType; spot: number; onSpotChange: (v: number) => void }) {
-  const [open, setOpen] = useState(false)
+/**
+ * buildPayoffFromLegs — illustrative payoff from custom leg definitions.
+ * Uses a simple premium model (no real Greeks). Positive otmStrikes = OTM,
+ * negative = ITM (for OtmByStrike mode).
+ */
+interface LegDetail { strike: number; premium: number }
 
-  const payoffType = SPREAD_TYPE_MAP[spreadType]
-  if (!payoffType) return null
-
+function buildPayoffFromLegs(
+  legs: SpreadLegDef[], spot: number
+): { data: PayoffPoint[]; breakeven: number[]; legDetails: LegDetail[] } {
   const interval = spot >= 10000 ? 100 : spot >= 1000 ? 50 : 10
   const atm = Math.round(spot / interval) * interval
-  const isShort = spreadType === SpreadType.ShortStraddle || spreadType === SpreadType.ShortStrangle
 
-  const { data, breakeven } = buildPayoffData({
-    type: payoffType,
-    spot: atm,
-    lowerStrike: atm - interval * 2,
-    upperStrike: atm + interval * 2,
-    netPremium: isShort ? -(atm * 0.012) : atm * 0.008,
-    innerLowerStrike: payoffType === 'iron_condor' ? atm - interval : undefined,
-    innerUpperStrike: payoffType === 'iron_condor' ? atm + interval : undefined,
+  const legStrikes = legs.map(leg => {
+    if (leg.selectionMode === StrikeSelection.OtmByStrike) {
+      return leg.optionType === OptionLegType.CE
+        ? atm + leg.otmStrikes * interval
+        : atm - leg.otmStrikes * interval
+    }
+    if (leg.selectionMode === StrikeSelection.OtmByPct) {
+      return leg.optionType === OptionLegType.CE
+        ? atm * (1 + (leg.otmPct ?? 0) / 100)
+        : atm * (1 - (leg.otmPct ?? 0) / 100)
+    }
+    return atm  // ATM or ByDelta — approximate as ATM
   })
 
+  // Rough premium: 1.2% of spot at ATM, decays exponentially with strike distance
+  const legPremiums = legs.map((_, i) => {
+    const strikeDiff = Math.abs(legStrikes[i] - atm) / interval
+    return Math.round((spot * 0.012) * Math.exp(-0.45 * strikeDiff))
+  })
+
+  const lo = spot * 0.85
+  const hi = spot * 1.15
+  const steps = 80
+  const step = (hi - lo) / steps
+  const points: PayoffPoint[] = []
+  const breakevenSet = new Set<number>()
+
+  for (let i = 0; i <= steps; i++) {
+    const price = lo + i * step
+    let totalPnl = 0
+
+    for (let l = 0; l < legs.length; l++) {
+      const leg = legs[l]
+      const K = legStrikes[l]
+      const prem = legPremiums[l]
+      const intrinsic = leg.optionType === OptionLegType.CE
+        ? Math.max(price - K, 0)
+        : Math.max(K - price, 0)
+      const legPnl = leg.direction === LegDirection.Buy
+        ? (intrinsic - prem) * leg.quantity
+        : (prem - intrinsic) * leg.quantity
+      totalPnl += legPnl
+    }
+
+    points.push({ price: Math.round(price), pnl: Math.round(totalPnl) })
+
+    if (i > 0) {
+      const prev = points[i - 1].pnl
+      if ((prev < 0 && totalPnl >= 0) || (prev >= 0 && totalPnl < 0)) {
+        const be = points[i - 1].price
+          + (price - points[i - 1].price) * Math.abs(prev) / (Math.abs(prev) + Math.abs(totalPnl))
+        breakevenSet.add(Math.round(be))
+      }
+    }
+  }
+
+  return {
+    data: points,
+    breakeven: Array.from(breakevenSet),
+    legDetails: legStrikes.map((strike, i) => ({ strike: Math.round(strike), premium: legPremiums[i] })),
+  }
+}
+
+function fmtInrSmall(v: number): string {
+  const abs = Math.abs(v)
+  const sign = v >= 0 ? '+' : '−'
+  if (abs >= 100_000) return `${sign}₹${(abs / 100_000).toFixed(1)}L`
+  if (abs >= 1_000)   return `${sign}₹${(abs / 1_000).toFixed(1)}K`
+  return `${sign}₹${abs.toFixed(0)}`
+}
+
+function OptionsPayoffPreview({
+  spreadType, legs, spot, onSpotChange,
+}: { spreadType: SpreadType; legs: SpreadLegDef[]; spot: number; onSpotChange: (v: number) => void }) {
+  const interval = spot >= 10000 ? 100 : spot >= 1000 ? 50 : 10
+  const atm = Math.round(spot / interval) * interval
+
+  const hasCustomLegs = legs.length > 0
+
+  let payoffResult: { data: PayoffPoint[]; breakeven: number[]; legDetails?: LegDetail[] }
+  if (hasCustomLegs) {
+    payoffResult = buildPayoffFromLegs(legs, spot)
+  } else {
+    const payoffType = SPREAD_TYPE_MAP[spreadType]
+    if (!payoffType) return null
+    const isShort = spreadType === SpreadType.ShortStraddle || spreadType === SpreadType.ShortStrangle
+    payoffResult = buildPayoffData({
+      type: payoffType,
+      spot: atm,
+      lowerStrike: atm - interval * 2,
+      upperStrike: atm + interval * 2,
+      netPremium: isShort ? -(atm * 0.012) : atm * 0.008,
+      innerLowerStrike: payoffType === 'iron_condor' ? atm - interval : undefined,
+      innerUpperStrike: payoffType === 'iron_condor' ? atm + interval : undefined,
+    })
+  }
+
+  const { data, breakeven, legDetails } = payoffResult
+
+  // Derive max profit / max loss from computed data
+  const pnlValues = data.map(d => d.pnl)
+  const maxProfit = Math.max(...pnlValues)
+  const maxLoss   = Math.min(...pnlValues)
+
   return (
-    <div style={{ marginTop: SP.lg }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: C.blue, fontSize: 12, fontWeight: 600, padding: 0,
-        }}
-      >
-        {open ? '▲' : '▶'} {open ? 'Hide' : 'Preview'} payoff diagram
-        <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400 }}>
-          (illustrative — based on reference spot)
+    <div style={{
+      marginTop: SP.lg, padding: '14px 16px',
+      background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
+    }}>
+      {/* Header row — title + spot input */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: SP.md, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: C.textSub, flex: 1 }}>
+          Payoff Diagram
+          <span style={{ fontSize: 10, color: C.textMuted, fontWeight: 400, marginLeft: 6 }}>
+            {hasCustomLegs ? `${legs.length} leg${legs.length !== 1 ? 's' : ''}` : 'illustrative'} · est. premiums
+          </span>
         </span>
-      </button>
-
-      {open && (
-        <div style={{
-          marginTop: SP.md, padding: '14px 16px',
-          background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
-        }}>
-          {/* Spot price input */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: SP.md }}>
-            <label style={{ fontSize: 11, color: C.textSub, whiteSpace: 'nowrap' }}>
-              Reference spot price
-            </label>
-            <input
-              type="number"
-              value={spot}
-              onChange={e => onSpotChange(Number(e.target.value))}
-              style={{
-                width: 100, padding: '3px 8px', fontSize: 12,
-                background: C.surface3, border: `1px solid ${C.border3}`,
-                borderRadius: 5, color: C.text,
-              }}
-            />
-            <span style={{ fontSize: 10, color: C.textMuted }}>
-              Strikes derived from ATM = ₹{atm.toLocaleString('en-IN')}
-            </span>
-          </div>
-
-          <PayoffChart
-            data={data}
-            breakeven={breakeven}
-            height={220}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 11, color: C.textMuted, whiteSpace: 'nowrap' }}>Spot</label>
+          <input
+            type="number"
+            value={spot}
+            onChange={e => onSpotChange(Number(e.target.value))}
+            style={{
+              width: 90, padding: '3px 7px', fontSize: 12,
+              background: C.surface3, border: `1px solid ${C.border3}`,
+              borderRadius: 4, color: C.text,
+            }}
           />
+          <span style={{ fontSize: 10, color: C.textDim }}>ATM ₹{atm.toLocaleString('en-IN')}</span>
+        </div>
+      </div>
+
+      {/* Per-leg price breakdown — only when legs are defined */}
+      {hasCustomLegs && legDetails && legDetails.length > 0 && (
+        <div style={{ marginBottom: SP.md }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+            <thead>
+              <tr style={{ background: C.surface3 }}>
+                {['Leg', 'Type', 'Dir', 'Strike', 'Est. Premium', 'Qty', 'Net Credit/Debit'].map(h => (
+                  <th key={h} style={{
+                    padding: '4px 8px', textAlign: 'left',
+                    color: C.textMuted, fontWeight: 600, fontSize: 10,
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {legs.map((leg, i) => {
+                const detail = legDetails[i]
+                const sign = leg.direction === LegDirection.Sell ? +1 : -1
+                const netPerLot = sign * detail.premium * leg.quantity
+                return (
+                  <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '4px 8px', color: C.textMuted }}>{i + 1}</td>
+                    <td style={{ padding: '4px 8px', fontWeight: 600,
+                      color: leg.optionType === OptionLegType.CE ? C.blue : C.amber }}>
+                      {leg.optionType}
+                    </td>
+                    <td style={{ padding: '4px 8px',
+                      color: leg.direction === LegDirection.Buy ? C.green : C.red, fontWeight: 600 }}>
+                      {leg.direction}
+                    </td>
+                    <td style={{ padding: '4px 8px', fontFamily: "'JetBrains Mono', monospace", color: C.text }}>
+                      ₹{detail.strike.toLocaleString('en-IN')}
+                    </td>
+                    <td style={{ padding: '4px 8px', fontFamily: "'JetBrains Mono', monospace", color: C.textSub }}>
+                      ₹{detail.premium.toLocaleString('en-IN')}
+                    </td>
+                    <td style={{ padding: '4px 8px', color: C.textMuted }}>{leg.quantity}</td>
+                    <td style={{ padding: '4px 8px', fontFamily: "'JetBrains Mono', monospace",
+                      color: netPerLot >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                      {netPerLot >= 0 ? '+' : ''}₹{netPerLot.toLocaleString('en-IN')}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
+
+      {/* Stats row — Max Profit / Max Loss / Breakeven */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: SP.md, flexWrap: 'wrap' }}>
+        <StatPill label="Max Profit" value={fmtInrSmall(maxProfit)} color={C.green} bg={C.greenBg} border={C.green44} />
+        <StatPill label="Max Loss"   value={fmtInrSmall(maxLoss)}   color={C.red}   bg={C.redBg}   border={C.red44} />
+        {breakeven.map((be, i) => (
+          <StatPill
+            key={`be-${i}`}
+            label={`Breakeven${breakeven.length > 1 ? ` ${i + 1}` : ''}`}
+            value={`₹${be.toLocaleString('en-IN')}`}
+            color={C.amber}
+            bg={C.amberBg}
+            border={C.amber44}
+          />
+        ))}
+      </div>
+
+      <PayoffChart
+        data={data}
+        breakeven={breakeven}
+        maxProfit={maxProfit}
+        maxLoss={maxLoss}
+        height={200}
+      />
+    </div>
+  )
+}
+
+function StatPill({
+  label, value, color, bg, border,
+}: { label: string; value: string; color: string; bg: string; border: string }) {
+  return (
+    <div style={{
+      padding: '5px 12px', borderRadius: 6, fontSize: 12,
+      background: bg, border: `1px solid ${border}`,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 90,
+    }}>
+      <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+        {label}
+      </span>
+      <span style={{ fontWeight: 700, color, fontFamily: "'JetBrains Mono', monospace" }}>{value}</span>
     </div>
   )
 }
@@ -1557,7 +1711,7 @@ function SignalWaterfallPanel({ indicators }: { indicators: IndicatorConfig[] })
 function Block({ title, children, error }: { title: string; children: React.ReactNode; error?: string }) {
   return (
     <div style={{
-      background: C.surface, border: `1px solid ${error ? C.red + '44' : C.border}`,
+      background: C.surface, border: `1px solid ${error ? C.red44 : C.border}`,
       borderRadius: 6, padding: '12px 14px', marginBottom: SP.sm,
     }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: C.textSub, marginBottom: SP.sm }}>{title}</div>

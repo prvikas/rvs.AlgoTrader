@@ -118,7 +118,9 @@ public class StrategyDefinitionService(IConfiguration config) : IStrategyDefinit
         Description:    r.IsDBNull(2) ? null : r.GetString(2),
         TradingStyle:   r.GetString(3),
         DefinitionJson: r.GetString(4),
-        CreatedAt:      r.GetFieldValue<DateTimeOffset>(5),
-        UpdatedAt:      r.GetFieldValue<DateTimeOffset>(6)
+        // Npgsql 9 returns timestamptz as DateTime (UTC kind) on raw NpgsqlConnection.
+        // Wrap in DateTimeOffset(utc, offset:0) so the DTO type is satisfied.
+        CreatedAt:      new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(5), DateTimeKind.Utc)),
+        UpdatedAt:      new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(6), DateTimeKind.Utc))
     );
 }

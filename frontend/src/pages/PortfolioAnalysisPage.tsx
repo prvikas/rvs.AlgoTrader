@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { tradeJournalApi, PnlByDimension } from '../api/client'
 import { C, CONTENT_PAD } from '../styles/tokens'
@@ -183,17 +183,40 @@ function TaxLotsSection() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export function PortfolioAnalysisPage() {
+  const [from, setFrom] = useState('')
+  const [to,   setTo]   = useState('')
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['pnl-attribution'],
-    queryFn: () => tradeJournalApi.getAttribution(),
+    queryKey: ['pnl-attribution', from, to],
+    queryFn: () => tradeJournalApi.getAttribution({
+      from: from || undefined,
+      to:   to   || undefined,
+    }),
   })
 
   const attr = data?.data?.data
 
+  const inputStyle: React.CSSProperties = {
+    background: C.surface2, border: `1px solid ${C.border}`,
+    borderRadius: 5, color: C.text, fontSize: 12, padding: '4px 8px',
+  }
+
   return (
     <div style={{ padding: CONTENT_PAD }}>
-      <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 16 }}>
-        P&amp;L Analysis
+      {/* Header + date filter */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>P&amp;L Analysis</div>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: C.textMuted }}>From</span>
+        <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={inputStyle} />
+        <span style={{ fontSize: 12, color: C.textMuted }}>To</span>
+        <input type="date" value={to}   onChange={e => setTo(e.target.value)}   style={inputStyle} />
+        {(from || to) && (
+          <button
+            onClick={() => { setFrom(''); setTo('') }}
+            style={{ ...inputStyle, cursor: 'pointer', color: C.textMuted }}
+          >Clear</button>
+        )}
       </div>
 
       {isLoading && (
@@ -209,12 +232,20 @@ export function PortfolioAnalysisPage() {
       )}
 
       {attr && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-          <BarChart rows={attr.bySymbol ?? []} title="By Symbol" />
-          <BarChart rows={attr.byMonth ?? []} title="By Month" />
-          <BarChart rows={attr.byDayOfWeek ?? []} title="By Day of Week" />
-          <BarChart rows={attr.byExitType ?? []} title="By Exit Type" />
-        </div>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+            <BarChart rows={attr.bySymbol    ?? []} title="By Symbol" />
+            <BarChart rows={attr.byMonth     ?? []} title="By Month" />
+            <BarChart rows={attr.byDayOfWeek ?? []} title="By Day of Week" />
+            <BarChart rows={attr.byExitType  ?? []} title="By Exit Type" />
+          </div>
+          {/* P9: cross-strategy breakdown — only shown when byStrategy is populated (all-strategies view) */}
+          {(attr.byStrategy ?? []).length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <BarChart rows={attr.byStrategy!} title="By Strategy" />
+            </div>
+          )}
+        </>
       )}
 
       {!isLoading && !isError && !attr && (

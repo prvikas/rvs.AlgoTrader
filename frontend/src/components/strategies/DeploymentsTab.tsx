@@ -106,7 +106,7 @@ export function DeploymentsTab({ strategy }: Props) {
                         onClick={() => deleteMut.mutate(d.id)}
                         disabled={deleteMut.isPending}
                         style={{
-                          background: C.redBg, color: C.red, border: `1px solid ${C.red}44`,
+                          background: C.redBg, color: C.red, border: `1px solid ${C.red44}`,
                           borderRadius: 4, padding: '3px 8px', cursor: 'pointer', fontSize: 11,
                         }}
                       >
@@ -242,7 +242,7 @@ function DeploymentDrawerForm({ strategy, scenarios, onClose, onSaved }: {
                 padding: '3px 8px', borderRadius: 4, fontSize: 11, cursor: 'pointer',
                 background: days.includes(o.value as DayOfWeek) ? C.blueBg : C.surface2,
                 color: days.includes(o.value as DayOfWeek) ? C.blue : C.textMuted,
-                border: `1px solid ${days.includes(o.value as DayOfWeek) ? C.blue + '66' : C.border}`,
+                border: `1px solid ${days.includes(o.value as DayOfWeek) ? C.blue66 : C.border}`,
               }}
             >
               {o.label}

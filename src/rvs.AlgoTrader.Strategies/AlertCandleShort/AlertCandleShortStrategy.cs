@@ -257,12 +257,13 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
                         $"SL={sl:F2} TP={tp:F2} (1:{config.RiskRewardRatio:F0} RRR)",
                 diagnosticsJson: new
                 {
-                    AlertCandleTime = alertCandle.OpenTime.ToString(),
-                    AlertCandleHigh = alertCandle.High, AlertCandleLow = alertCandle.Low,
-                    EmaAtAlertBar   = Math.Round(emaAtAlert, 2),
-                    FloatAboveEma   = Math.Round(alertCandle.Low - emaAtAlert, 2),
-                    BreakoutBarLow  = candles[^1].Low,
-                    Risk            = Math.Round(risk, 2)
+                    AlertCandleTime  = alertCandle.OpenTime.ToString(),
+                    AlertCandleHigh  = alertCandle.High, AlertCandleLow = alertCandle.Low,
+                    EmaAtAlertBar    = Math.Round(emaAtAlert, 2),
+                    FloatAboveEma    = Math.Round(alertCandle.Low - emaAtAlert, 2),
+                    BreakoutBarLow   = candles[^1].Low,
+                    Risk             = Math.Round(risk, 2),
+                    RiskRewardRatio  = config.RiskRewardRatio
                 },
                 indicatorValues: indicators));
         }
@@ -299,7 +300,8 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
                     EmaAtAlertBar    = Math.Round(emaAtAlert, 2),
                     FloatBelowEma    = Math.Round(emaAtAlert - alertCandle.High, 2),
                     BreakoutBarHigh  = candles[^1].High,
-                    Risk             = Math.Round(risk, 2)
+                    Risk             = Math.Round(risk, 2),
+                    RiskRewardRatio  = config.RiskRewardRatio
                 },
                 indicatorValues: indicators));
         }

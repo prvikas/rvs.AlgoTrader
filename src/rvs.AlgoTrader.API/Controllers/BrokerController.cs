@@ -8,7 +8,7 @@ using rvs.AlgoTrader.Application.DTOs.Broker;
 // MStockLoginRequest, ZerodhaCallbackRequest, UpstoxCallbackRequest defined in Application/DTOs/Broker/BrokerRequestDtos.cs
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Queries.Broker;
-using rvs.AlgoTrader.Infrastructure.Options;
+using rvs.AlgoTrader.Application.Options;
 
 namespace rvs.AlgoTrader.API.Controllers;
 

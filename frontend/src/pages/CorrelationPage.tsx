@@ -323,7 +323,7 @@ export function CorrelationPage() {
 
       {/* Error states */}
       {(matrixMut.isError || portfolioMut.isError) && (
-        <div style={{ padding: '10px 14px', background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 6, fontSize: 12, color: C.red }}>
+        <div style={{ padding: '10px 14px', background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 6, fontSize: 12, color: C.red }}>
           Analysis failed. Ensure selected backtests have sufficient trade history.
         </div>
       )}
@@ -362,7 +362,7 @@ export function CorrelationPage() {
                   <div key={i} style={{
                     padding: '8px 10px',
                     background: Math.abs(pair.correlation) >= 0.9 ? C.redBg : C.amberBg,
-                    border: `1px solid ${Math.abs(pair.correlation) >= 0.9 ? C.red + '44' : C.amber + '44'}`,
+                    border: `1px solid ${Math.abs(pair.correlation) >= 0.9 ? C.red44 : C.amber44}`,
                     borderRadius: 6,
                   }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: Math.abs(pair.correlation) >= 0.9 ? C.red : C.amber, marginBottom: 4 }}>

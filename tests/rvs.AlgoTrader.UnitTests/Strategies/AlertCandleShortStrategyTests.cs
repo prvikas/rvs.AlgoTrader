@@ -33,7 +33,16 @@ public class AlertCandleShortStrategyTests
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static AlertCandleShortConfig DefaultConfig(decimal rrr = 3.0m, decimal minRisk = 0m) =>
-        new() { EmaPeriod = 5, RiskRewardRatio = rrr, MinRiskPoints = minRisk };
+        new()
+        {
+            EmaPeriod              = 5,
+            RiskRewardRatio        = rrr,
+            MinRiskPoints          = minRisk,
+            // Disable production-tuned filters so tests focus purely on alert-candle pattern logic:
+            TrendFilterPeriod      = 0,    // trend filter would suppress shorts when close > EMA(20)
+            SessionStartBufferBars = 0,    // opening buffer would skip the alert candle in small test sets
+            BreakoutVolumeMultiple = 0m,   // volume filter would reject low-volume breakout bars
+        };
 
     /// <summary>
     /// Creates a candle in IST. dayOffset=0 means today (2024-06-03 by convention).
@@ -125,7 +134,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().Be(SkippedReason.InsufficientData.ToString());
     }
 
@@ -142,7 +151,7 @@ public class AlertCandleShortStrategyTests
         var ctx = MakeContext(bars);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().BeNull("this is a HOLD, not a Skip");
     }
 
@@ -160,7 +169,7 @@ public class AlertCandleShortStrategyTests
         var ctx = MakeContext(candles, config);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("SELL",
+        result.Signal.Should().Be(SignalType.Sell,
             "Alert Candle low (108) is above EMA (≈100), next bar breaks below → SELL");
         result.EntryPrice.Should().Be(108m, "entry = Alert Candle Low");
         result.StopLoss.Should().Be(115m,   "SL = Alert Candle High");
@@ -178,7 +187,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        if (result.Signal == "SELL")
+        if (result.Signal == SignalType.Sell)
         {
             var risk   = result.StopLoss!.Value - result.EntryPrice!.Value;
             var reward = result.EntryPrice!.Value - result.TakeProfit!.Value;
@@ -196,7 +205,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("SELL");
+        result.Signal.Should().Be(SignalType.Sell);
         result.EntryPrice.Should().Be(112m, "entry = Alert Candle low, not the breakout bar's price");
         result.StopLoss.Should().Be(120m,   "SL = Alert Candle HIGH — the defined invalidation level");
         result.TakeProfit.Should().BeLessThan(result.EntryPrice!.Value,
@@ -220,7 +229,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "Alert Candle low == EMA → not strictly above → rule not satisfied → HOLD");
     }
 
@@ -235,7 +244,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "Alert Candle low (95) < EMA (100) → candle touches EMA → not an alert candle");
     }
 
@@ -254,7 +263,7 @@ public class AlertCandleShortStrategyTests
         var ctx = MakeContext(candles);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "Next bar low (109) is above Alert Candle low (108) — breakout not confirmed");
     }
 
@@ -275,7 +284,7 @@ public class AlertCandleShortStrategyTests
         var ctx = MakeContext(candles);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "The Alert Candle breakout occurred 2 bars ago — one trade per day rule → HOLD");
         result.Reason.Should().Contain("already triggered",
             "reason should tell the user why the signal is suppressed");
@@ -295,7 +304,7 @@ public class AlertCandleShortStrategyTests
         // Call 1: breakout bar is the last bar → SELL
         var ctx1 = MakeContext(candlesAtBreakout, config);
         var result1 = await strategy.EvaluateAsync(ctx1, CancellationToken.None);
-        result1.Signal.Should().Be("SELL");
+        result1.Signal.Should().Be(SignalType.Sell);
 
         // Add one more bar (next 5-min candle)
         candlesAtBreakout.Add(Bar(close: 105m, low: 104m, high: 108m, dayOffset: 0, minuteBar: 4));
@@ -303,7 +312,7 @@ public class AlertCandleShortStrategyTests
         // Call 2: breakout bar is now in history → HOLD
         var ctx2 = MakeContext(candlesAtBreakout, config);
         var result2 = await strategy.EvaluateAsync(ctx2, CancellationToken.None);
-        result2.Signal.Should().Be("HOLD",
+        result2.Signal.Should().Be(SignalType.Hold,
             "after SELL signal is emitted, all subsequent bars for today return HOLD");
     }
 
@@ -348,7 +357,7 @@ public class AlertCandleShortStrategyTests
         var ctx = MakeContext(bars, config);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "The FIRST Alert Candle breakout (bars 2-3) already triggered — second opportunity at bars 6-7 is ignored");
     }
 
@@ -366,7 +375,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().Be(SkippedReason.FilterFailed.ToString(),
             "candle is too small (risk=2 pts) — filtered to avoid trading noise");
     }
@@ -382,7 +391,7 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("SELL", "risk=12 pts ≥ MinRiskPoints=10 → filter passes");
+        result.Signal.Should().Be(SignalType.Sell, "risk=12 pts ≥ MinRiskPoints=10 → filter passes");
     }
 
     // ── New trading day resets the trigger ────────────────────────────────
@@ -407,7 +416,7 @@ public class AlertCandleShortStrategyTests
         var ctx = MakeContext(bars, config);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("SELL",
+        result.Signal.Should().Be(SignalType.Sell,
             "yesterday's trigger does not carry over — today's first alert candle is a fresh trigger");
     }
 
@@ -422,14 +431,14 @@ public class AlertCandleShortStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        if (result.Signal == "SELL")
+        if (result.Signal == SignalType.Sell)
         {
             result.DiagnosticsJson.Should().NotBeNull();
             var json = System.Text.Json.JsonSerializer.Serialize(result.DiagnosticsJson);
             json.Should().Contain("AlertCandleLow",  "must record the trigger level");
             json.Should().Contain("AlertCandleHigh", "must record the stop level");
             json.Should().Contain("EmaAtAlertBar",   "must record the EMA value for audit");
-            json.Should().Contain("LowAboveEmaBy",   "must record how far above EMA the candle floated");
+            json.Should().Contain("FloatAboveEma",    "must record how far above EMA the candle floated");
             json.Should().Contain("RiskRewardRatio", "must record the configured RRR");
         }
     }
@@ -470,7 +479,7 @@ public class AlertCandleShortStrategyTests
         // The EMA has risen — whether 106 > EMA(≈107) depends on exact values.
         // This test just verifies the strategy doesn't crash and produces a valid signal or hold.
         result.Should().NotBeNull("strategy must always return a result, never throw");
-        result.Signal.Should().BeOneOf("SELL", "HOLD",
-            "valid signals only — no exceptions from EMA computation");
+        result.Signal.Should().BeOneOf(new[] { SignalType.Sell, SignalType.Hold },
+            because: "valid signals only — no exceptions from EMA computation");
     }
 }

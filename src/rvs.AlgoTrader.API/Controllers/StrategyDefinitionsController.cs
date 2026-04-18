@@ -1,7 +1,10 @@
+using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.DTOs.Strategy;
+using rvs.AlgoTrader.Application.Queries.Backtest;
 using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.API.Controllers;
@@ -33,7 +36,8 @@ namespace rvs.AlgoTrader.API.Controllers;
 [Authorize]
 public class StrategyDefinitionsController(
     IStrategyDefinitionService service,
-    IStrategyDefinitionScenarioService scenarios) : ControllerBase
+    IStrategyDefinitionScenarioService scenarios,
+    IMediator mediator) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<StrategyDefinitionDto>>>> GetAll(
@@ -144,5 +148,23 @@ public class StrategyDefinitionsController(
             return NotFound(ApiResponse<object>.Fail("Scenario not found"));
         await scenarios.DeleteAsync(scenId, ct);
         return Ok(ApiResponse<object>.Ok(null!));
+    }
+
+    // ── Backtest runs sub-resource ────────────────────────────────────────────
+
+    /// <summary>
+    /// All backtest runs whose scenario belongs to this strategy definition.
+    /// Returns up to pageSize=100 runs by default, ordered newest-first.
+    /// </summary>
+    [HttpGet("{id:guid}/backtests")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<BacktestResultDto>>>> GetBacktests(
+        Guid id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 100,
+        CancellationToken ct = default)
+    {
+        var result = await mediator.Send(
+            new GetBacktestsByDefinitionQuery(id, page, Math.Clamp(pageSize, 1, 200)), ct);
+        return Ok(ApiResponse<IReadOnlyList<BacktestResultDto>>.Ok(result));
     }
 }

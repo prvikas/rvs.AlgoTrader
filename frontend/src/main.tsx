@@ -8,16 +8,9 @@ import { StrategiesPage } from './pages/StrategiesPage'
 import { useAppStore } from './stores/appStore'
 import { C } from './styles/tokens'
 import { EnumsProvider } from './context/EnumsContext'
-import { FeaturesProvider } from './context/FeaturesContext'
+import { FeaturesProvider, useFeatures } from './context/FeaturesContext'
 import { UserModeProvider } from './context/UserModeContext'
-
-// ── Dev-only preview token ────────────────────────────────────────────────────
-// Injected before React mounts so the Zustand store reads it on first init.
-// Stripped entirely from production builds via import.meta.env.DEV (Vite dead-code).
-if (import.meta.env.DEV && !localStorage.getItem('jwt_token')) {
-  const p = btoa(JSON.stringify({ sub: 'dev-preview', exp: 9999999999 }))
-  localStorage.setItem('jwt_token', `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${p}.dev`)
-}
+import { ThemeProvider } from './context/ThemeContext'
 
 // ── Global Error Boundary ─────────────────────────────────────────────────────
 // Prevents blank screen on render errors — shows a recoverable error panel instead.
@@ -40,7 +33,7 @@ class ErrorBoundary extends React.Component<
           minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif",
           padding: 32,
         }}>
-          <div style={{ maxWidth: 600, width: '100%', background: C.surface, border: `1px solid ${C.red}44`, borderRadius: 10, padding: 28 }}>
+          <div style={{ maxWidth: 600, width: '100%', background: C.surface, border: `1px solid ${C.red44}`, borderRadius: 10, padding: 28 }}>
             <h2 style={{ color: '#fca5a5', marginTop: 0, fontSize: 18 }}>Something went wrong</h2>
             <pre style={{
               background: C.surface2, color: '#fca5a5', borderRadius: 6,
@@ -76,12 +69,19 @@ const queryClient = new QueryClient({
 
 function ProtectedRoute({ element }: { element: React.ReactElement }) {
   const isAuthenticated = useAppStore(s => s.isAuthenticated)
+  const { loaded } = useFeatures()
+
+  // Hold here while FeaturesProvider is fetching config + performing auto-login
+  // (backtest-only mode). Redirecting before `loaded` causes a spurious /login flash.
+  if (!loaded) return null
+
   return isAuthenticated() ? element : <Navigate to="/login" replace />
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
+    <ThemeProvider>
     <QueryClientProvider client={queryClient}>
       <FeaturesProvider>
       <EnumsProvider>
@@ -100,6 +100,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       </EnumsProvider>
       </FeaturesProvider>
     </QueryClientProvider>
+    </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>
 )

@@ -8,21 +8,32 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: #090910; color: #e2e8f0; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+      html, body { height: 100%; }
+      body { background: var(--c-bg, #0F1117); color: var(--c-text, #E8EDF5); font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+      #root { height: 100%; display: flex; flex-direction: column; }
       .num, td.num, .metric-value { font-family: 'JetBrains Mono', monospace; }
+      /* Smooth theme transitions on non-layout properties */
+      *, *::before, *::after { transition: background-color 0.18s ease, border-color 0.18s ease, color 0.12s ease; }
+      /* But NOT on layout-affecting or animation properties */
+      input, select, textarea, button { transition: background-color 0.18s ease, border-color 0.18s ease, color 0.12s ease; }
     </style>
+    <script>
+      // Pre-apply theme from localStorage before React loads to prevent FOUC.
+      // Only sets the base bg/text — ThemeContext sets the full token set after mount.
+      ;(function () {
+        var bgs   = { dark: '#0F1117', warm: '#F7F3EE', cool: '#F4F6FA' }
+        var texts = { dark: '#E8EDF5', warm: '#1A1410', cool: '#0F1520' }
+        var t = localStorage.getItem('rvs_theme') || 'dark'
+        if (!bgs[t]) t = 'dark'
+        var r = document.documentElement
+        r.style.setProperty('--c-bg',   bgs[t])
+        r.style.setProperty('--c-text', texts[t])
+        document.body && (document.body.style.background = bgs[t])
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
-    <!-- Dev-only: inject a fake JWT before any module loads so Zustand store init reads it -->
-    <script>
-      if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-        if (!localStorage.getItem('jwt_token')) {
-          var p = btoa(JSON.stringify({ sub: 'dev-preview', exp: 9999999999 }));
-          localStorage.setItem('jwt_token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.' + p + '.dev');
-        }
-      }
-    </script>
-    <script type="module" src="/src/main.tsx"></script>
+<script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -9,6 +9,7 @@ import { EquityCurveChart } from '../components/Backtest/EquityCurveChart'
 import { KillSwitchBanner } from '../components/Dashboard/KillSwitchBanner'
 import { ColdRestartBanner } from '../components/Dashboard/ColdRestartBanner'
 import { BrokerStatusBar } from '../components/Broker/BrokerStatusBar'
+import { ThemeSelector } from '../components/ui/ThemeSelector'
 import { SymbolSearchInput } from '../components/Strategy/SymbolSearchInput'
 import { StrategyParamsEditor, paramsToJson } from '../components/Strategy/StrategyParamsEditor'
 import { InstrumentsPage } from './InstrumentsPage'
@@ -21,6 +22,8 @@ import { TradeJournalPage } from './TradeJournalPage'
 import { PortfolioAnalysisPage } from './PortfolioAnalysisPage'
 import { RiskDashboardPage } from './RiskDashboardPage'
 import { CorrelationPage } from './CorrelationPage'
+import { NewsPage } from './NewsPage'
+import { ScreenerPage } from './ScreenerPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { StrategiesPage as NewStrategiesPage } from './StrategiesPage'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
@@ -32,7 +35,7 @@ import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../st
 import { useUserMode } from '../context/UserModeContext'
 import { GuidedDashboard } from '../components/Dashboard/GuidedDashboard'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener'
 
 // Descriptions for known strategies; unknown ones registered on backend show name only.
 const STRATEGY_DESCS: Record<string, string> = {
@@ -71,10 +74,19 @@ export function Dashboard() {
     enabled: activePage === 'orders' || activePage === 'portfolio',
   })
 
+  const qc = useQueryClient()
+
   const { data: killSwitchStatus } = useQuery({
     queryKey: ['kill-switch'],
     queryFn: () => killSwitchApi.status().then(r => r.data.data),
-    refetchInterval: 30_000, // KillSwitchBanner also polls at 30s — no need for fast polling here
+    refetchInterval: 30_000,
+  })
+
+  const killSwitchMut = useMutation({
+    mutationFn: (active: boolean) => active
+      ? killSwitchApi.activate('Manual — UI kill switch')
+      : killSwitchApi.deactivate('Manual — UI kill switch'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['kill-switch'] }),
   })
 
   const { data: backtestResults } = useQuery({
@@ -101,6 +113,8 @@ export function Dashboard() {
         { id: 'lab',         label: 'Strategy Lab' },
         { id: 'backtest',    label: 'Backtest' },
         { id: 'forwardtest', label: 'Fwd Test' },
+        { id: 'screener',    label: 'Screener' },
+        { id: 'news',        label: 'News' },
       ],
     },
     {
@@ -240,6 +254,26 @@ export function Dashboard() {
           <MarketStatusComponent />
           <BrokerStatusBar />
           <SignalRIndicator connected={signalRConnected} />
+
+          {/* Kill Switch toggle — always accessible */}
+          <button
+            onClick={() => killSwitchMut.mutate(!killSwitchStatus)}
+            disabled={killSwitchMut.isPending}
+            title={killSwitchStatus ? 'Kill switch ON — click to resume live trading' : 'Click to block all live orders'}
+            style={{
+              fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4,
+              cursor: killSwitchMut.isPending ? 'not-allowed' : 'pointer',
+              background: killSwitchStatus ? '#7f1d1d' : 'transparent',
+              color: killSwitchStatus ? '#fca5a5' : '#6b7280',
+              border: `1px solid ${killSwitchStatus ? '#991b1b' : '#3f3f46'}`,
+              opacity: killSwitchMut.isPending ? 0.6 : 1,
+              transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+            }}
+          >
+            {killSwitchStatus ? '⛔ Live OFF' : '● Live ON'}
+          </button>
+
+          <ThemeSelector />
           <UserModeToggle mode={userMode} onToggle={toggleUserMode} />
           <LogoutButton />
         </div>
@@ -289,6 +323,8 @@ export function Dashboard() {
         {activePage === 'portfolio-analysis' && <PortfolioAnalysisPage />}
         {activePage === 'risk' && <RiskDashboardPage />}
         {activePage === 'correlation' && <CorrelationPage />}
+        {activePage === 'news' && <NewsPage />}
+        {activePage === 'screener' && <ScreenerPage />}
       </main>
 
     </div>
@@ -662,8 +698,8 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
             <button onClick={() => setShowForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: C.textMuted }}>✕</button>
           </div>
 
-          {errorMsg && <div style={{ backgroundColor: C.redBg, color: C.red, padding: '10px 12px', borderRadius: 4, marginBottom: '8px', fontSize: 12, border: `1px solid ${C.red}30` }}>{errorMsg}</div>}
-          {successMsg && <div style={{ backgroundColor: C.greenBg, color: C.green, padding: '10px 12px', borderRadius: 4, marginBottom: '8px', fontSize: 12, border: `1px solid ${C.green}30` }}>{successMsg}</div>}
+          {errorMsg && <div style={{ backgroundColor: C.redBg, color: C.red, padding: '10px 12px', borderRadius: 4, marginBottom: '8px', fontSize: 12, border: `1px solid ${C.red30}` }}>{errorMsg}</div>}
+          {successMsg && <div style={{ backgroundColor: C.greenBg, color: C.green, padding: '10px 12px', borderRadius: 4, marginBottom: '8px', fontSize: 12, border: `1px solid ${C.green30}` }}>{successMsg}</div>}
 
           {/* Form fields — scrollable within drawer */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, overflowY: 'auto' }}>
@@ -939,7 +975,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
             <div style={{
               height: '100%',
               width: `${jobStatus.progressPct}%`,
-              background: `linear-gradient(90deg, ${C.blue}99, ${C.blue})`,
+              background: `linear-gradient(90deg, ${C.blue99}, ${C.blue})`,
               borderRadius: 3,
               transition: 'width 0.4s ease',
             }} />
@@ -1148,7 +1184,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
                             <button
                               onClick={() => setPromoteBacktest(result)}
                               title="Start a Forward Test from this backtest"
-                              style={{ padding: '3px 7px', backgroundColor: C.blueBg, color: C.blue, border: `1px solid ${C.blue}30`, borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}
+                              style={{ padding: '3px 7px', backgroundColor: C.blueBg, color: C.blue, border: `1px solid ${C.blue30}`, borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 700 }}
                             >
                               Fwd
                             </button>
@@ -1750,8 +1786,8 @@ function UserModeToggle({ mode, onToggle }: { mode: 'guided' | 'pro'; onToggle: 
       style={{
         display: 'flex', alignItems: 'center', gap: 5,
         padding: '3px 9px', borderRadius: 12,
-        background: isGuided ? C.blue + '22' : C.surface2,
-        border: `1px solid ${isGuided ? C.blue + '44' : C.border3}`,
+        background: isGuided ? C.blue22 : C.surface2,
+        border: `1px solid ${isGuided ? C.blue44 : C.border3}`,
         color: isGuided ? C.blue : C.textMuted,
         cursor: 'pointer', fontSize: 10, fontWeight: 700,
         letterSpacing: '0.06em', textTransform: 'uppercase',

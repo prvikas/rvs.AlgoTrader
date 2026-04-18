@@ -20,11 +20,27 @@ function StatusBadge({ status }: { status: StrategyStatus }) {
     [StrategyStatus.Live]:       C.green,
     [StrategyStatus.Archived]:   C.textDim,
   }
+  const borderMap: Record<string, string> = {
+    [StrategyStatus.Draft]:      C.textMuted,
+    [StrategyStatus.Backtested]: C.blue44,
+    [StrategyStatus.FwdTesting]: C.blue44,
+    [StrategyStatus.Live]:       C.green44,
+    [StrategyStatus.Archived]:   C.textDim,
+  }
+  const bgMap: Record<string, string> = {
+    [StrategyStatus.Draft]:      'transparent',
+    [StrategyStatus.Backtested]: C.blue11,
+    [StrategyStatus.FwdTesting]: C.blue11,
+    [StrategyStatus.Live]:       C.green18,
+    [StrategyStatus.Archived]:   'transparent',
+  }
   const color = colorMap[status] ?? C.textMuted
+  const borderColor = borderMap[status] ?? C.textMuted
+  const bg = bgMap[status] ?? 'transparent'
   return (
     <span style={{
       fontSize: 9, fontWeight: 700, color, padding: '1px 5px', borderRadius: 2,
-      border: `1px solid ${color}44`, background: `${color}11`, textTransform: 'uppercase',
+      border: `1px solid ${borderColor}`, background: bg, textTransform: 'uppercase',
     }}>
       {status}
     </span>
@@ -35,7 +51,7 @@ function StyleBadge({ style }: { style: TradingStyle }) {
   return (
     <span style={{
       fontSize: 9, color: C.amber, padding: '1px 5px', borderRadius: 2,
-      border: `1px solid ${C.amber}44`, background: `${C.amber}11`,
+      border: `1px solid ${C.amber44}`, background: C.amber11,
     }}>
       {style}
     </span>
@@ -49,10 +65,11 @@ export function StrategiesPage() {
   const [tab, setTab] = useState<Tab>('scenarios')
   const [creating, setCreating] = useState(false)
   const [editingDefinition, setEditingDefinition] = useState(false)
+  const [creatingType, setCreatingType] = useState<'equity' | 'options' | null>(null)
 
   const selectedId = searchParams.get('id') ?? undefined
 
-  const { data: strategies = [], isLoading, error } = useQuery({
+  const { data: strategies = [], isLoading, error, refetch } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => strategyDomainApi.listStrategies(),
   })
@@ -87,7 +104,7 @@ export function StrategiesPage() {
   ]
 
   return (
-    <div style={{ display: 'flex', height: '100%', gap: 0 }}>
+    <div style={{ display: 'flex', height: '100vh', gap: 0, overflow: 'hidden' }}>
       {/* Left sidebar */}
       <div style={{
         width: 240, flexShrink: 0, borderRight: `1px solid ${C.border}`,
@@ -105,7 +122,7 @@ export function StrategiesPage() {
             }}
           />
           <button
-            onClick={() => { setCreating(true); setSearchParams({}); setEditingDefinition(false) }}
+            onClick={() => { setCreating(true); setCreatingType(null); setEditingDefinition(false) }}
             style={primaryBtnStyle}
           >
             + New Strategy
@@ -121,7 +138,18 @@ export function StrategiesPage() {
         )}
 
         {!isLoading && error && (
-          <div style={{ padding: SP.md, fontSize: 11, color: C.red }}>Failed to load strategies.</div>
+          <div style={{ padding: SP.md, fontSize: 11, color: C.red }}>
+            <div style={{ marginBottom: 6 }}>Failed to load strategies.</div>
+            <button
+              onClick={() => refetch()}
+              style={{
+                fontSize: 10, padding: '3px 10px', borderRadius: 4, cursor: 'pointer',
+                background: 'none', border: `1px solid ${C.red66}`, color: C.red,
+              }}
+            >
+              Retry
+            </button>
+          </div>
         )}
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -159,8 +187,8 @@ export function StrategiesPage() {
 
       {/* Centre panel */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Create new strategy (full-panel) */}
-        {creating && (
+        {/* Create new strategy — type chooser */}
+        {creating && creatingType === null && (
           <div style={{ flex: 1, overflowY: 'auto', padding: CONTENT_PAD }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: SP.sm, marginBottom: SP.lg }}>
               <button
@@ -171,7 +199,71 @@ export function StrategiesPage() {
               </button>
               <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>New Strategy</h2>
             </div>
-            <StrategyDefinitionPage onSaved={(s: Strategy) => { setCreating(false); selectStrategy(s.id) }} />
+            <div style={{ maxWidth: 600, margin: '0 auto' }}>
+              <div style={{ fontSize: 13, color: C.textMuted, marginBottom: SP.lg, textAlign: 'center' }}>
+                Choose the type of strategy to create
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.lg }}>
+                <button
+                  onClick={() => { setCreatingType('equity'); setSearchParams({}) }}
+                  style={{
+                    background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10,
+                    padding: '24px 20px', cursor: 'pointer', textAlign: 'left',
+                    transition: 'border-color 0.15s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = C.blue88)}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = C.border)}
+                >
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>📊</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                    Equity / Futures
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
+                    Momentum, trend-following, swing and positional strategies on stocks, indices, or futures.
+                  </div>
+                </button>
+                <button
+                  onClick={() => { setCreatingType('options'); setSearchParams({}) }}
+                  style={{
+                    background: C.blueBg, border: `1px solid ${C.blue44}`, borderRadius: 10,
+                    padding: '24px 20px', cursor: 'pointer', textAlign: 'left',
+                    transition: 'border-color 0.15s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = C.blue88)}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = C.blue44)}
+                >
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>🦋</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.blue, marginBottom: 6 }}>
+                    Options Strategy
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
+                    Spreads, straddles, condors, and custom multi-leg structures on index options (NIFTY, BANKNIFTY).
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Create new strategy (full-panel) */}
+        {creating && creatingType !== null && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: CONTENT_PAD }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: SP.sm, marginBottom: SP.lg }}>
+              <button
+                onClick={() => setCreatingType(null)}
+                style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 13 }}
+              >
+                ←
+              </button>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                New {creatingType === 'options' ? 'Options' : 'Equity / Futures'} Strategy
+              </h2>
+            </div>
+            <StrategyDefinitionPage
+              strategyKind={creatingType}
+              onSaved={(s: Strategy) => { setCreating(false); setCreatingType(null); selectStrategy(s.id) }}
+              onCancel={() => setCreatingType(null)}
+            />
           </div>
         )}
 
@@ -191,6 +283,7 @@ export function StrategiesPage() {
               strategyId={selectedStrategy.id}
               initialData={selectedStrategy}
               onSaved={() => setEditingDefinition(false)}
+              onCancel={() => setEditingDefinition(false)}
             />
           </div>
         )}
@@ -224,7 +317,7 @@ export function StrategiesPage() {
                 onClick={() => deleteMut.mutate(selectedStrategy.id)}
                 disabled={deleteMut.isPending}
                 style={{
-                  background: C.redBg, color: C.red, border: `1px solid ${C.red}44`,
+                  background: C.redBg, color: C.red, border: `1px solid ${C.red44}`,
                   borderRadius: 5, padding: '5px 12px', cursor: 'pointer', fontSize: 11,
                 }}
               >
@@ -259,6 +352,7 @@ export function StrategiesPage() {
                   strategyId={selectedStrategy.id}
                   initialData={selectedStrategy}
                   onSaved={() => qc.invalidateQueries({ queryKey: ['strategies'] })}
+                  onCancel={() => {}}
                 />
               )}
               {tab === 'scenarios' && <ScenariosTab strategy={selectedStrategy} />}
@@ -274,7 +368,7 @@ export function StrategiesPage() {
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: SP.md }}>
             <div style={{ fontSize: 14, color: C.textMuted }}>Select a strategy or create a new one</div>
             <button
-              onClick={() => { setCreating(true); setSearchParams({}) }}
+              onClick={() => { setCreating(true); setCreatingType(null) }}
               style={primaryBtnStyle}
             >
               + New Strategy

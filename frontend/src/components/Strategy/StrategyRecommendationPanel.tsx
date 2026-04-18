@@ -478,7 +478,7 @@ export function StrategyRecommendationPanel({
                       onClick={() => onSelectStrategy(rec.strategyKey!)}
                       style={{
                         padding: '4px 10px', fontSize: 11, fontWeight: 700,
-                        background: C.blue + '22', border: `1px solid ${C.blue}44`,
+                        background: C.blue22, border: `1px solid ${C.blue44}`,
                         borderRadius: 5, color: C.blue, cursor: 'pointer',
                         whiteSpace: 'nowrap',
                       }}

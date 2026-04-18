@@ -177,7 +177,24 @@
       "Bash(dotnet list:*)",
       "Bash(dotnet search:*)",
       "Bash(dotnet package:*)",
-      "Bash(python3 -c ':*)"
+      "Bash(python3 -c ':*)",
+      "WebFetch(domain:codepen.io)",
+      "Bash(grep -c \"\\\\${C\\\\.\" \"C:/Users/prvik/Downloads/algotrader-claude-kit/frontend/src/pages/Dashboard.tsx\")",
+      "Bash(grep -n \"\\\\${C\\\\.[a-zA-Z]*}[0-9a-fA-F][0-9a-fA-F]\" \"C:/Users/prvik/Downloads/algotrader-claude-kit/frontend/src/pages/Dashboard.tsx\")",
+      "Bash(grep -rn '\\\\${C\\\\.[a-zA-Z]*}[0-9a-fA-F][0-9a-fA-F]' \"C:/Users/prvik/Downloads/algotrader-claude-kit/frontend/src/\")",
+      "WebFetch(domain:cdpn.io)",
+      "WebFetch(domain:www.youtube.com)",
+      "WebFetch(domain:pushkarrajthakur.com)",
+      "Bash(find \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\src\" -name \"MarketBreadthSnapshot.cs\" -exec grep -n \"DateTime\\\\|Date\\\\|date\" {} \\\\;)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:62318/api/strategy-definitions -H \"Authorization: Bearer test\")",
+      "Bash(grep -rn \"Npgsql\\\\|EnableLegacy\\\\|NpgsqlDataSource\\\\|UseNodaTime\\\\|MapEnum\" \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\src\\\\rvs.AlgoTrader.Infrastructure\\\\\" --include=\"*.cs\" | grep -v \".g.cs\\\\|obj\\\\\\\\\" | head -30)",
+      "Bash(grep -oP \"\\\\\\\\\\(\\\\\\\\d+,\\\\\\\\d+\\\\\\\\\\).*?csproj\\\\]\")",
+      "Bash(grep -oP \"\\\\\\\\w+Tests\\\\\\\\.cs\")",
+      "Bash(powershell -Command ' *)",
+      "Bash(grep -v \"//.*TODO.*AP-\\\\|\\\\.md:\")",
+      "Bash(grep -v \"//.*PROMPT-\\\\|//.*AP-\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in ['scripts','devDependencies']}, indent=2\\)\\)\")",
+      "Bash(npm test *)"
     ]
   }
 }

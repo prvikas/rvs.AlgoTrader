@@ -1,7 +1,10 @@
 using MediatR;
 using FluentValidation;
+using Microsoft.Extensions.Logging;
 using rvs.AlgoTrader.Application.DTOs.Orders;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Brokers.Abstractions;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Application.Commands.Orders;
 
@@ -14,10 +17,40 @@ public record PlaceOrderResult(bool Success, Guid? OrderId, string? BrokerOrderI
 
 public record CancelOrderCommand(string BrokerOrderId, string BrokerName) : IRequest<bool>;
 
-public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, bool>
+public class CancelOrderCommandHandler(
+    IBrokerClientFactory brokerFactory,
+    IOrderRepository orders,
+    IClock clock,
+    ILogger<CancelOrderCommandHandler> logger) : IRequestHandler<CancelOrderCommand, bool>
 {
-    // Cancellation requires live broker integration — placeholder
-    public Task<bool> Handle(CancelOrderCommand request, CancellationToken ct) => Task.FromResult(true);
+    public async Task<bool> Handle(CancelOrderCommand request, CancellationToken ct)
+    {
+        try
+        {
+            var client = brokerFactory.GetOrderClient(request.BrokerName);
+            var cancelled = await client.CancelOrderAsync(request.BrokerOrderId, ct);
+
+            if (cancelled)
+            {
+                // Best-effort DB status update via BrokerOrderId index
+                var order = await orders.GetByBrokerOrderIdAsync(request.BrokerOrderId, ct);
+                if (order != null)
+                {
+                    order.MarkCancelled(clock.NowInstant());
+                    await orders.UpdateAsync(order, ct);
+                }
+                logger.LogInformation("[CancelOrder] BrokerOrderId={Id} Broker={Broker} cancelled",
+                    request.BrokerOrderId, request.BrokerName);
+            }
+            return cancelled;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[CancelOrder] Failed to cancel BrokerOrderId={Id} Broker={Broker}",
+                request.BrokerOrderId, request.BrokerName);
+            return false;
+        }
+    }
 }
 
 public class PlaceOrderCommandValidator : AbstractValidator<PlaceOrderCommand>

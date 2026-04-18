@@ -80,6 +80,7 @@ public class CapitalAllocationRepository : ICapitalAllocationRepository
     public Task AddAsync(CapitalAllocation alloc, CancellationToken ct) => Task.CompletedTask;
 
     public Task UpdateAsync(CapitalAllocation alloc, CancellationToken ct) => Task.CompletedTask;
+    public Task DeleteByInstanceAsync(Guid instanceId, CancellationToken ct) => Task.CompletedTask;
 }
 
 public class UserPreferencesRepository : IUserPreferencesRepository
@@ -111,7 +112,7 @@ public class BrokerLatencyRepository : IBrokerLatencyRepository
         => Task.FromResult<IReadOnlyList<LatencyReport>>(Array.Empty<LatencyReport>());
 }
 
-public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunRepository
+public class BacktestRunRepository(AlgoTraderDbContext db, rvs.AlgoTrader.Domain.Interfaces.IClock clock) : IBacktestRunRepository
 {
     public async Task<BacktestResultDto?> GetByIdAsync(Guid id, CancellationToken ct)
     {
@@ -158,6 +159,26 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
             .Skip((page - 1) * pageSize).Take(pageSize)
             .ToListAsync(ct);
         return runs.Select(ToDto).ToList();
+    }
+
+    public async Task<IReadOnlyList<BacktestResultDto>> GetByDefinitionAsync(
+        Guid definitionId, int page, int pageSize, CancellationToken ct)
+    {
+        var offset = (page - 1) * pageSize;
+        // Non-interpolated raw string: {0},{1},{2} are EF positional placeholders (→ $1,$2,$3 in Npgsql).
+        // strategy_definition_scenarios is managed via raw SQL so it is not in the DbContext.
+        const string sql = """
+            SELECT br.* FROM backtest_runs br
+            INNER JOIN strategy_definition_scenarios sds ON br.scenario_id = sds.id
+            WHERE sds.strategy_definition_id = {0}
+            ORDER BY br.ran_at DESC
+            LIMIT {1} OFFSET {2}
+            """;
+        var items = await db.BacktestRuns
+            .FromSqlRaw(sql, definitionId, pageSize, offset)
+            .AsNoTracking()
+            .ToListAsync(ct);
+        return items.Select(ToDto).ToList();
     }
 
     public async Task<Guid> SaveAsync(BacktestResultDto result, CancellationToken ct)
@@ -210,7 +231,7 @@ public class BacktestRunRepository(AlgoTraderDbContext db) : IBacktestRunReposit
                 result.DeploymentRating, result.DeploymentRationale,
                 result.CircuitBreakerHit, result.CircuitBreakerReason
             }),
-            RanAt = NodaTime.SystemClock.Instance.GetCurrentInstant()
+            RanAt = clock.NowInstant()
         };
 
         await db.BacktestRuns.AddAsync(run, ct);

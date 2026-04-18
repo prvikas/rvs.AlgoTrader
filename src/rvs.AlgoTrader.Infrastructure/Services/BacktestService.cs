@@ -167,10 +167,25 @@ public class BacktestService(
 }
 
 /// <summary>
-/// Stub backtest reproduction service.
+/// Re-runs a previously completed backtest using the same symbol/timeframe/date range.
+/// ParametersJson is not stored in the result DTO so this uses an empty JSON object
+/// (strategy defaults). The caller can compare DataHash to verify deterministic output.
 /// </summary>
-public class BacktestReproductionService : IBacktestReproductionService
+public class BacktestReproductionService(IBacktestService backtest) : IBacktestReproductionService
 {
-    public Task<BacktestResultDto?> ReproduceAsync(BacktestResultDto original, CancellationToken ct)
-        => Task.FromResult<BacktestResultDto?>(null);
+    public async Task<BacktestResultDto?> ReproduceAsync(BacktestResultDto original, CancellationToken ct)
+    {
+        var request = new BacktestRequestDto(
+            StrategyName:         original.StrategyName,
+            ParametersJson:       "{}",
+            InternalSymbol:       original.Symbol,
+            Timeframe:            original.Timeframe,
+            FromDate:             original.FromDate,
+            ToDate:               original.ToDate,
+            InitialCapital:       original.InitialCapital,
+            ScenarioId:           original.ScenarioId);
+
+        var result = await backtest.RunAsync(request, ct);
+        return result;
+    }
 }

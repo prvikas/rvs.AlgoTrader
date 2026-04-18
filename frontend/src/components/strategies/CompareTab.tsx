@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { strategyDomainApi } from '../../api/client'
+import { backtestApi, strategyDomainApi } from '../../api/client'
 import { RunMetrics, RunMode, RunResult, Scenario } from '../../types/strategy'
 import { C, F, SP } from '../../styles/tokens'
+import { EquityCurveChart } from '../Backtest/EquityCurveChart'
 
 interface Props {
   strategyId: string
@@ -193,7 +194,7 @@ export function CompareTab({ strategyId }: Props) {
                 fontSize: 11,
                 background: runModeFilter === m ? C.blueBg : C.surface2,
                 color: runModeFilter === m ? C.blue : C.textMuted,
-                border: `1px solid ${runModeFilter === m ? C.blue + '66' : C.border}`,
+                border: `1px solid ${runModeFilter === m ? C.blue66 : C.border}`,
               }}
             >
               {m === 'Both' ? 'Both' : m === RunMode.Backtest ? 'Backtest' : 'Forward Test'}
@@ -220,7 +221,7 @@ export function CompareTab({ strategyId }: Props) {
             onClick={() => setFunnelApplied([...funnelEnabled])}
             style={{
               width: '100%', background: C.blueBg, color: C.blue,
-              border: `1px solid ${C.blue}44`, borderRadius: 4,
+              border: `1px solid ${C.blue44}`, borderRadius: 4,
               padding: '5px 0', cursor: 'pointer', fontSize: 11, fontWeight: 600, marginTop: 4,
             }}
           >
@@ -329,11 +330,8 @@ export function CompareTab({ strategyId }: Props) {
               </table>
             </div>
 
-            {/* Equity curve placeholder */}
-            <div style={{ background: C.surface2, borderRadius: 6, padding: SP.lg, minHeight: 100 }}>
-              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: SP.sm }}>Equity Curve</div>
-              <EquityCurvePlaceholder runs={selectedRuns} colors={colors} scenarios={scenarios} />
-            </div>
+            {/* Equity curves — one chart per selected run */}
+            <EquityCurveSection runs={selectedRuns} colors={colors} scenarios={scenarios} />
 
             {/* Robustness Metrics section */}
             <div>
@@ -492,29 +490,71 @@ export function CompareTab({ strategyId }: Props) {
   )
 }
 
-function EquityCurvePlaceholder({ runs, colors, scenarios }: {
+// Fetches full BacktestResult (with trades) for each selected run, then renders one
+// EquityCurveChart per run so equity trajectories can be compared side-by-side.
+function EquityCurveSection({ runs, colors, scenarios }: {
   runs: RunResult[]; colors: string[]; scenarios: Scenario[]
 }) {
+  const runIds = runs.map(r => r.id).filter(Boolean)
+
+  const { data: detailsMap = {}, isFetching } = useQuery({
+    queryKey: ['run-details-compare', runIds],
+    queryFn: async () => {
+      const entries = await Promise.all(
+        runIds.map(async id => {
+          const resp = await backtestApi.get(id)
+          return [id, resp.data?.data] as const
+        })
+      )
+      return Object.fromEntries(entries)
+    },
+    enabled: runIds.length > 0,
+    staleTime: 5 * 60_000,  // 5 min — chart data doesn't change
+  })
+
+  if (runs.length === 0) return null
+
   return (
-    <div style={{ display: 'flex', gap: SP.lg, alignItems: 'flex-end', height: 80 }}>
-      {runs.map((r, i) => {
-        const ret = r.metrics.returnPct
-        const height = Math.max(10, Math.min(80, 40 + ret))
-        const scenarioName = scenarios.find(s => s.id === r.scenarioId)?.name ?? r.scenarioId
-        return (
-          <div key={r.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-            <div style={{ width: 60, height, background: colors[i % colors.length] + '33', border: `1px solid ${colors[i % colors.length]}66`, borderRadius: 3 }} />
-            <span style={{ fontSize: 9, color: C.textMuted, maxWidth: 60, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {scenarioName}
-            </span>
-            <span style={{ fontSize: 10, color: colors[i % colors.length], fontFamily: F.mono }}>
-              {ret >= 0 ? '+' : ''}{ret.toFixed(1)}%
-            </span>
-          </div>
-        )
-      })}
-      <div style={{ fontSize: 10, color: C.textDim, alignSelf: 'center' }}>
-        (Chart library not yet wired)
+    <div style={{ background: C.surface2, borderRadius: 6, padding: SP.lg }}>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: SP.sm }}>Equity Curve</div>
+      {isFetching && (
+        <div style={{ fontSize: 11, color: C.textMuted, padding: SP.sm }}>Loading equity curves…</div>
+      )}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: runs.length === 1 ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))',
+        gap: SP.md,
+      }}>
+        {runs.map((run, i) => {
+          const detail = detailsMap[run.id]
+          const trades = detail?.trades ?? []
+          const initialCapital = detail?.initialCapital ?? 100_000
+          const scenarioName = scenarios.find(s => s.id === run.scenarioId)?.name
+          const ret = run.metrics.returnPct
+          const color = colors[i % colors.length]
+          return (
+            <div key={run.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: C.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>
+                  {scenarioName ?? run.id.slice(0, 8)}
+                </span>
+                <span style={{ fontSize: 10, fontFamily: F.mono, color, flexShrink: 0, marginLeft: 8 }}>
+                  {ret >= 0 ? '+' : ''}{ret.toFixed(1)}%
+                </span>
+              </div>
+              {trades.length > 0
+                ? <EquityCurveChart trades={trades} initialCapital={initialCapital} />
+                : (
+                  <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.surface3, borderRadius: 4 }}>
+                    <span style={{ fontSize: 11, color: C.textDim }}>
+                      {detail ? 'No trades in this run' : '…'}
+                    </span>
+                  </div>
+                )
+              }
+            </div>
+          )
+        })}
       </div>
     </div>
   )

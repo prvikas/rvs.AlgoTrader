@@ -52,7 +52,7 @@ public class MarketEvent
         string? symbol = null,
         string? source = null,
         bool isRecurring = false,
-        Instant? createdAt = null)
+        Instant createdAt = default)
     {
         if (string.IsNullOrWhiteSpace(eventType)) throw new ArgumentException("EventType is required.", nameof(eventType));
         if (string.IsNullOrWhiteSpace(title))     throw new ArgumentException("Title is required.", nameof(title));
@@ -69,7 +69,7 @@ public class MarketEvent
             Symbol      = symbol,
             Source      = source,
             IsRecurring = isRecurring,
-            CreatedAt   = createdAt ?? SystemClock.Instance.GetCurrentInstant(),
+            CreatedAt   = createdAt,
         };
     }
 

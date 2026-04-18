@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.Commands.Alerts;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Queries.Alerts;
+using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -14,10 +15,10 @@ public class AlertsController(IMediator mediator) : ControllerBase
 {
 
     [HttpGet("rules")]
-    public async Task<ActionResult<ApiResponse<object>>> GetRules(CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<AlertRuleDto>>>> GetRules(CancellationToken ct)
     {
         var result = await mediator.Send(new GetAlertRulesQuery(), ct);
-        return Ok(ApiResponse<object>.Ok(result));
+        return Ok(ApiResponse<IReadOnlyList<AlertRuleDto>>.Ok(result));
     }
 
     [HttpPost("rules")]

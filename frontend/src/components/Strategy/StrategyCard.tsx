@@ -28,7 +28,7 @@ interface Props {
 function PnlBadge({ value, label }: { value: number; label: string }) {
   const isPositive = value >= 0
   const color = isPositive ? C.green : C.red
-  const bg   = isPositive ? `${C.green}18` : `${C.red}18`
+  const bg   = isPositive ? C.green18 : C.red18
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
       <span style={{ fontSize: 11, color: C.textSub, fontWeight: 600, letterSpacing: '0.02em' }}>
@@ -184,13 +184,13 @@ function EditDrawer({ instance, onClose }: { instance: StrategyInstance; onClose
         </div>
 
         {instance.status === 'Running' && (
-          <div style={{ background: C.amberBg, border: `1px solid ${C.amber}44`, borderRadius: 4, padding: '8px 12px', fontSize: 11, color: '#fde68a' }}>
+          <div style={{ background: C.amberBg, border: `1px solid ${C.amber44}`, borderRadius: 4, padding: '8px 12px', fontSize: 11, color: '#fde68a' }}>
             Stop or pause the strategy before editing.
           </div>
         )}
 
         {errorMsg && (
-          <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 4, padding: '8px 12px', fontSize: 12, color: '#fca5a5' }}>
+          <div style={{ background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 4, padding: '8px 12px', fontSize: 12, color: '#fca5a5' }}>
             {errorMsg}
           </div>
         )}
@@ -396,7 +396,7 @@ function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onC
             )}
           </div>
         ) : (
-          <div style={{ background: C.redBg, border: `1px solid ${C.red}44`, borderRadius: 6, padding: '10px 14px', fontSize: 12, color: '#fca5a5' }}>
+          <div style={{ background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 6, padding: '10px 14px', fontSize: 12, color: '#fca5a5' }}>
             No active approval. This strategy will NOT place real orders until approved.
           </div>
         )}
@@ -597,7 +597,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
               fontSize: 10, fontWeight: 700, borderRadius: 3, padding: '2px 7px',
               background: approvalStatus ? '#14532d' : C.redBg,
               color: approvalStatus ? '#86efac' : C.red,
-              border: `1px solid ${approvalStatus ? '#16a34a44' : `${C.red}44`}`,
+              border: `1px solid ${approvalStatus ? '#16a34a44' : C.red44}`,
             }}>
               {approvalStatus ? 'APPROVED' : 'NO APPROVAL'}
             </span>
@@ -763,7 +763,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
             <SmallButton
               onClick={() => onPromoteToForward(instance)}
               color={C.green}
-              bg={`${C.greenBg}88`}
+              bg={C.greenBg88}
               title="Run a backtest first, then use 'Promote to Forward Test' on the result"
             >
               Promote to Forward Test →
@@ -789,7 +789,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
               }
             }}
             color={C.red}
-            bg={`${C.redBg}88`}
+            bg={C.redBg88}
             title="Permanently delete this strategy instance"
           >
             {deleteMutation.isPending ? 'Deleting…' : 'Delete'}

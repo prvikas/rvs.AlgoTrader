@@ -171,13 +171,17 @@ public class StrategyDefinitionScenarioService(IConfiguration config) : IStrateg
         Description:           r.IsDBNull(3)  ? null : r.GetString(3),
         Capital:               r.GetDecimal(4),
         BrokerAccount:         r.GetString(5),
+        // Npgsql 9 returns `date` as DateOnly on raw NpgsqlConnection — safe to use GetFieldValue<DateOnly>.
         BacktestFrom:          r.GetFieldValue<DateOnly>(6).ToString("yyyy-MM-dd"),
         BacktestTo:            r.GetFieldValue<DateOnly>(7).ToString("yyyy-MM-dd"),
         ParameterOverridesJson:r.GetString(8),
         Status:                r.GetString(9),
-        LastRunAt:             r.IsDBNull(10) ? null : r.GetFieldValue<DateTimeOffset>(10),
+        // SCN-1: Npgsql 9 returns timestamptz as DateTime (UTC kind) on raw NpgsqlConnection, not DateTimeOffset.
+        // Wrap via DateTimeOffset(utc, offset:0) to satisfy the DTO's DateTimeOffset type.
+        LastRunAt:             r.IsDBNull(10) ? null
+                                              : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(10), DateTimeKind.Utc)),
         LastMetricsJson:       r.IsDBNull(11) ? null : r.GetString(11),
-        CreatedAt:             r.GetFieldValue<DateTimeOffset>(12),
-        UpdatedAt:             r.GetFieldValue<DateTimeOffset>(13)
+        CreatedAt:             new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(12), DateTimeKind.Utc)),
+        UpdatedAt:             new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc))
     );
 }

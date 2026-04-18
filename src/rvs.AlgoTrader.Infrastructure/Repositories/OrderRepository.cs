@@ -17,6 +17,9 @@ public class OrderRepository(AlgoTraderDbContext db) : IOrderRepository
     public async Task<Order?> GetByIdempotencyKeyAsync(string key, CancellationToken ct = default)
         => await db.Orders.FirstOrDefaultAsync(o => o.IdempotencyKey == key, ct);
 
+    public async Task<Order?> GetByBrokerOrderIdAsync(string brokerOrderId, CancellationToken ct = default)
+        => await db.Orders.FirstOrDefaultAsync(o => o.BrokerOrderId == brokerOrderId, ct);
+
     public async Task<IReadOnlyList<Order>> GetByStrategyRunAsync(Guid strategyRunId, CancellationToken ct = default)
         => await db.Orders.Where(o => o.StrategyRunId == strategyRunId).ToListAsync(ct);
 

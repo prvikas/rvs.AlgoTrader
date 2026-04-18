@@ -39,6 +39,7 @@ public class BacktestJobManagerTests
               .Returns(Task.CompletedTask);
 
         var manager = new BacktestJobManager(scopeFactory, pusher.Object,
+            Mock.Of<rvs.AlgoTrader.Domain.Interfaces.IClock>(),
             NullLogger<BacktestJobManager>.Instance);
 
         // Enqueue first job, then immediately mark it stale (before next Enqueue triggers eviction)
@@ -63,6 +64,7 @@ public class BacktestJobManagerTests
               .Returns(Task.CompletedTask);
 
         var manager = new BacktestJobManager(scopeFactory, pusher.Object,
+            Mock.Of<rvs.AlgoTrader.Domain.Interfaces.IClock>(),
             NullLogger<BacktestJobManager>.Instance);
 
         var jobId = await manager.EnqueueAsync(MakeDto(), CancellationToken.None);

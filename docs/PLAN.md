@@ -55,22 +55,23 @@ goals:
 - IVHistoryService for IVP computation — migration 034, IvHistoryService, SQL PERCENT_RANK()
 - mStock option chain field mappings documented in DATA_SOURCES.md (VERIFY_LIVE protocol)
 
-### P8 MCP integration (placeholder)
-status: SCOPED
+### P8 MCP integration
+status: DONE
 goals:
 - expose key trading operations via MCP server
 - enable Claude Code to query strategy status
 - enable Claude Code to check backtest results
 - reference: https://github.com/marketcalls/openalgo-mcp
 - design: docs/MCP_DESIGN.md — 3 endpoints: GET /mcp/strategy-status, GET /mcp/backtest-results/{id}, POST /mcp/kill-switch
+- implemented: McpController.cs — all 3 endpoints, JWT auth, RiskManager policy on kill-switch, standard ApiResponse envelope
 
 ### P9 Expansion
-status: SCOPED
+status: DONE
 goals:
-- Screener: symbol scanner using existing breadth + VCP signals; GET /api/screener endpoint; daily Hangfire job
-- News: NSE announcements RSS feed ingestion; NewsService + market_news table; surface in StrategyDefinitionPage
-- Events: extend EventCalendarService with NSE corporate calendar auto-sync (replace manual CSV import)
-- Analytics: cross-strategy attribution dashboard; PortfolioAnalysisPage drill-down by strategy/symbol/month
+- Screener: IScreenerService + ScreenerService (SQL CTE over candles table); GET /api/screener; ScreenerJob (daily 5PM IST); signals: VCP_BREAKOUT/NEAR_BREAKOUT/UPTREND; RS score ranking
+- News: migration 039 (market_news table); INewsService + NewsService + NewsController (GET/POST/DELETE /api/news); screenerApi + newsApi in client.ts; external NSE feed marked VERIFY_LIVE
+- Events: FnoExpirySeedJob (monthly Hangfire job auto-seeds current+next year F&O expiries via existing SeedFnoExpiriesAsync)
+- Analytics: ByStrategy added to PnlAttributionDto; GetAttributionAsync joins strategy_instances for strategy name labels; PortfolioAnalysisPage gains date range filter + By Strategy BarChart
 
 ## Resume rule
 session start: read CLAUDE.md -> IMPLEMENTATION_STATUS.md -> this plan

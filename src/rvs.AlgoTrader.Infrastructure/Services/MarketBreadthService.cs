@@ -171,17 +171,20 @@ LEFT JOIN prior  p ON p.internal_symbol = t.internal_symbol";
         "highs_count, lows_count, advancing_count, declining_count, regime, computed_at " +
         "FROM market_breadth_snapshots";
 
+    private static LocalDate ToLocalDate(DateOnly d) => new(d.Year, d.Month, d.Day);
+
     private static MarketBreadthDto ToDto(BreadthRow r)
     {
+        var snapshotDate = ToLocalDate(r.SnapshotDate);
         var s = MarketBreadthSnapshot.Create(
-            LocalDate.FromDateTime(r.SnapshotDate.DateTime),
+            snapshotDate,
             r.TotalSymbols, r.Above200Sma, r.Above50Sma,
             r.HighsCount, r.LowsCount, r.AdvancingCount, r.DecliningCount,
             Instant.FromDateTimeOffset(r.ComputedAt));
 
         return new MarketBreadthDto(
             r.Id,
-            LocalDate.FromDateTime(r.SnapshotDate.DateTime),
+            snapshotDate,
             r.TotalSymbols, r.Above200Sma, r.Above50Sma, s.Pct200Sma,
             r.HighsCount, r.LowsCount, r.AdvancingCount, r.DecliningCount, s.AdRatio,
             r.Regime, r.ComputedAt);
@@ -192,7 +195,7 @@ LEFT JOIN prior  p ON p.internal_symbol = t.internal_symbol";
     private sealed class BreadthRow
     {
         [Column("id")]              public Guid Id { get; set; }
-        [Column("snapshot_date")]   public DateTimeOffset SnapshotDate { get; set; }
+        [Column("snapshot_date")]   public DateOnly SnapshotDate { get; set; }
         [Column("total_symbols")]   public int TotalSymbols { get; set; }
         [Column("above_200_sma")]   public int Above200Sma { get; set; }
         [Column("above_50_sma")]    public int Above50Sma { get; set; }

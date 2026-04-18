@@ -55,6 +55,9 @@ public class AlgoTraderDbContext : DbContext
     // Domain enum lookup table — single source of truth for UI dropdowns
     public DbSet<EnumValue> EnumValues => Set<EnumValue>();
 
+    // Monitoring alert rules — user-defined threshold rules evaluated by MonitoringAlertJob
+    public DbSet<MonitoringAlertRule> MonitoringAlertRules => Set<MonitoringAlertRule>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

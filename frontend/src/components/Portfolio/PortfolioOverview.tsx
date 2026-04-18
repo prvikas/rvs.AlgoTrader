@@ -83,7 +83,7 @@ function StrategyTable({ rows }: { rows: StrategyPnlRow[] }) {
                   fontSize: 9, fontWeight: 800, padding: '2px 6px', borderRadius: 3,
                   background: row.mode === 'Live' ? C.greenBg : row.mode === 'Forward' ? C.blueBg : C.amberBg,
                   color: row.mode === 'Live' ? C.green : row.mode === 'Forward' ? C.blue : C.amber,
-                  border: `1px solid ${row.mode === 'Live' ? C.green + '30' : row.mode === 'Forward' ? C.blue + '30' : C.amber + '30'}`,
+                  border: `1px solid ${row.mode === 'Live' ? C.green30 : row.mode === 'Forward' ? C.blue30 : C.amber33}`,
                   textTransform: 'uppercase',
                   letterSpacing: '0.08em',
                 }}>

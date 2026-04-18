@@ -304,6 +304,16 @@ public class EfCapitalAllocationRepository(AlgoTraderDbContext db) : ICapitalAll
         db.CapitalAllocations.Update(alloc);
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task DeleteByInstanceAsync(Guid instanceId, CancellationToken ct)
+    {
+        var alloc = await db.CapitalAllocations.FirstOrDefaultAsync(a => a.StrategyInstanceId == instanceId, ct);
+        if (alloc is not null)
+        {
+            db.CapitalAllocations.Remove(alloc);
+            await db.SaveChangesAsync(ct);
+        }
+    }
 }
 
 // ── Watchlist (EF Core — has AlgoTraderDbContext.Watchlists DbSet) ────────────
@@ -523,7 +533,7 @@ public class EfTradeJournalRepository(AlgoTraderDbContext db) : ITradeJournalRep
         if (toDate.HasValue)   q = q.Where(e => e.ExitTime <= Instant.FromDateTimeOffset(toDate.Value.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Utc)));
 
         var rows = await q.Select(e => new {
-            e.InternalSymbol, e.NetPnl, e.ExitReason, e.RMultiple,
+            e.StrategyInstanceId, e.InternalSymbol, e.NetPnl, e.ExitReason, e.RMultiple,
             ExitDt = e.ExitTime.ToDateTimeOffset()
         }).ToListAsync(ct);
 
@@ -559,6 +569,70 @@ public class EfTradeJournalRepository(AlgoTraderDbContext db) : ITradeJournalRep
         var bySession = rows.GroupBy(r => r.ExitDt.TimeOfDay.Hours < 12 ? "Morning" : "Afternoon")
             .Select(g => Agg(g.Key, g.Cast<dynamic>())).ToList();
 
-        return new PnlAttributionDto(bySymbol, byMonth, byDow, byExit, bySession);
+        // Cross-strategy breakdown — only when aggregating all strategies.
+        // Join strategy_instances to resolve human-readable strategy name labels.
+        List<PnlByDimension>? byStrategy = null;
+        if (!strategyInstanceId.HasValue && rows.Count > 0)
+        {
+            var instanceIds = rows.Select(r => r.StrategyInstanceId).Distinct().ToList();
+            var nameMap = await db.StrategyInstances
+                .Where(s => instanceIds.Contains(s.Id))
+                .Select(s => new { s.Id, s.StrategyType })
+                .ToDictionaryAsync(s => s.Id, s => s.StrategyType, ct);
+
+            byStrategy = rows
+                .GroupBy(r => nameMap.TryGetValue(r.StrategyInstanceId, out var t) ? t : r.StrategyInstanceId.ToString())
+                .Select(g => Agg(g.Key, g.Cast<dynamic>()))
+                .OrderByDescending(d => d.TotalPnl)
+                .ToList();
+        }
+
+        return new PnlAttributionDto(bySymbol, byMonth, byDow, byExit, bySession, byStrategy);
     }
+}
+
+// ── Monitoring alert rules ─────────────────────────────────────────────────────
+
+public class EfAlertRulesRepository(AlgoTraderDbContext db) : IAlertRulesRepository
+{
+    public async Task<IReadOnlyList<AlertRuleDto>> GetAllAsync(CancellationToken ct)
+    {
+        var rules = await db.MonitoringAlertRules
+            .AsNoTracking()
+            .OrderBy(r => r.AlertType)
+            .ToListAsync(ct);
+        return rules.Select(ToDto).ToList();
+    }
+
+    public async Task<Guid> AddAsync(AlertRuleDto rule, CancellationToken ct)
+    {
+        var entity = new MonitoringAlertRule
+        {
+            Id             = rule.Id == Guid.Empty ? Guid.NewGuid() : rule.Id,
+            AlertType      = rule.AlertType,
+            MetricName     = rule.MetricName,
+            Operator       = rule.Operator,
+            ThresholdValue = rule.ThresholdValue,
+            Severity       = rule.Severity,
+            Channels       = rule.Channels,
+            IsActive       = rule.IsActive,
+            MessageTemplate = rule.MessageTemplate,
+        };
+        db.MonitoringAlertRules.Add(entity);
+        await db.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken ct)
+    {
+        var entity = await db.MonitoringAlertRules.FindAsync([id], ct);
+        if (entity == null) return false;
+        db.MonitoringAlertRules.Remove(entity);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    private static AlertRuleDto ToDto(MonitoringAlertRule r) =>
+        new(r.Id, r.AlertType, r.MetricName, r.Operator, r.ThresholdValue,
+            r.Severity, r.Channels, r.IsActive, r.MessageTemplate);
 }

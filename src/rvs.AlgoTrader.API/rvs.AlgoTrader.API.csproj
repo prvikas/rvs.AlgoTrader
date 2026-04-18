@@ -29,5 +29,6 @@
     <PackageReference Include="FluentValidation.AspNetCore" />
     <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
     <PackageReference Include="NodaTime.Serialization.SystemTextJson" />
+    <PackageReference Include="BCrypt.Net-Next" />
   </ItemGroup>
 </Project>

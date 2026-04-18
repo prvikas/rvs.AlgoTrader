@@ -1,53 +1,82 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../stores/appStore'
+import { useFeatures } from '../context/FeaturesContext'
 
 export function Login() {
   const navigate = useNavigate()
   const setJwtToken = useAppStore(s => s.setJwtToken)
   const setActiveBroker = useAppStore(s => s.setActiveBroker)
+  const { brokerRequired, loaded } = useFeatures()
+
+  // ── Local (username/password) login state ─────────────────────────────────
+  const [localUser, setLocalUser] = useState('')
+  const [localPass, setLocalPass] = useState('')
+
+  // ── MStock broker login state ─────────────────────────────────────────────
   const [apiKey, setApiKey] = useState('')
   const [clientCode, setClientCode] = useState('')
   const [password, setPassword] = useState('')
   const [totp, setTotp] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
   const [showTotpField, setShowTotpField] = useState(false)
 
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  // ── Local login handler ───────────────────────────────────────────────────
+  const handleLocalLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      const response = await fetch('/api/auth/local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: localUser, password: localPass }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setError(data.message || data.error || 'Invalid username or password')
+        return
+      }
+      setJwtToken(data.data.token)
+      setActiveBroker('None')
+      navigate('/')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Connection error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── MStock handlers ───────────────────────────────────────────────────────
   const handleProceedToTotp = (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-
     if (!apiKey || !clientCode || !password) {
       setError('Please fill in all fields before requesting TOTP')
       return
     }
-
     setShowTotpField(true)
   }
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleMStockLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
-
     try {
       const response = await fetch('/api/auth/mstock/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey, clientCode, password, totp })
+        body: JSON.stringify({ apiKey, clientCode, password, totp }),
       })
-
       const data = await response.json()
-
       if (!response.ok) {
         setError(data.message || data.error || 'Login failed')
         setShowTotpField(false)
         setTotp('')
         return
       }
-
-      // Store JWT token and active broker via Zustand (persisted to localStorage automatically)
       setJwtToken(data.data.token)
       setActiveBroker(data.data.brokerName)
       navigate('/')
@@ -58,6 +87,29 @@ export function Login() {
     }
   }
 
+  // ── Shared styles ─────────────────────────────────────────────────────────
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '10px 12px',
+    background: '#0f0f1a',
+    border: '1px solid #2d2d3f',
+    borderRadius: 6,
+    color: '#e2e8f0',
+    fontSize: 13,
+    boxSizing: 'border-box',
+  }
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#cbd5e1',
+    display: 'block',
+    marginBottom: 6,
+  }
+
+  // Hold render until features are loaded (prevents flash of wrong form)
+  if (!loaded) return null
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -66,7 +118,7 @@ export function Login() {
       alignItems: 'center',
       justifyContent: 'center',
       fontFamily: 'Inter, sans-serif',
-      color: '#e2e8f0'
+      color: '#e2e8f0',
     }}>
       <div style={{
         background: '#1e1e2e',
@@ -75,13 +127,13 @@ export function Login() {
         padding: 40,
         width: '100%',
         maxWidth: 400,
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
+        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
       }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8, textAlign: 'center' }}>
           AlgoTrader
         </h1>
         <p style={{ fontSize: 14, color: '#94a3b8', textAlign: 'center', marginBottom: 32 }}>
-          MStock Login
+          {brokerRequired ? 'MStock Login' : 'Sign in to continue'}
         </p>
 
         {error && (
@@ -92,83 +144,100 @@ export function Login() {
             borderRadius: 8,
             padding: 12,
             marginBottom: 24,
-            fontSize: 13
+            fontSize: 13,
           }}>
             {error}
           </div>
         )}
 
-        {!showTotpField ? (
+        {/* ── Local username/password form (broker-free mode) ───────────── */}
+        {!brokerRequired && (
+          <form onSubmit={handleLocalLogin}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={labelStyle}>Username</label>
+              <input
+                type="text"
+                value={localUser}
+                onChange={e => setLocalUser(e.target.value)}
+                placeholder="admin"
+                autoFocus
+                autoComplete="username"
+                style={inputStyle}
+                required
+              />
+            </div>
+            <div style={{ marginBottom: 24 }}>
+              <label style={labelStyle}>Password</label>
+              <input
+                type="password"
+                value={localPass}
+                onChange={e => setLocalPass(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+                style={inputStyle}
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || !localUser || !localPass}
+              style={{
+                width: '100%',
+                padding: '10px 16px',
+                background: loading || !localUser || !localPass ? '#4b5563' : '#3b82f6',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: loading || !localUser || !localPass ? 'not-allowed' : 'pointer',
+                transition: 'background 0.2s',
+              }}
+            >
+              {loading ? 'Signing in…' : 'Sign in'}
+            </button>
+            <p style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 20 }}>
+              Backtest-only mode — broker connection not required
+            </p>
+          </form>
+        )}
+
+        {/* ── MStock broker login (broker-required mode) ────────────────── */}
+        {brokerRequired && !showTotpField && (
           <form onSubmit={handleProceedToTotp}>
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#cbd5e1', display: 'block', marginBottom: 6 }}>
-                API Key
-              </label>
+              <label style={labelStyle}>API Key</label>
               <input
                 type="text"
                 value={apiKey}
                 onChange={e => setApiKey(e.target.value)}
                 placeholder="Your MStock API Key"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  background: '#0f0f1a',
-                  border: '1px solid #2d2d3f',
-                  borderRadius: 6,
-                  color: '#e2e8f0',
-                  fontSize: 13,
-                  boxSizing: 'border-box'
-                }}
+                style={inputStyle}
                 required
               />
             </div>
-
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#cbd5e1', display: 'block', marginBottom: 6 }}>
-                Client Code
-              </label>
+              <label style={labelStyle}>Client Code</label>
               <input
                 type="text"
                 value={clientCode}
                 onChange={e => setClientCode(e.target.value)}
                 placeholder="Your MStock Client Code"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  background: '#0f0f1a',
-                  border: '1px solid #2d2d3f',
-                  borderRadius: 6,
-                  color: '#e2e8f0',
-                  fontSize: 13,
-                  boxSizing: 'border-box'
-                }}
+                style={inputStyle}
                 required
               />
             </div>
-
             <div style={{ marginBottom: 24 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#cbd5e1', display: 'block', marginBottom: 6 }}>
-                Password
-              </label>
+              <label style={labelStyle}>Password</label>
               <input
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="Your MStock Password"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  background: '#0f0f1a',
-                  border: '1px solid #2d2d3f',
-                  borderRadius: 6,
-                  color: '#e2e8f0',
-                  fontSize: 13,
-                  boxSizing: 'border-box'
-                }}
+                style={inputStyle}
                 required
               />
             </div>
-
             <button
               type="submit"
               disabled={!apiKey || !clientCode || !password}
@@ -182,14 +251,19 @@ export function Login() {
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: !apiKey || !clientCode || !password ? 'not-allowed' : 'pointer',
-                transition: 'background 0.2s'
+                transition: 'background 0.2s',
               }}
             >
               Continue →
             </button>
+            <p style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 20 }}>
+              MStock Type B authentication
+            </p>
           </form>
-        ) : (
-          <form onSubmit={handleLogin}>
+        )}
+
+        {brokerRequired && showTotpField && (
+          <form onSubmit={handleMStockLogin}>
             <div style={{
               background: '#0f0f1a',
               border: '1px solid #2d2d3f',
@@ -197,7 +271,7 @@ export function Login() {
               padding: 12,
               marginBottom: 24,
               fontSize: 12,
-              color: '#cbd5e1'
+              color: '#cbd5e1',
             }}>
               <p style={{ margin: '0 0 8px 0', fontWeight: 600 }}>✓ Credentials confirmed</p>
               <p style={{ margin: 0, color: '#94a3b8' }}>
@@ -211,7 +285,7 @@ export function Login() {
               borderRadius: 8,
               padding: 12,
               marginBottom: 24,
-              fontSize: 12
+              fontSize: 12,
             }}>
               <p style={{ margin: 0, color: '#86efac', fontWeight: 600 }}>
                 ⏱ TOTP changes every 30 seconds — enter quickly
@@ -219,9 +293,7 @@ export function Login() {
             </div>
 
             <div style={{ marginBottom: 24 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, color: '#cbd5e1', display: 'block', marginBottom: 6 }}>
-                TOTP (6 digits from authenticator app)
-              </label>
+              <label style={labelStyle}>TOTP (6 digits from authenticator app)</label>
               <input
                 type="text"
                 value={totp}
@@ -230,16 +302,11 @@ export function Login() {
                 maxLength={6}
                 autoFocus
                 style={{
-                  width: '100%',
-                  padding: '12px 12px',
-                  background: '#0f0f1a',
+                  ...inputStyle,
                   border: totp.length === 6 ? '1px solid #16a34a' : '1px solid #2d2d3f',
-                  borderRadius: 6,
-                  color: '#e2e8f0',
                   fontSize: 18,
                   letterSpacing: 4,
                   textAlign: 'center',
-                  boxSizing: 'border-box'
                 }}
                 required
               />
@@ -258,7 +325,7 @@ export function Login() {
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: totp.length !== 6 || loading ? 'not-allowed' : 'pointer',
-                transition: 'background 0.2s'
+                transition: 'background 0.2s',
               }}
             >
               {loading ? 'Authenticating...' : 'Complete Login'}
@@ -266,11 +333,7 @@ export function Login() {
 
             <button
               type="button"
-              onClick={() => {
-                setShowTotpField(false)
-                setTotp('')
-                setError('')
-              }}
+              onClick={() => { setShowTotpField(false); setTotp(''); setError('') }}
               style={{
                 width: '100%',
                 padding: '8px 16px',
@@ -282,17 +345,16 @@ export function Login() {
                 fontWeight: 500,
                 cursor: 'pointer',
                 marginTop: 8,
-                transition: 'all 0.2s'
+                transition: 'all 0.2s',
               }}
             >
               Back to credentials
             </button>
+            <p style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 20 }}>
+              Enter your TOTP code
+            </p>
           </form>
         )}
-
-        <p style={{ fontSize: 12, color: '#64748b', textAlign: 'center', marginTop: 20 }}>
-          {!showTotpField ? 'MStock Type B authentication' : 'Enter your TOTP code'}
-        </p>
       </div>
     </div>
   )

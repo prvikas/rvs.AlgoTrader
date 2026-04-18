@@ -321,7 +321,7 @@ export default function ScenariosPanel({
             <div key={s.id} style={{
               display: 'flex', alignItems: 'center', gap: SP.md,
               padding: TABLE_CELL, borderBottom: `1px solid ${C.border2}`,
-              background: isRunning(s) ? C.blueBg : selectedScenarios.has(s.id) ? `${C.blue}11` : 'transparent',
+              background: isRunning(s) ? C.blueBg : selectedScenarios.has(s.id) ? C.blue11 : 'transparent',
               transition: 'background 0.2s',
             }}>
               {/* Checkbox */}
@@ -432,7 +432,7 @@ export default function ScenariosPanel({
                         title="Open backtest chart, P&L, and trade-by-trade breakdown for this scenario's last run"
                         style={{
                           padding: '2px 8px', background: C.blueBg,
-                          border: `1px solid ${C.blue}55`, borderRadius: 4,
+                          border: `1px solid ${C.blue55}`, borderRadius: 4,
                           color: C.blue, fontSize: 10, fontWeight: 600, cursor: 'pointer',
                           whiteSpace: 'nowrap',
                         }}
@@ -627,7 +627,7 @@ export default function ScenariosPanel({
                           title="Open full backtest: chart, equity curve, trades and per-leg breakdown"
                           style={{
                             padding: '3px 10px', background: C.blueBg,
-                            border: `1px solid ${C.blue}55`, borderRadius: 3,
+                            border: `1px solid ${C.blue55}`, borderRadius: 3,
                             color: C.blue, fontSize: 10, fontWeight: 600, cursor: 'pointer',
                             whiteSpace: 'nowrap',
                           }}

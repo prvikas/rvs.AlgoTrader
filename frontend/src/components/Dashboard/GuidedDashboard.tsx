@@ -95,13 +95,13 @@ const INSTR_OPTIONS: Array<{ value: InstrumentType; label: string; icon: string 
 ]
 
 function SelectorCard({
-  selected, onClick, children, accent,
-}: { selected: boolean; onClick: () => void; children: React.ReactNode; accent?: string }) {
+  selected, onClick, children, accent, accentAlpha,
+}: { selected: boolean; onClick: () => void; children: React.ReactNode; accent?: string; accentAlpha?: string }) {
   return (
     <button
       onClick={onClick}
       style={{
-        padding: '10px 14px', background: selected ? (accent ? accent + '22' : C.blue + '22') : C.surface2,
+        padding: '10px 14px', background: selected ? (accentAlpha ?? C.blue22) : C.surface2,
         border: `1px solid ${selected ? (accent ?? C.blue) : C.border}`,
         borderRadius: 8, cursor: 'pointer', textAlign: 'left',
         transition: 'all 0.15s',
@@ -184,6 +184,9 @@ export function GuidedDashboard({ onNavigate }: GuidedDashboardProps) {
   const OUTLOOK_COLORS: Record<MarketOutlook, string> = {
     bullish: C.green, bearish: C.red, neutral: C.blue, volatile: C.amber,
   }
+  const OUTLOOK_ALPHA_COLORS: Record<MarketOutlook, string> = {
+    bullish: C.green18, bearish: C.red18, neutral: C.blue22, volatile: C.amber22,
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: SP.xl, maxWidth: 900 }}>
@@ -253,6 +256,7 @@ export function GuidedDashboard({ onNavigate }: GuidedDashboardProps) {
                 selected={outlook === o.value}
                 onClick={() => setOutlook(o.value)}
                 accent={OUTLOOK_COLORS[o.value]}
+                accentAlpha={OUTLOOK_ALPHA_COLORS[o.value]}
               >
                 <div style={{ fontSize: 18, marginBottom: 2 }}>{o.icon}</div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{o.label}</div>

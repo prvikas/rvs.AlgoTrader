@@ -8,6 +8,7 @@ public interface IOrderRepository
 {
     Task<Order?> GetByIdAsync(Guid id, CancellationToken ct);
     Task<Order?> GetByIdempotencyKeyAsync(string key, CancellationToken ct);
+    Task<Order?> GetByBrokerOrderIdAsync(string brokerOrderId, CancellationToken ct);
     Task<IReadOnlyList<Order>> GetByStrategyRunAsync(Guid strategyRunId, CancellationToken ct);
     Task<IReadOnlyList<Order>> GetRecentAsync(int count, CancellationToken ct);
     Task AddAsync(Order order, CancellationToken ct);
@@ -205,6 +206,7 @@ public interface ICapitalAllocationRepository
     Task<Domain.Entities.CapitalAllocation?> GetByInstanceAsync(Guid instanceId, CancellationToken ct);
     Task AddAsync(Domain.Entities.CapitalAllocation alloc, CancellationToken ct);
     Task UpdateAsync(Domain.Entities.CapitalAllocation alloc, CancellationToken ct);
+    Task DeleteByInstanceAsync(Guid instanceId, CancellationToken ct);
 }
 
 public interface IUserPreferencesRepository
@@ -231,6 +233,8 @@ public interface IBacktestRunRepository
     Task<(IReadOnlyList<DTOs.Backtest.BacktestResultDto> Items, int Total)> GetPagedAsync(Guid? strategyInstanceId, int page, int pageSize, CancellationToken ct, string? strategyName = null);
     Task<byte[]?> GetReportAsync(Guid runId, CancellationToken ct);
     Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetByScenarioAsync(Guid scenarioId, int page, int pageSize, CancellationToken ct);
+    /// <summary>All backtest runs whose scenario_id belongs to any scenario of the given strategy definition.</summary>
+    Task<IReadOnlyList<DTOs.Backtest.BacktestResultDto>> GetByDefinitionAsync(Guid definitionId, int page, int pageSize, CancellationToken ct);
     /// <summary>Persist a completed backtest result. Idempotent on DataHash. Returns the persisted run ID.</summary>
     Task<Guid> SaveAsync(DTOs.Backtest.BacktestResultDto result, CancellationToken ct);
 }
@@ -324,4 +328,24 @@ public interface ITradeJournalRepository
 public interface IRiskProfileRepository
 {
     Task<Domain.Entities.RiskProfile?> GetByIdAsync(Guid id, CancellationToken ct);
+}
+
+// ── Monitoring Alert Rules ────────────────────────────────────────────────────
+
+public record AlertRuleDto(
+    Guid   Id,
+    string AlertType,
+    string MetricName,
+    string Operator,
+    double ThresholdValue,
+    string Severity,
+    string[] Channels,
+    bool   IsActive,
+    string MessageTemplate);
+
+public interface IAlertRulesRepository
+{
+    Task<IReadOnlyList<AlertRuleDto>> GetAllAsync(CancellationToken ct);
+    Task<Guid> AddAsync(AlertRuleDto rule, CancellationToken ct);
+    Task<bool> DeleteAsync(Guid id, CancellationToken ct);
 }

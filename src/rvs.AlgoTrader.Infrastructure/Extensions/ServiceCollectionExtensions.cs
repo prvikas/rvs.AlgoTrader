@@ -25,7 +25,7 @@ using rvs.AlgoTrader.Infrastructure.Persistence;
 using rvs.AlgoTrader.Infrastructure.Redis;
 using rvs.AlgoTrader.Infrastructure.Jobs;
 using rvs.AlgoTrader.Infrastructure.Repositories;
-using rvs.AlgoTrader.Infrastructure.Options;
+using rvs.AlgoTrader.Application.Options;
 using rvs.AlgoTrader.Infrastructure.Services;
 namespace rvs.AlgoTrader.Infrastructure.Extensions;
 
@@ -38,6 +38,9 @@ public static class ServiceCollectionExtensions
     {
         // Feature flags
         services.Configure<FeaturesOptions>(config.GetSection(FeaturesOptions.SectionName));
+
+        // Local auth (username/password for backtest-only / broker-free mode)
+        services.Configure<LocalAuthOptions>(config.GetSection(LocalAuthOptions.SectionName));
 
         // Clock — production singleton
         services.AddSingleton<IClock, SystemClock>();
@@ -121,9 +124,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IInstrumentRefreshService, InstrumentRefreshService>();
         services.AddScoped<IStrategyInstanceManager, StrategyInstanceManager>();
         services.AddScoped<IPositionReconciliationService, PositionReconciliationService>();
-        services.AddSingleton<ISymbolDataPreferencesService, SymbolDataPreferencesService>();
+        services.AddScoped<ISymbolDataPreferencesService, SymbolDataPreferencesService>();
         services.AddScoped<IMarketCalendarService, MarketCalendarService>();
         services.AddScoped<IMarketBreadthService, MarketBreadthService>();
+        services.AddScoped<IScreenerService, ScreenerService>();   // P9 Screener
+        services.AddScoped<INewsService, NewsService>();           // P9 News
         services.AddScoped<IEnumValuesService, EfEnumValuesService>();
         services.AddScoped<IBreadthJobDispatcher, HangfireBreadthJobDispatcher>();
         services.AddScoped<INseBhavcopyCandleSource, NseBhavcopyCandleSource>();
@@ -184,6 +189,7 @@ public static class ServiceCollectionExtensions
         // EF Core implementations (backed by migration 010_StubRepositoriesSchema.sql)
         services.AddScoped<IAuditLogRepository, EfAuditLogRepository>();
         services.AddScoped<IAlertLogRepository, EfAlertLogRepository>();
+        services.AddScoped<IAlertRulesRepository, EfAlertRulesRepository>();
         services.AddScoped<IDownloadJobRepository, EfDownloadJobRepository>();
         services.AddScoped<ISignalJournalRepository, EfSignalJournalRepository>();
         services.AddScoped<ICapitalAllocationRepository, EfCapitalAllocationRepository>();

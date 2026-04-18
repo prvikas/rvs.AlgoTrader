@@ -42,6 +42,52 @@ Deferred (larger scope — require architecture changes or new migrations):
 - E1/E2 Zerodha/Upstox broker stubs
 
 ---
+
+## PROMPT-013 — DONE (2026-04-17)
+
+- CAP-1: `AllocateCapitalHandler` was a stub returning `true` without writing to DB.
+  Fix: uses `ICapitalAllocationRepository` — upserts a `CapitalAllocation` record (create on first
+  call, `UpdateAllocation` on subsequent). `IClock` injected for `CreatedAt`/`UpdatedAt` (AP-001).
+  Added `AllocateCapitalValidator` (StrategyInstanceId NotEmpty, Amount > 0).
+- CAP-2: `DeallocateCapitalHandler` was a stub. Fix: calls new `DeleteByInstanceAsync` on
+  `ICapitalAllocationRepository`. Interface + `EfCapitalAllocationRepository` + stub updated.
+- SDP-2: `SymbolDataPreferencesService.BuildDefault` used `DateTime.UtcNow` (AP-001). Fix: inject
+  `IClock`; use `clock.NowInstant().ToDateTimeUtc().AddYears(-1)` for default from-date.
+- DEAD-1: `SetAppConfigHandler` used `IAppConfigRepository` (in-memory singleton stub), silently
+  discarding config writes made via `SetAppConfigCommand`. Fix: routes through `IAppConfigService`
+  (DB + Redis write-through, same as `SettingsController` path).
+
+---
+
+## PROMPT-012 — DONE (2026-04-17)
+
+- AC-1: `AppConfigService.GetAsync` returned `default` on Redis miss — config lost after Redis
+  restart. Fix: write-through to `app_config` table (migration 040); `GetAsync` falls back to DB
+  on Redis miss and warms Redis with 5-min TTL. `SetAsync` now writes DB first, then Redis.
+- SDP-1: `SymbolDataPreferencesService` was an in-memory singleton — data lost on app restart.
+  Fix: persist to `symbol_data_preferences` table (migration 040); full CRUD via raw Npgsql.
+  Registration changed from Singleton to Scoped.
+- BS-2: Stale `TODO-BS-2` comment removed from `OptionLegSelector.SelectByDelta` — callers
+  (SpreadOrderManager) already pass `atmIvFraction` extracted from DiagnosticsJson (fixed PROMPT-009).
+
+---
+## PROMPT-011 — DONE (2026-04-17)
+
+Implemented two Npgsql 9 InvalidCastException bugs on raw NpgsqlConnection paths:
+
+- SCN-1: `StrategyDefinitionScenarioService.MapRow` — `GetFieldValue<DateTimeOffset>` on `timestamptz`
+  columns 10/12/13 (last_run_at, created_at, updated_at) throws InvalidCastException because Npgsql 9
+  maps `timestamptz` → `DateTime` (UTC kind) on raw connections, not `DateTimeOffset`.
+  Fix: `new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(N), DateTimeKind.Utc))`.
+
+- OCS-1: `OptionChainSnapshotRepository.GetRangeAsync` — `GetFieldValue<LocalDate>` on `date`
+  columns 0/1 (snapshot_date, expiry_date) throws InvalidCastException because raw `NpgsqlConnection`
+  has no NodaTime type mapper (only EF Core connection uses `.UseNodaTime()`).
+  Fix: read as `DateOnly` (Npgsql 9 native mapping for `date`), convert via
+  `private static LocalDate ToLocalDate(DateOnly d) => new(d.Year, d.Month, d.Day)`.
+
+---
+
 ## PROMPT-009 — DONE (2026-04-07)
 
 ## TIER-1 — 🔥 HIGH (wrong financial results)

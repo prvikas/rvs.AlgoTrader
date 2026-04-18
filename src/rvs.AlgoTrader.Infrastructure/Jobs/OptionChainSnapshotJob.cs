@@ -1,8 +1,10 @@
 using Hangfire;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Application.Options;
 
 namespace rvs.AlgoTrader.Infrastructure.Jobs;
 
@@ -26,6 +28,7 @@ public class OptionChainSnapshotJob(
     IOptionChainSnapshotService  snapshotService,
     IMarketCalendarService       calendar,
     IClock                       clock,
+    IOptions<FeaturesOptions>    featuresOptions,
     ILogger<OptionChainSnapshotJob> log)
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
@@ -33,6 +36,12 @@ public class OptionChainSnapshotJob(
     [AutomaticRetry(Attempts = 2, DelaysInSeconds = [300, 600])]
     public async Task RunAsync(CancellationToken ct = default)
     {
+        if (!featuresOptions.Value.BrokerRequired)
+        {
+            log.LogDebug("[OCSnapshot] Skipped — BrokerRequired=false (backtest-only mode)");
+            return;
+        }
+
         var todayIst = clock.NowInstant().InZone(Ist).Date;
 
         if (!calendar.IsTradingDay(todayIst))

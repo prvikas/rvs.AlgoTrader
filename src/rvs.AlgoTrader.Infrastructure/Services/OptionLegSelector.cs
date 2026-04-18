@@ -113,7 +113,6 @@ public class OptionLegSelector(
         // Using the real IV significantly improves delta accuracy in high-IV regimes (>20%).
         const double FallbackIv = 0.18;
         double iv = atmIv is > 0 ? atmIv.Value : FallbackIv;
-        // TODO-BS-2: atmIv not provided by caller — delta selection will be less accurate in high-IV regimes.
 
         return strikes
             .Select(k => (Strike: k, Delta: Math.Abs((double)bsEngine.Compute(spot, k, tte, iv, RiskFreeRate, isCall).Delta)))

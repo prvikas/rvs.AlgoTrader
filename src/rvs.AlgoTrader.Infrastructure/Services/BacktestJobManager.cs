@@ -21,6 +21,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 public class BacktestJobManager(
     IServiceScopeFactory scopeFactory,
     IBacktestProgressPusher pusher,
+    IClock clock,
     ILogger<BacktestJobManager> logger) : IBacktestJobManager
 {
     private readonly ConcurrentDictionary<string, BacktestJob> _jobs = new();
@@ -168,7 +169,7 @@ public class BacktestJobManager(
                         {
                             scenario.Status            = ScenarioStatus.Backtested;
                             scenario.LastBacktestRunId = savedId;
-                            scenario.UpdatedAt         = SystemClock.Instance.GetCurrentInstant();
+                            scenario.UpdatedAt         = clock.NowInstant();
                             await scenarioRepo.UpdateAsync(scenario, CancellationToken.None);
                             logger.LogInformation("[BacktestJob] {JobId} — scenario {ScenarioId} promoted to Backtested",
                                 jobId, job.ScenarioId.Value);

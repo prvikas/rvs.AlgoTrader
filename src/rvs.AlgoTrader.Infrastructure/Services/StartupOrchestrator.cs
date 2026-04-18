@@ -11,7 +11,7 @@ using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Infrastructure.Constants;
 using rvs.AlgoTrader.Infrastructure.Hangfire;
-using rvs.AlgoTrader.Infrastructure.Options;
+using rvs.AlgoTrader.Application.Options;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 

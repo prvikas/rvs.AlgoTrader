@@ -7,7 +7,7 @@ using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
-using rvs.AlgoTrader.Infrastructure.Options;
+using rvs.AlgoTrader.Application.Options;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 

@@ -38,7 +38,9 @@ public record PnlAttributionDto(
     IReadOnlyList<PnlByDimension> ByMonth,
     IReadOnlyList<PnlByDimension> ByDayOfWeek,
     IReadOnlyList<PnlByDimension> ByExitType,
-    IReadOnlyList<PnlByDimension> BySession);
+    IReadOnlyList<PnlByDimension> BySession,
+    // Cross-strategy breakdown — populated only when strategyInstanceId is null (all strategies).
+    IReadOnlyList<PnlByDimension>? ByStrategy = null);
 
 public record PnlByDimension(
     string  Label,

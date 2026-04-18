@@ -8,6 +8,7 @@ using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Infrastructure.Clock;
 using rvs.AlgoTrader.Infrastructure.Services;
 using Xunit;
+using DomainClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.UnitTests.Infrastructure;
 
@@ -40,7 +41,7 @@ public class StrategySchedulerTests
 
     /// <summary>Builds the default schedule: Mon–Fri, 09:20–15:10 IST, SKIP missed sessions.</summary>
     private static ScheduleConfig DefaultSchedule(
-        bool autoResume         = true,
+        bool AutoResumeOnRestart         = true,
         string missedBehavior   = "SKIP",
         bool forceExit          = true,
         LocalTime? start        = null,
@@ -51,19 +52,19 @@ public class StrategySchedulerTests
             start ?? SessionStart,
             stop  ?? SessionStop,
             "Asia/Kolkata",
-            autoResume,
+            AutoResumeOnRestart,
             missedBehavior,
             forceExit);
 
     /// <summary>Builds a snapshot of a RUNNING instance with a standard schedule.</summary>
     private static StrategyInstanceSnapshot RunningInstance(
         ScheduleConfig? schedule  = null,
-        bool autoResume           = true) =>
+        bool AutoResumeOnRestart           = true) =>
         new StrategyInstanceSnapshot(
             Guid.NewGuid(), "TestStrategy",
             StrategyStatus.Running,
-            autoResume,
-            schedule ?? DefaultSchedule(autoResume: autoResume));
+            AutoResumeOnRestart,
+            schedule ?? DefaultSchedule(AutoResumeOnRestart: AutoResumeOnRestart));
 
     /// <summary>Builds a mock IMarketCalendarService that reports every day as a trading day.</summary>
     private static IMarketCalendarService TradingDayCalendar()
@@ -81,7 +82,7 @@ public class StrategySchedulerTests
         return mock.Object;
     }
 
-    private static StrategyScheduler BuildScheduler(IClock clock, IMarketCalendarService? calendar = null) =>
+    private static StrategyScheduler BuildScheduler(DomainClock clock, IMarketCalendarService? calendar = null) =>
         new StrategyScheduler(
             calendar ?? TradingDayCalendar(),
             clock,
@@ -99,8 +100,8 @@ public class StrategySchedulerTests
         var instance = new StrategyInstanceSnapshot(
             Guid.NewGuid(), "TestStrategy",
             StrategyStatus.Paused,          // ← was manually paused
-            autoResumeOnRestart: true,      // even with autoResume=true, manually paused is sticky
-            DefaultSchedule(autoResume: true));
+            AutoResumeOnRestart: true,      // even with AutoResumeOnRestart=true, manually paused is sticky
+            DefaultSchedule(AutoResumeOnRestart: true));
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -124,7 +125,7 @@ public class StrategySchedulerTests
         var instance = new StrategyInstanceSnapshot(
             Guid.NewGuid(), "TestStrategy",
             status,
-            autoResumeOnRestart: true,
+            AutoResumeOnRestart: true,
             DefaultSchedule());
 
         var result = scheduler.EvaluateOnStartup(instance);
@@ -140,7 +141,7 @@ public class StrategySchedulerTests
         // Arrange: 09:30 IST — within session (09:20–15:10), Monday, trading day
         var clock = SimulatedClock.FromIst(Year, Month, Day, 9, 30);
         var scheduler = BuildScheduler(clock);
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -157,7 +158,7 @@ public class StrategySchedulerTests
         // Arrange: 10:00 IST — within session, but auto_resume=false (safer default)
         var clock = SimulatedClock.FromIst(Year, Month, Day, 10, 0);
         var scheduler = BuildScheduler(clock);
-        var instance = RunningInstance(autoResume: false);
+        var instance = RunningInstance(AutoResumeOnRestart: false);
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -176,7 +177,7 @@ public class StrategySchedulerTests
         // Arrange: 08:00 IST — before session start of 09:20
         var clock = SimulatedClock.FromIst(Year, Month, Day, 8, 0);
         var scheduler = BuildScheduler(clock);
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -193,7 +194,7 @@ public class StrategySchedulerTests
         // Arrange: 09:20:00 IST — exactly at session start (start ≤ now < stop → within session)
         var clock = SimulatedClock.FromIst(Year, Month, Day, 9, 20);
         var scheduler = BuildScheduler(clock);
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         var result = scheduler.EvaluateOnStartup(instance);
 
@@ -209,7 +210,7 @@ public class StrategySchedulerTests
         // Arrange: 15:30 IST — after session stop of 15:10
         var clock = SimulatedClock.FromIst(Year, Month, Day, 15, 30);
         var scheduler = BuildScheduler(clock);
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -228,7 +229,7 @@ public class StrategySchedulerTests
         // Arrange: normal weekday time but the calendar says it's a holiday
         var clock = SimulatedClock.FromIst(Year, Month, Day, 10, 0);
         var scheduler = BuildScheduler(clock, calendar: HolidayCalendar());
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -247,7 +248,7 @@ public class StrategySchedulerTests
         // Arrange: Sunday 2024-06-02 (day before our reference Monday)
         var clock = SimulatedClock.FromIst(2024, 6, 2, 10, 0); // Sunday
         var scheduler = BuildScheduler(clock); // calendar still says "trading day" — but day-of-week filter fires first
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         // Act
         var result = scheduler.EvaluateOnStartup(instance);
@@ -269,7 +270,7 @@ public class StrategySchedulerTests
         var instance = new StrategyInstanceSnapshot(
             Guid.NewGuid(), "TestStrategy",
             StrategyStatus.Running,
-            autoResumeOnRestart: true,
+            AutoResumeOnRestart: true,
             Schedule: null);           // ← no schedule
 
         // Act
@@ -439,8 +440,8 @@ public class StrategySchedulerTests
         var clock = SimulatedClock.FromIst(2024, 6, 5, 10, 0); // Wednesday
         var scheduler = BuildScheduler(clock);
         var instance = RunningInstance(
-            schedule: DefaultSchedule(autoResume: true, days: ["MON", "TUE", "THU", "FRI"]),
-            autoResume: true);
+            schedule: DefaultSchedule(AutoResumeOnRestart: true, days: ["MON", "TUE", "THU", "FRI"]),
+            AutoResumeOnRestart: true);
 
         var result = scheduler.EvaluateOnStartup(instance);
 
@@ -459,7 +460,7 @@ public class StrategySchedulerTests
 
         var clock = SimulatedClock.FromIst(Year, Month, Day, 10, 0);
         var scheduler = BuildScheduler(clock);
-        var instance = RunningInstance(autoResume: true);
+        var instance = RunningInstance(AutoResumeOnRestart: true);
 
         var result = scheduler.EvaluateOnStartup(instance);
 

@@ -45,6 +45,23 @@ public sealed class MarketCalendarService : IMarketCalendarService
         new LocalDate(2025, 10, 21), // Diwali-Laxmi Puja
         new LocalDate(2025, 11, 5),  // Prakash Gurpurb Sri Guru Nanak Dev ji
         new LocalDate(2025, 12, 25), // Christmas
+
+        // 2026 NSE holidays (official NSE circular)
+        new LocalDate(2026, 1, 26),  // Republic Day
+        new LocalDate(2026, 3, 20),  // Holi
+        new LocalDate(2026, 4, 2),   // Shri Ram Navami
+        new LocalDate(2026, 4, 3),   // Good Friday
+        new LocalDate(2026, 4, 14),  // Dr. Ambedkar Jayanti
+        new LocalDate(2026, 5, 1),   // Maharashtra Day
+        new LocalDate(2026, 5, 27),  // Buddha Purnima
+        new LocalDate(2026, 6, 27),  // Id ul Adha (Bakri Id)
+        new LocalDate(2026, 8, 17),  // Independence Day (observed, 15th falls Sunday)
+        new LocalDate(2026, 9, 8),   // Ganesh Chaturthi
+        new LocalDate(2026, 10, 2),  // Mahatma Gandhi Jayanti
+        new LocalDate(2026, 10, 20), // Diwali-Laxmi Puja
+        new LocalDate(2026, 10, 21), // Diwali Balipratipada
+        new LocalDate(2026, 11, 24), // Gurunanak Jayanti
+        new LocalDate(2026, 12, 25), // Christmas
     ];
 
     /// <summary>Synchronous trading-day check used by IStrategyScheduler (cached holiday set).</summary>

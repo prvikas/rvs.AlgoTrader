@@ -126,7 +126,7 @@ export function BacktestReplayChart({
   const toVolume = (b: BacktestChartBar) => ({
     time:  Math.floor(b.timeMs / 1000) as Time,
     value: b.volume,
-    color: b.close >= b.open ? `${C.green}55` : `${C.red}55`,
+    color: b.close >= b.open ? C.green55 : C.red55,
   })
 
   // ── Mount: create chart + series ──────────────────────────────────────────
@@ -485,7 +485,7 @@ function VolSwatch() {
   return (
     <span style={{ display: 'flex', gap: 1, alignItems: 'flex-end', height: 10, flexShrink: 0 }}>
       {([6, 10, 7, 9, 5] as number[]).map((h, i) => (
-        <span key={i} style={{ width: 3, height: h, background: i % 2 === 0 ? `${C.green}88` : `${C.red}88`, display: 'inline-block', borderRadius: 1 }} />
+        <span key={i} style={{ width: 3, height: h, background: i % 2 === 0 ? C.green88 : C.red88, display: 'inline-block', borderRadius: 1 }} />
       ))}
     </span>
   )

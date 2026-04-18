@@ -36,6 +36,51 @@ const SPREAD_HINTS: Record<SpreadType, string> = {
   [SpreadType.LongPut]:        'Buy ATM PE. Profits on downside move. Directional bearish or hedge play.',
 }
 
+// ── Spread presets — pre-filled legs for each built-in spread type ─────────────
+// Auto-populated when the user selects a spread type and the legs table is empty.
+const SPREAD_PRESETS: Record<SpreadType, SpreadLegDef[]> = {
+  [SpreadType.BullCallSpread]: [
+    { optionType: OptionLegType.CE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.Atm,         otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.CE, direction: LegDirection.Sell, selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 2, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.BearPutSpread]: [
+    { optionType: OptionLegType.PE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.Atm,         otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.PE, direction: LegDirection.Sell, selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 2, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.BullPutSpread]: [
+    { optionType: OptionLegType.PE, direction: LegDirection.Sell, selectionMode: StrikeSelection.Atm,         otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.PE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 2, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.BearCallSpread]: [
+    { optionType: OptionLegType.CE, direction: LegDirection.Sell, selectionMode: StrikeSelection.Atm,         otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.CE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 2, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.IronCondor]: [
+    { optionType: OptionLegType.PE, direction: LegDirection.Sell, selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 1, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.PE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 3, otmPct: 0, targetDelta: 0.15, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.CE, direction: LegDirection.Sell, selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 1, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.CE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 3, otmPct: 0, targetDelta: 0.15, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.ShortStraddle]: [
+    { optionType: OptionLegType.CE, direction: LegDirection.Sell, selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.PE, direction: LegDirection.Sell, selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.ShortStrangle]: [
+    { optionType: OptionLegType.CE, direction: LegDirection.Sell, selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 1, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.PE, direction: LegDirection.Sell, selectionMode: StrikeSelection.OtmByStrike, otmStrikes: 1, otmPct: 0, targetDelta: 0.30, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.CalendarSpread]: [
+    { optionType: OptionLegType.CE, direction: LegDirection.Sell, selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+    { optionType: OptionLegType.CE, direction: LegDirection.Buy,  selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: false },
+  ],
+  [SpreadType.LongCall]: [
+    { optionType: OptionLegType.CE, direction: LegDirection.Buy, selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+  ],
+  [SpreadType.LongPut]: [
+    { optionType: OptionLegType.PE, direction: LegDirection.Buy, selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0, targetDelta: 0.50, quantity: 1, nearestWeekly: true },
+  ],
+}
+
 const DEFAULT_LEG: SpreadLegDef = {
   optionType: OptionLegType.CE, direction: LegDirection.Buy,
   selectionMode: StrikeSelection.Atm, otmStrikes: 0, otmPct: 0,
@@ -83,7 +128,7 @@ export function OptionsConfigPanel({ value, onChange }: Props) {
       <div style={{
         display: 'flex', alignItems: 'center', gap: SP.sm,
         padding: '10px 12px', background: value.enabled ? C.blueBg : C.surface2,
-        border: `1px solid ${value.enabled ? C.blue + '44' : C.border}`,
+        border: `1px solid ${value.enabled ? C.blue44 : C.border}`,
         borderRadius: 6,
       }}>
         <input
@@ -119,14 +164,26 @@ export function OptionsConfigPanel({ value, onChange }: Props) {
               {Object.values(SpreadType).map(st => (
                 <button
                   key={st}
-                  onClick={() => set('spreadType', st)}
+                  onClick={() => {
+                    const preset = SPREAD_PRESETS[st]
+                    onChange({
+                      ...value,
+                      spreadType: st,
+                      // Always reset legs to preset when spread type changes so the
+                      // payoff diagram updates immediately. Re-selecting the same type
+                      // keeps existing legs (avoids clobbering manual edits).
+                      legs: st !== value.spreadType
+                        ? preset.map(l => ({ ...l }))
+                        : value.legs,
+                    })
+                  }}
                   title={SPREAD_HINTS[st]}
                   style={{
                     padding: '5px 11px', borderRadius: 5, fontSize: 11, cursor: 'pointer',
                     fontWeight: value.spreadType === st ? 700 : 400,
                     background: value.spreadType === st ? C.blueBg : C.surface2,
                     color: value.spreadType === st ? C.blue : C.textSub,
-                    border: `1px solid ${value.spreadType === st ? C.blue + '55' : C.border}`,
+                    border: `1px solid ${value.spreadType === st ? C.blue55 : C.border}`,
                   }}
                 >
                   {SPREAD_LABELS[st]}
@@ -250,20 +307,34 @@ export function OptionsConfigPanel({ value, onChange }: Props) {
           <section>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: SP.sm }}>
               <div>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.textSub }}>Custom Legs</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.textSub }}>Legs</span>
                 <span style={{ fontSize: 10, color: C.textMuted, marginLeft: 6 }}>
-                  Leave empty to use built-in preset for "{SPREAD_LABELS[value.spreadType]}".
+                  Modify the preset legs or add your own. Payoff chart updates in real time.
                 </span>
               </div>
-              <button
-                onClick={addLeg}
-                style={{
-                  padding: '4px 10px', borderRadius: 4, fontSize: 11, cursor: 'pointer',
-                  background: C.surface2, border: `1px solid ${C.border}`, color: C.blue,
-                }}
-              >
-                + Add Leg
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {value.legs.length > 0 && (
+                  <button
+                    onClick={() => onChange({ ...value, legs: SPREAD_PRESETS[value.spreadType].map(l => ({ ...l })) })}
+                    style={{
+                      padding: '4px 10px', borderRadius: 4, fontSize: 11, cursor: 'pointer',
+                      background: 'none', border: `1px solid ${C.border}`, color: C.textMuted,
+                    }}
+                    title={`Reset to standard ${SPREAD_LABELS[value.spreadType]} legs`}
+                  >
+                    Reset to preset
+                  </button>
+                )}
+                <button
+                  onClick={addLeg}
+                  style={{
+                    padding: '4px 10px', borderRadius: 4, fontSize: 11, cursor: 'pointer',
+                    background: C.surface2, border: `1px solid ${C.border}`, color: C.blue,
+                  }}
+                >
+                  + Add Leg
+                </button>
+              </div>
             </div>
 
             {value.legs.length === 0 && (
@@ -272,7 +343,7 @@ export function OptionsConfigPanel({ value, onChange }: Props) {
                 border: `1px dashed ${C.border}`, borderRadius: 5,
                 fontSize: 11, color: C.textMuted, textAlign: 'center',
               }}>
-                Using preset legs for {SPREAD_LABELS[value.spreadType]}. Click "+ Add Leg" to override.
+                No legs defined. Select a spread type above to load a preset, or click "+ Add Leg" to build from scratch.
               </div>
             )}
 
@@ -280,7 +351,7 @@ export function OptionsConfigPanel({ value, onChange }: Props) {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                 <thead>
                   <tr style={{ background: C.surface2 }}>
-                    {['#', 'Type', 'Direction', 'Strike Selection', 'OTM Strikes', 'Target Delta', 'Qty', 'Expiry', ''].map(h => (
+                    {['#', 'Type', 'Direction', 'Strike Selection', 'Strikes (+ OTM / − ITM)', 'Target Delta', 'Qty', 'Expiry', ''].map(h => (
                       <th key={h} style={{ padding: '5px 8px', textAlign: 'left', color: C.textMuted, fontWeight: 600 }}>{h}</th>
                     ))}
                   </tr>
@@ -326,11 +397,12 @@ export function OptionsConfigPanel({ value, onChange }: Props) {
                       </td>
                       <td style={{ padding: '3px 4px' }}>
                         <input
-                          type="number" min={0} max={20}
+                          type="number" min={-20} max={20}
                           value={leg.otmStrikes}
                           onChange={e => setLeg(idx, { ...leg, otmStrikes: Number(e.target.value) })}
-                          style={{ ...inputStyle, width: 48, padding: '2px 4px' }}
+                          style={{ ...inputStyle, width: 56, padding: '2px 4px' }}
                           disabled={leg.selectionMode !== StrikeSelection.OtmByStrike}
+                          title="Positive = OTM strikes from ATM, Negative = ITM strikes from ATM"
                         />
                       </td>
                       <td style={{ padding: '3px 4px' }}>

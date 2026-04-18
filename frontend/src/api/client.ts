@@ -14,11 +14,12 @@ apiClient.interceptors.request.use(config => {
   return config
 })
 
+// On 401: clear token and redirect to /login.
+// Both broker mode and local-auth mode use explicit login — no silent re-auth needed.
 apiClient.interceptors.response.use(
   res => res,
   err => {
     if (err.response?.status === 401) {
-      // Clear the token in the Zustand store (also clears persisted localStorage entry)
       useAppStore.getState().setJwtToken(null)
       window.location.href = '/login'
     }
@@ -270,6 +271,11 @@ export const backtestApi = {
     apiClient.get<ApiResponse<BacktestTradeResult[]>>(`/backtest/${id}/trades`),
   report: (id: string) =>
     apiClient.get(`/backtest/${id}/report`, { responseType: 'blob' }),
+  /** All backtest runs for all scenarios of a strategy definition (Previous Runs panel). */
+  byDefinition: (definitionId: string, page = 1, pageSize = 100) =>
+    apiClient.get<ApiResponse<BacktestResult[]>>(
+      `/strategy-definitions/${definitionId}/backtests`,
+      { params: { page, pageSize } }),
 }
 
 // --- Type Definitions ---
@@ -455,6 +461,8 @@ export interface BacktestResult {
   circuitBreakerHit?: boolean
   /** Human-readable reason for the circuit breaker trigger. */
   circuitBreakerReason?: string
+  /** Strategy definition scenario that triggered this run, if any. */
+  scenarioId?: string
 }
 
 export interface BacktestTradeLeg {
@@ -970,6 +978,8 @@ export interface PnlAttribution {
   byMonth: PnlByDimension[]
   byDayOfWeek: PnlByDimension[]
   byExitType: PnlByDimension[]
+  bySession?: PnlByDimension[]
+  byStrategy?: PnlByDimension[]  // P9: cross-strategy breakdown, present when no strategyInstanceId filter
 }
 
 export interface TaxLotRow {
@@ -1107,7 +1117,7 @@ import type {
 import {
   Timeframe, TradingStyle, StrategyStatus,
   ScenarioStatus, Broker, DeploymentMode, DeploymentStatus, OverrideSection,
-  ExitCombineLogic, StopType, TrailingType, StartCondition, DayOfWeek,
+  ExitCombineLogic, StopType, TrailingType, StartCondition, DayOfWeek, RunMode,
 } from '../types/strategy'
 
 // ── Backend DTO shape (mirrors Application/DTOs/Strategy/StrategyDefinitionDtos.cs) ──
@@ -1282,8 +1292,31 @@ function instanceToDeployment(inst: StrategyInstance, strategyId: string): Deplo
     status:           statusMap[inst.status] ?? DeploymentStatus.Draft,
   }
 }
-const MOCK_RUNS: Record<string, RunResult[]> = {}
-const MOCK_TRADES: Record<string, TradeRecord[]> = {}
+// Maps a BacktestResult (API shape) to the RunResult UI shape used by ResultsTab / CompareTab.
+// Backend stores rates as decimals (0.25 = 25%); RunMetrics expects percentage values.
+function backtestResultToRunResult(dto: BacktestResult, strategyId: string): RunResult {
+  return {
+    id:            dto.id ?? '',
+    scenarioId:    dto.scenarioId ?? '',
+    strategyId,
+    mode:          RunMode.Backtest,
+    dateRange:     { from: dto.fromDate ?? '', to: dto.toDate ?? '' },
+    engineVersion: '1',
+    dataVersion:   dto.dataHash ?? '',
+    completedAt:   dto.startedAt ?? new Date().toISOString(),
+    metrics: {
+      returnPct:      (dto.totalReturn  ?? 0) * 100,
+      maxDrawdownPct: (dto.maxDrawdown  ?? 0) * 100,
+      sharpe:          dto.sharpeRatio  ?? 0,
+      winRate:        (dto.winRate      ?? 0) * 100,
+      profitFactor:    dto.profitFactor ?? 0,
+      tradeCount:      dto.totalTrades  ?? 0,
+      avgRPerTrade:    0,
+      expectancy:      dto.expectancyPerTrade ?? 0,
+      avgRealisedRR:   0,
+    },
+  }
+}
 
 export const strategyDomainApi = {
   // ── Strategy CRUD — real /api/strategy-definitions backend ────────────────
@@ -1456,12 +1489,19 @@ export const strategyDomainApi = {
     await strategiesApi.delete(deploymentId)
   },
 
-  listRuns: (strategyId: string): Promise<RunResult[]> =>
-    Promise.resolve(MOCK_RUNS[strategyId] ?? []),
+  listRuns: async (strategyId: string): Promise<RunResult[]> => {
+    try {
+      const resp = await backtestApi.byDefinition(strategyId)
+      return (resp.data?.data ?? []).map(dto => backtestResultToRunResult(dto, strategyId))
+    } catch {
+      return []
+    }
+  },
 
-  // PROMPT-002
+  // PROMPT-002: listTrades is only called when runId is not a real GUID (non-saved runs).
+  // Real trades for saved runs are fetched directly via backtestApi.trades(runId) in ResultsTab.
   listTrades: (_strategyId: string, _scenarioId: string, _runId: string): Promise<TradeRecord[]> =>
-    Promise.resolve(MOCK_TRADES[_runId] ?? []),
+    Promise.resolve([]),
 
   createParameterSweep: async (
     strategyId: string,
@@ -1499,4 +1539,47 @@ export const strategyDomainApi = {
     void sweepGroupId
     return { ...created, generatedCount: steps }
   },
+}
+
+// ── P9 Screener ───────────────────────────────────────────────────────────────
+
+export interface ScreenerResult {
+  symbol: string
+  lastClose: number
+  sma200: number
+  sma50: number
+  yearHigh: number
+  yearLow: number
+  rsScore: number
+  signal: 'VCP_BREAKOUT' | 'NEAR_BREAKOUT' | 'UPTREND'
+  volumeConfirmed: boolean
+  scannedAt: string
+}
+
+export const screenerApi = {
+  scan: (params?: { signal?: string; minRsScore?: number; maxResults?: number }) =>
+    apiClient.get<ApiResponse<ScreenerResult[]>>('/screener', { params }),
+}
+
+// ── P9 News ───────────────────────────────────────────────────────────────────
+
+export interface NewsItem {
+  id: string
+  symbol: string | null
+  headline: string
+  summary: string | null
+  source: string
+  url: string | null
+  publishedAt: string
+  sentiment: 'Positive' | 'Negative' | 'Neutral' | 'Unknown' | null
+  tags: string | null
+}
+
+export const newsApi = {
+  getRecent: (params?: { symbol?: string; days?: number }) =>
+    apiClient.get<ApiResponse<NewsItem[]>>('/news', { params }),
+  create: (body: Omit<NewsItem, 'id'>) =>
+    apiClient.post<ApiResponse<string>>('/news', body),
+  delete: (id: string) =>
+    apiClient.delete<ApiResponse<boolean>>(`/news/${id}`),
 }

@@ -84,10 +84,10 @@ public sealed class OrderManager(
 
     private async Task PollUntilTerminalAsync(TrackedOrder entry, string brokerName, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + TrackingTimeout;
+        var deadline = clock.NowInstant() + Duration.FromTimeSpan(TrackingTimeout);
         int pollIdx  = 0;
 
-        while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+        while (clock.NowInstant() < deadline && !ct.IsCancellationRequested)
         {
             if (IsTerminal(entry.State)) break;
 

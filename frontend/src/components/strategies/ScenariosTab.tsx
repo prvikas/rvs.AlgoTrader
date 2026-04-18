@@ -374,7 +374,7 @@ function ParameterSweepDrawer({ strategy, onClose }: { strategy: Strategy; onClo
 
       {steps > 0 && (
         <div style={{
-          padding: SP.sm, background: C.blueBg, border: `1px solid ${C.blue}44`,
+          padding: SP.sm, background: C.blueBg, border: `1px solid ${C.blue44}`,
           borderRadius: 4, fontSize: 12, color: C.blue,
         }}>
           Will generate <strong>{steps}</strong> scenario{steps !== 1 ? 's' : ''}
@@ -502,7 +502,7 @@ export function ScenariosTab({ strategy }: Props) {
                   <React.Fragment key={groupId}>
                     {/* Group header row */}
                     <tr
-                      style={{ background: `${C.blue}11`, cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}
+                      style={{ background: C.blue11, cursor: 'pointer', borderBottom: `1px solid ${C.border}` }}
                       onClick={() => toggleGroup(groupId)}
                     >
                       <td colSpan={COLS.length} style={{ padding: '6px 10px' }}>
@@ -594,7 +594,7 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onDelete, onPromote, loading,
             <span style={{
               fontSize: 9, fontWeight: 700, color: C.amber,
               padding: '1px 5px', borderRadius: 2,
-              border: `1px solid ${C.amber}44`, background: `${C.amber}11`,
+              border: `1px solid ${C.amber44}`, background: C.amber11,
             }}>BASE</span>
           )}
           <span style={{ fontWeight: 600 }}>{s.name}</span>
@@ -610,7 +610,7 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onDelete, onPromote, loading,
         {s.hypothesisTag && (
           <span style={{
             fontSize: 9, color: C.blue, padding: '1px 4px', borderRadius: 2,
-            border: `1px solid ${C.blue}44`, background: `${C.blue}11`, marginTop: 2, display: 'inline-block',
+            border: `1px solid ${C.blue44}`, background: C.blue11, marginTop: 2, display: 'inline-block',
           }}>
             {s.hypothesisTag}
           </span>
@@ -659,7 +659,7 @@ function ActionBtn({ label, onClick, loading, danger }: {
       style={{
         background: danger ? C.redBg : C.surface2,
         color: danger ? C.red : C.textSub,
-        border: `1px solid ${danger ? C.red + '44' : C.border}`,
+        border: `1px solid ${danger ? C.red44 : C.border}`,
         borderRadius: 4, padding: '3px 8px', cursor: loading ? 'not-allowed' : 'pointer',
         fontSize: 11, opacity: loading ? 0.6 : 1,
       }}

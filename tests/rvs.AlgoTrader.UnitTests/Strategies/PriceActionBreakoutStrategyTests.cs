@@ -84,6 +84,7 @@ public class PriceActionBreakoutStrategyTests
             AtrStopMultiple = 1.5m,
             RiskRewardRatio = 2.0m,
             AllowShort = false,
+            TrendEmaPeriod = 0,   // disable trend filter — this test focuses on breakout signal only
         };
         var strategy = new PriceActionBreakoutStrategy(config);
 
@@ -98,7 +99,7 @@ public class PriceActionBreakoutStrategyTests
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
         // Assert
-        result.Signal.Should().Be("BUY");
+        result.Signal.Should().Be(SignalType.Buy);
         result.EntryPrice.Should().BeGreaterThan(100m);
         result.StopLoss.Should().BeLessThan(result.EntryPrice!.Value);
         result.TakeProfit.Should().BeGreaterThan(result.EntryPrice!.Value);
@@ -114,6 +115,7 @@ public class PriceActionBreakoutStrategyTests
         {
             LookbackBars = 20,
             VolumeMultiple = 1.5m,  // Requires 1.5x average volume
+            TrendEmaPeriod = 0,     // disable trend filter so volume is the only gate
         };
         var strategy = new PriceActionBreakoutStrategy(config);
 
@@ -124,7 +126,7 @@ public class PriceActionBreakoutStrategyTests
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
         // Assert
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
     }
 
     [Fact]
@@ -140,7 +142,7 @@ public class PriceActionBreakoutStrategyTests
         var result = await strategy.EvaluateAsync(MakeContext(candles), CancellationToken.None);
 
         // Assert
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().Be(SkippedReason.InsufficientData.ToString());
     }
 
@@ -148,7 +150,7 @@ public class PriceActionBreakoutStrategyTests
     public async Task EvaluateAsync_WhenPriceWithinRange_ReturnsHold()
     {
         // Arrange: build consolidation but NO breakout on final candle
-        var config = new PriceActionBreakoutConfig { LookbackBars = 20, AtrPeriod = 14 };
+        var config = new PriceActionBreakoutConfig { LookbackBars = 20, AtrPeriod = 14, TrendEmaPeriod = 0 };
         var strategy = new PriceActionBreakoutStrategy(config);
 
         var candles = new List<ClosedCandle>();
@@ -161,7 +163,7 @@ public class PriceActionBreakoutStrategyTests
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
         // Assert: neither BUY nor SELL
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().BeNull("price within range yields HOLD, not SKIP");
     }
 
@@ -177,6 +179,7 @@ public class PriceActionBreakoutStrategyTests
             AtrStopMultiple = 1.5m,
             RiskRewardRatio = 2.0m,
             AllowShort = true,   // ← SELL signals enabled
+            TrendEmaPeriod = 0,  // disable trend filter — this test focuses on breakdown signal only
         };
         var strategy = new PriceActionBreakoutStrategy(config);
 
@@ -192,7 +195,7 @@ public class PriceActionBreakoutStrategyTests
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
         // Assert
-        result.Signal.Should().Be("SELL");
+        result.Signal.Should().Be(SignalType.Sell);
         result.StopLoss.Should().BeGreaterThan(result.EntryPrice!.Value);
         result.TakeProfit.Should().BeLessThan(result.EntryPrice!.Value);
     }
@@ -201,7 +204,7 @@ public class PriceActionBreakoutStrategyTests
     public async Task EvaluateAsync_WhenShortBreakdownAndAllowShortFalse_ReturnsHold()
     {
         // Arrange: same breakdown but AllowShort = false (default)
-        var config = new PriceActionBreakoutConfig { AllowShort = false, LookbackBars = 20 };
+        var config = new PriceActionBreakoutConfig { AllowShort = false, LookbackBars = 20, TrendEmaPeriod = 0 };
         var strategy = new PriceActionBreakoutStrategy(config);
 
         var candles = new List<ClosedCandle>();
@@ -213,33 +216,48 @@ public class PriceActionBreakoutStrategyTests
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
         // Assert: no SELL when AllowShort=false
-        result.Signal.Should().NotBe("SELL");
+        result.Signal.Should().NotBe(SignalType.Sell);
     }
 
     [Fact]
     public async Task EvaluateAsync_WhenAtrTooLow_SkipsWithFilterFailed()
     {
-        // Arrange: extremely flat candles → ATR ≈ 0 → below MinAtrMultiple threshold
+        // Arrange: trigger ATR filter by having Wilder's smoothed ATR lag behind a sudden TR spike.
+        //
+        // The ATR filter is: currentAtr (Wilder's smoothed) < avgAtr (SMA of last AtrPeriod TRs) × MinAtrMultiple.
+        // Wilder's smoothing is slow to react upward — if recent TRs spike suddenly, the SMA of recent TRs
+        // jumps fast while the smoothed ATR lags, causing currentAtr / avgAtr < 0.8 → FilterFailed.
+        //
+        // Setup:
+        //   Phase 1 — 16 flat bars (TR ≈ 0.02): seeds Wilder's ATR at ≈ 0.02
+        //   Phase 2 — 5 high-vol bars (TR ≈ 10): avgAtr (SMA of last 5 TRs) → 10;
+        //             smoothed ATR climbs slowly to ≈ 6.73 (far below 10 × 0.8 = 8.0)
+        //   Phase 3 — breakout bar above rangeHigh: would be Buy if ATR filter passed, but it doesn't
         var config = new PriceActionBreakoutConfig
         {
             LookbackBars = 10,
             AtrPeriod = 5,
             MinAtrMultiple = 0.8m,
+            TrendEmaPeriod = 0,   // isolate ATR filter
         };
         var strategy = new PriceActionBreakoutStrategy(config);
 
-        // Flat candles: near-zero range means ATR ≈ 0 (will fail ATR filter)
-        var candles = Enumerable.Range(0, 20)
+        // Phase 1: flat bars (range=0.02, TR≈0.02) — Wilder's ATR seeds low
+        var candles = Enumerable.Range(0, 16)
             .Select(i => MakeCandle(100m, 100.01m, 99.99m, 100m, minuteOffset: i * 15))
             .ToList();
-        // Breakout candle (still tiny range)
-        candles.Add(MakeCandle(100m, 100.02m, 99.98m, 100.02m, volume: 25_000L, minuteOffset: 20 * 15));
+        // Phase 2: high-volatility bars (range=10) — SMA of last 5 TRs spikes to 10
+        for (int i = 0; i < 5; i++)
+            candles.Add(MakeCandle(100m, high: 105m, low: 95m, close: 100m, minuteOffset: (16 + i) * 15));
+        // Phase 3: breakout candle above rangeHigh=105 with high volume
+        candles.Add(MakeCandle(open: 104m, high: 107m, low: 103m, close: 106m,
+            volume: 25_000L, minuteOffset: 21 * 15));
 
         // Act
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
-        // Assert: ATR filter failure → skip
-        result.Signal.Should().Be("HOLD");
+        // Assert: smoothed ATR (≈6.7) < avgAtr (9.4) × 0.8 (=7.5) → FilterFailed
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().Be(SkippedReason.FilterFailed.ToString());
     }
 
@@ -247,13 +265,13 @@ public class PriceActionBreakoutStrategyTests
     public async Task EvaluateAsync_StopLossIsAlwaysBelowEntryForBuySignal()
     {
         // Invariant test: SL must be below entry, TP above entry on every BUY
-        var config = new PriceActionBreakoutConfig();
+        var config = new PriceActionBreakoutConfig { TrendEmaPeriod = 0 };
         var strategy = new PriceActionBreakoutStrategy(config);
         var candles = BuildConsolidationBreakout(200m, 203m, highVolume: true);
 
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
-        if (result.Signal == "BUY")
+        if (result.Signal == SignalType.Buy)
         {
             result.StopLoss.Should().BeLessThan(result.EntryPrice!.Value,
                 "stop loss must always be below entry on a long position");
@@ -273,13 +291,14 @@ public class PriceActionBreakoutStrategyTests
             LookbackBars = 20,
             AtrPeriod = 14,
             VolumeMultiple = 1.5m,
+            TrendEmaPeriod = 0,   // disable trend filter — invariant test, not trend test
         };
         var strategy = new PriceActionBreakoutStrategy(config);
         var candles = BuildConsolidationBreakout(100m, 103m, highVolume: true);
 
         var result = await strategy.EvaluateAsync(MakeContext(candles, config), CancellationToken.None);
 
-        if (result.Signal == "BUY")
+        if (result.Signal == SignalType.Buy)
         {
             var slDist = result.EntryPrice!.Value - result.StopLoss!.Value;
             var tpDist = result.TakeProfit!.Value - result.EntryPrice!.Value;

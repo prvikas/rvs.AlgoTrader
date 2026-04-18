@@ -70,39 +70,40 @@ public class EmaVwapMomentumStrategyTests
     }
 
     /// <summary>
-    /// Builds a candle list designed to trigger a BUY signal on the last bar.
-    /// Approach:
-    ///   - warmup bars: flat price=100, vol=1000 (slow EMA seeds here)
-    ///   - rising bars: price climbs from 100 → 115 to create fast EMA crossover
-    ///   - final bar: closes at 118 with high volume (confirmation)
+    /// Builds a candle list designed to trigger a BUY signal on the LAST bar.
     ///
-    /// VWAP will be close to the average of all bars. Since the final bars trend up,
-    /// VWAP ≈ avg(100..118) ≈ 109. Close=118 > VWAP ✓
-    /// BB midline after rising bars ≈ 110-112. Close=118 > midline ✓
-    /// EMA(5) fast > EMA(10) slow after sustained rise ✓
-    /// Volume on last bar = highVol > 1.5× avg ✓
+    /// Approach: dip-then-bounce.
+    ///   Phase 1 — warmupCount flat bars at 100: seeds EMA(5) and EMA(10) at 100.
+    ///   Phase 2 — 3 dip bars at 95: fast EMA(5) falls to ≈96.5, slow EMA(10) to ≈97.7.
+    ///             Fast EMA is now BELOW slow EMA (both dipped, but fast reacted more).
+    ///   Phase 3 — final bar close=118: fast EMA(5) crosses ABOVE slow EMA(10) ON THIS BAR.
+    ///             fastPrev(≈96.5) ≤ slowPrev(≈97.7) → fastNow(≈103.6) > slowNow(≈101.4).
+    ///
+    /// Other conditions at final bar:
+    ///   VWAP   ≈ 100.4  → close(118) > VWAP  ✓
+    ///   BB mid ≈ 100.3  → close(118) > mid   ✓ (last 10 closes: 6×100, 3×95, 1×118)
+    ///   Volume  2500 ≥ avg(1150) × 1.5 = 1725 ✓
+    ///   ATR     passes MinAtrPct=0.1% easily   ✓
     /// </summary>
     private static List<ClosedCandle> BuildBullishCrossover(int warmupCount = 25, decimal highVol = 2500L)
     {
         var bars = new List<ClosedCandle>();
 
-        // Warmup: flat price at 100 (seeds both EMAs at ~100)
+        // Phase 1: flat warmup at 100 — seeds EMA(5) ≈ EMA(10) ≈ 100
         for (int i = 0; i < warmupCount; i++)
             bars.Add(Bar(100m, volume: 1_000L, minuteOffset: i));
 
-        // Rising bars: price increases — fast EMA will start crossing slow EMA
-        bars.Add(Bar(102m, 1_000L, minuteOffset: warmupCount));
-        bars.Add(Bar(104m, 1_000L, minuteOffset: warmupCount + 1));
-        bars.Add(Bar(107m, 1_000L, minuteOffset: warmupCount + 2));
-        bars.Add(Bar(110m, 1_000L, minuteOffset: warmupCount + 3));
-        bars.Add(Bar(113m, 1_000L, minuteOffset: warmupCount + 4));
+        // Phase 2: brief dip to 95 — fast EMA(5) drops below slow EMA(10)
+        // After 3 bars: EMA5 ≈ 96.5, EMA10 ≈ 97.7  (fast < slow)
+        bars.Add(Bar(95m, 1_000L, minuteOffset: warmupCount));
+        bars.Add(Bar(95m, 1_000L, minuteOffset: warmupCount + 1));
+        bars.Add(Bar(95m, 1_000L, minuteOffset: warmupCount + 2));
 
-        // The penultimate bar has fast EMA just below slow EMA (constructed so crossover happens next)
-        bars.Add(Bar(115m, 1_000L, minuteOffset: warmupCount + 5));
-
-        // Final bar: breakout bar with high volume
+        // Phase 3: single recovery bar close=118 — EMA5 crosses above EMA10 ON THIS BAR
+        // fastPrev(≈96.5) ≤ slowPrev(≈97.7) ✓  fastNow(≈103.6) > slowNow(≈101.4) ✓
+        // VWAP ≈ 100.4, BB_mid ≈ 100.3, close=118 satisfies all uptrend filters.
         bars.Add(Bar(close: 118m, volume: (long)highVol,
-            open: 115m, high: 120m, low: 114m, minuteOffset: warmupCount + 6));
+            open: 95m, high: 122m, low: 94m, minuteOffset: warmupCount + 3));
 
         return bars;
     }
@@ -131,7 +132,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD", "SKIP returns HOLD signal with SkippedReason set");
+        result.Signal.Should().Be(SignalType.Hold, "SKIP returns HOLD signal with SkippedReason set");
         result.SkippedReason.Should().Be(SkippedReason.InsufficientData.ToString());
     }
 
@@ -147,7 +148,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("BUY");
+        result.Signal.Should().Be(SignalType.Buy);
         result.EntryPrice.Should().NotBeNull().And.BeGreaterThan(0);
         result.StopLoss.Should().NotBeNull().And.BeLessThan(result.EntryPrice!.Value);
         result.TakeProfit.Should().NotBeNull().And.BeGreaterThan(result.EntryPrice!.Value);
@@ -163,7 +164,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        if (result.Signal == "BUY")
+        if (result.Signal == SignalType.Buy)
         {
             result.StopLoss.Should().BeLessThan(result.EntryPrice!.Value,
                 "stop loss must always be below entry for long positions");
@@ -181,7 +182,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        if (result.Signal == "BUY")
+        if (result.Signal == SignalType.Buy)
         {
             var risk = result.EntryPrice!.Value - result.StopLoss!.Value;
             var reward = result.TakeProfit!.Value - result.EntryPrice!.Value;
@@ -206,7 +207,7 @@ public class EmaVwapMomentumStrategyTests
         var ctx = MakeContext(flatCandles, config);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD");
+        result.Signal.Should().Be(SignalType.Hold);
         result.EntryPrice.Should().BeNull();
     }
 
@@ -222,7 +223,7 @@ public class EmaVwapMomentumStrategyTests
         var ctx = MakeContext(candles, config);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "low volume on signal bar means no conviction — signal suppressed");
     }
 
@@ -247,7 +248,7 @@ public class EmaVwapMomentumStrategyTests
         var ctx = MakeContext(bearish, config);
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().NotBe("SELL",
+        result.Signal.Should().NotBe(SignalType.Sell,
             "AllowShort=false means no short signals regardless of conditions");
     }
 
@@ -269,7 +270,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "PCR=1.5 is above the bullish threshold of 0.8 — option chain filter should suppress BUY");
     }
 
@@ -288,7 +289,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("BUY",
+        result.Signal.Should().Be(SignalType.Buy,
             "PCR=0.6 is below the bullish threshold — option chain filter passes");
     }
 
@@ -308,7 +309,7 @@ public class EmaVwapMomentumStrategyTests
         // So null OC → ocBullishBias stays true → signal passes
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("BUY",
+        result.Signal.Should().Be(SignalType.Buy,
             "null option chain means OC filter is skipped — price action signal passes through");
     }
 
@@ -331,7 +332,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        result.Signal.Should().Be("HOLD",
+        result.Signal.Should().Be(SignalType.Hold,
             "price (118) is within 2% of CE resistance wall (119) — buying here would hit the wall immediately");
     }
 
@@ -347,7 +348,7 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        if (result.Signal == "BUY")
+        if (result.Signal == SignalType.Buy)
         {
             result.DiagnosticsJson.Should().NotBeNull("diagnostics help with troubleshooting live signals");
             var json = System.Text.Json.JsonSerializer.Serialize(result.DiagnosticsJson);
@@ -364,7 +365,9 @@ public class EmaVwapMomentumStrategyTests
     public async Task EvaluateAsync_WhenMarketTooFlat_AtrFilterSkipsSignal()
     {
         var config = DefaultConfig();
-        config.MinAtrPct = 5.0m; // require ATR ≥ 5% of close — impossible for normal candles
+        // The dip-then-bounce pattern produces ATR ≈ 9 on a close=118 bar (~7.6%).
+        // Set threshold to 20% — impossible for normal candles regardless of bar range.
+        config.MinAtrPct = 20.0m;
 
         var strategy = new EmaVwapMomentumStrategy(config);
         var candles = BuildBullishCrossover();
@@ -372,8 +375,8 @@ public class EmaVwapMomentumStrategyTests
 
         var result = await strategy.EvaluateAsync(ctx, CancellationToken.None);
 
-        // With 5% MinAtrPct requirement, the ATR of ~2 on a 118 close (1.7%) fails the filter
-        result.Signal.Should().Be("HOLD");
+        // ATR (~9) < 118 × 20% = 23.6 → FilterFailed
+        result.Signal.Should().Be(SignalType.Hold);
         result.SkippedReason.Should().Be(SkippedReason.FilterFailed.ToString());
     }
 
@@ -389,8 +392,9 @@ public class EmaVwapMomentumStrategyTests
     {
         var strikes = new[] { spot - 200, spot - 100, spot, spot + 100, spot + 200 };
         const long ceOi = 100_000L;
-        var peOiTarget = (long)(ceOi * pcr); // total PE OI to achieve desired PCR
-        var peOiPerStrike = peOiTarget / strikes.Length;
+        // PCR = totalPeOI / totalCeOI = (peOiPerStrike × N) / (ceOi × N) = peOiPerStrike / ceOi
+        // So: peOiPerStrike = ceOi × pcr gives the correct aggregate PCR regardless of strike count.
+        var peOiPerStrike = (long)(ceOi * pcr);
 
         var legs = strikes.SelectMany(strike => new[]
         {

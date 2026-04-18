@@ -397,7 +397,7 @@ function TradesTable({ trades }: { trades: BacktestTradeResult[] }) {
                     onClick={() => hasLegs ? setExpandedIdx(isExpanded ? null : idx) : undefined}
                     style={{
                       borderBottom: `1px solid ${C.border2}`,
-                      background: isExpanded ? `${C.blue}0a` : 'transparent',
+                      background: isExpanded ? C.blue0a : 'transparent',
                       cursor: hasLegs ? 'pointer' : 'default',
                     }}
                   >
@@ -448,7 +448,7 @@ function TradesTable({ trades }: { trades: BacktestTradeResult[] }) {
                   {/* ── Per-leg expansion row for spreads ── */}
                   {isExpanded && hasLegs && (
                     <tr>
-                      <td colSpan={17} style={{ padding: '0 0 8px 32px', background: `${C.blue}06` }}>
+                      <td colSpan={17} style={{ padding: '0 0 8px 32px', background: C.blue06 }}>
                         <div style={{ fontSize: 10, color: C.textMuted, padding: '6px 0 4px' }}>
                           Leg Breakdown — {legs.length} legs
                         </div>
@@ -495,52 +495,48 @@ const tradeTd: React.CSSProperties = { padding: '4px 8px', fontSize: 11, color: 
 
 // ── Trade Analysis section ────────────────────────────────────────────────────
 
-function TradeAnalysisSection({ strategyId, scenarioId, runId }: {
+function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId }: {
   strategyId: string; scenarioId: string; runId: string
 }) {
-  // Prefer real API if runId is a GUID (saved run), else use mock
-  const isRealRun = /^[0-9a-f-]{36}$/i.test(runId)
-
-  const { data: realTrades, isLoading: loadingReal } = useQuery({
+  // All runs from listRuns now have real UUID IDs; fetch trades from the saved-run endpoint.
+  const { data: realTrades, isLoading } = useQuery({
     queryKey: ['bt-trades-real', runId],
     queryFn: async () => {
       const r = await backtestApi.trades(runId)
       return r.data?.data ?? []
     },
-    enabled: isRealRun,
+    enabled: runId.length > 0,
   })
 
-  const { data: mockTrades = [], isLoading: loadingMock } = useQuery({
-    queryKey: ['trades', strategyId, scenarioId, runId],
-    queryFn: () => strategyDomainApi.listTrades(strategyId, scenarioId, runId),
-    enabled: !isRealRun,
-  })
+  const btTrades: BacktestTradeResult[] = realTrades ?? []
 
-  const isLoading = isRealRun ? loadingReal : loadingMock
-
-  // Adapt real trades or convert mock TradeRecord → BacktestTradeResult shape
-  const btTrades: BacktestTradeResult[] = isRealRun
-    ? (realTrades ?? [])
-    : mockTrades.map(t => ({
-        direction:   t.direction === 'Long' ? 'BUY' : 'SELL',
-        entryPrice:  t.entryPrice,
-        exitPrice:   t.exitPrice,
-        quantity:    1,
-        exitReason:  t.exitReason,
-        grossPnl:    t.pnlAbsolute,
-        netPnl:      t.pnlAbsolute,
-        entryTime:   t.entryTime,
-        exitTime:    t.exitTime,
-        mae:         t.mae,
-        mfe:         t.mfe,
-        stopLoss:    t.stopPrice,
-        takeProfit:  t.targetPrice,
-        holdingBars: t.barsHeld,
-        rMultiple:   t.pnlR,
-      }))
-
-  // Convert for legacy chart components (still use TradeRecord)
-  const chartTrades = mockTrades.length > 0 ? mockTrades : []
+  // Map real BacktestTradeResult → TradeRecord for MAE/MFE scatter, histogram, heatmap, etc.
+  // Exit reason mapping: backend uses SCREAMING_SNAKE_CASE; TradeRecord uses PascalCase union.
+  const toChartExitReason = (r: string): TradeRecord['exitReason'] => {
+    if (r === 'STOP_LOSS')  return 'StopHit'
+    if (r === 'TRAIL_STOP') return 'TrailingStop'
+    if (r === 'TAKE_PROFIT') return 'TargetHit'
+    if (r === 'END_OF_DATA' || r === 'SESSION_END') return 'SessionEnd'
+    return 'Manual'
+  }
+  const chartTrades: TradeRecord[] = btTrades.map((t, i) => ({
+    id:          `${i}`,
+    scenarioId:  scenarioId,
+    runId:       runId,
+    entryTime:   t.entryTime,
+    exitTime:    t.exitTime,
+    direction:   t.direction === 'BUY' ? 'Long' : 'Short',
+    entryPrice:  t.entryPrice,
+    exitPrice:   t.exitPrice,
+    stopPrice:   t.stopLoss    ?? 0,
+    targetPrice: t.takeProfit  ?? 0,
+    mae:         t.mae         ?? 0,
+    mfe:         t.mfe         ?? 0,
+    pnlR:        t.rMultiple   ?? 0,
+    pnlAbsolute: t.netPnl,
+    barsHeld:    t.holdingBars ?? 0,
+    exitReason:  toChartExitReason(t.exitReason),
+  }))
 
   if (isLoading) {
     return (
@@ -578,7 +574,7 @@ function TradeAnalysisSection({ strategyId, scenarioId, runId }: {
           {/* Full trades table */}
           <TradesTable trades={btTrades} />
 
-          {/* Charts section — only rendered when mock data available (has pnlR etc.) */}
+          {/* Charts section — rendered when trade data has MAE/MFE/R values */}
           {chartTrades.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.xl, marginTop: SP.lg }}>
               <MAEMFEScatterChart trades={chartTrades} />
@@ -660,7 +656,7 @@ export function ResultsTab({ strategyId }: Props) {
                   fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer',
                   background: selectedScenarios.includes(s.id) ? C.blueBg : C.surface3,
                   color: selectedScenarios.includes(s.id) ? C.blue : C.textMuted,
-                  border: `1px solid ${selectedScenarios.includes(s.id) ? C.blue + '66' : C.border}`,
+                  border: `1px solid ${selectedScenarios.includes(s.id) ? C.blue66 : C.border}`,
                 }}
               >
                 {s.isBaseline && <span style={{ color: C.amber, marginRight: 4 }}>●</span>}
@@ -681,7 +677,7 @@ export function ResultsTab({ strategyId }: Props) {
                   fontSize: 10, padding: '2px 8px', borderRadius: 3, cursor: 'pointer',
                   background: modeFilter === m ? C.blueBg : C.surface3,
                   color: modeFilter === m ? C.blue : C.textMuted,
-                  border: `1px solid ${modeFilter === m ? C.blue + '66' : C.border}`,
+                  border: `1px solid ${modeFilter === m ? C.blue66 : C.border}`,
                 }}
               >
                 {m === 'All' ? 'All' : runModeOptions.find(o => o.value === m)?.label ?? m}
@@ -740,7 +736,7 @@ export function ResultsTab({ strategyId }: Props) {
                       style={{
                         borderBottom: `1px solid ${C.border2}`,
                         cursor: 'pointer',
-                        background: isExpanded ? `${C.blue}08` : 'transparent',
+                        background: isExpanded ? C.blue08 : 'transparent',
                       }}
                       onClick={() => setExpandedRunId(isExpanded ? null : r.id)}
                     >
@@ -763,7 +759,7 @@ export function ResultsTab({ strategyId }: Props) {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={10} style={{ padding: '0 16px 20px', background: `${C.blue}04` }}>
+                        <td colSpan={10} style={{ padding: '0 16px 20px', background: C.blue04 }}>
                           <TradeAnalysisSection
                             strategyId={strategyId}
                             scenarioId={r.scenarioId}

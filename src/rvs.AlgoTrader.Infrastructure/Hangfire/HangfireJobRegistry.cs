@@ -54,6 +54,16 @@ public static class HangfireJobRegistry
             "option-chain-snapshot", j => j.RunAsync(CancellationToken.None),
             "15 10 * * 1-5");
 
+        // P9: Equity screener — after market close 5:00 PM IST = 11:30 UTC
+        RecurringJob.AddOrUpdate<ScreenerJob>(
+            "equity-screener", j => j.RunAsync(CancellationToken.None),
+            "30 11 * * 1-5");
+
+        // P9: F&O expiry auto-seed — 1st of every month at 1:00 AM IST = 19:30 UTC (prev day)
+        RecurringJob.AddOrUpdate<FnoExpirySeedJob>(
+            "fno-expiry-seed", j => j.RunAsync(CancellationToken.None),
+            "30 19 1 * *");
+
         logger.LogInformation("[HangfireJobRegistry] All recurring jobs registered");
     }
 }
