@@ -197,7 +197,8 @@ export function StrategiesPage() {
               >
                 ←
               </button>
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>New Strategy</h2>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>New Strategy
+              </h2>
             </div>
             <div style={{ maxWidth: 600, margin: '0 auto' }}>
               <div style={{ fontSize: 13, color: C.textMuted, marginBottom: SP.lg, textAlign: 'center' }}>
@@ -261,7 +262,12 @@ export function StrategiesPage() {
             </div>
             <StrategyDefinitionPage
               strategyKind={creatingType}
-              onSaved={(s: Strategy) => { setCreating(false); setCreatingType(null); selectStrategy(s.id) }}
+              onSaved={(s: Strategy) => {
+                qc.invalidateQueries({ queryKey: ['strategies'] })
+                setCreating(false)
+                setCreatingType(null)
+                selectStrategy(s.id)
+              }}
               onCancel={() => setCreatingType(null)}
             />
           </div>
@@ -282,7 +288,10 @@ export function StrategiesPage() {
             <StrategyDefinitionPage
               strategyId={selectedStrategy.id}
               initialData={selectedStrategy}
-              onSaved={() => setEditingDefinition(false)}
+              onSaved={() => {
+                qc.invalidateQueries({ queryKey: ['strategies'] })
+                setEditingDefinition(false)
+              }}
               onCancel={() => setEditingDefinition(false)}
             />
           </div>
