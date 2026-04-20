@@ -5,12 +5,13 @@ import { strategyDomainApi } from '../api/client'
 import { Strategy, StrategyStatus, TradingStyle } from '../types/strategy'
 import { C, F, SP, CONTENT_PAD } from '../styles/tokens'
 import { ScenariosTab } from '../components/strategies/ScenariosTab'
-import { DeploymentsTab } from '../components/strategies/DeploymentsTab'
 import { ResultsTab } from '../components/strategies/ResultsTab'
 import { CompareTab } from '../components/strategies/CompareTab'
 import { StrategyDefinitionPage } from './StrategyDefinitionPage'
 
-type Tab = 'definition' | 'scenarios' | 'results' | 'compare' | 'deployments'
+// Deployments/instances are managed elsewhere; the Strategies space is
+// definition → scenarios → backtest results only.
+type Tab = 'definition' | 'scenarios' | 'results' | 'compare'
 
 function StatusBadge({ status }: { status: StrategyStatus }) {
   const colorMap: Record<string, string> = {
@@ -100,11 +101,10 @@ export function StrategiesPage() {
   }
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'definition',  label: 'Definition' },
-    { key: 'scenarios',   label: 'Scenarios' },
-    { key: 'results',     label: 'Results' },
-    { key: 'compare',     label: 'Compare' },
-    { key: 'deployments', label: 'Deployments' },
+    { key: 'definition', label: 'Definition' },
+    { key: 'scenarios',  label: 'Scenarios' },
+    { key: 'results',    label: 'Results' },
+    { key: 'compare',    label: 'Compare' },
   ]
 
   return (
@@ -376,10 +376,12 @@ export function StrategiesPage() {
                   onCancel={() => {}}
                 />
               )}
+              {/* Each tab receives the selected strategy definition as context.
+                  Scenarios, Results, and Compare all scope their data to
+                  selectedStrategy.id — no instance/deployment concepts here. */}
               {tab === 'scenarios' && <ScenariosTab strategy={selectedStrategy} />}
-              {tab === 'results' && <ResultsTab strategyId={selectedStrategy.id} />}
-              {tab === 'compare' && <CompareTab strategyId={selectedStrategy.id} />}
-              {tab === 'deployments' && <DeploymentsTab strategy={selectedStrategy} />}
+              {tab === 'results'   && <ResultsTab strategyId={selectedStrategy.id} />}
+              {tab === 'compare'   && <CompareTab strategyId={selectedStrategy.id} />}
             </div>
           </>
         )}

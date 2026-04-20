@@ -9,7 +9,9 @@ interface Props {
   strategyId: string
 }
 
-type CompareMode = 1 | 2 | 3
+// Mode 1: BT vs FT for the same scenario  Mode 2: Scenario A vs Scenario B
+// (deployment comparison removed — deployments are not surfaced in this space)
+type CompareMode = 1 | 2
 
 interface MetricRow {
   key: keyof RunMetrics
@@ -146,7 +148,6 @@ export function CompareTab({ strategyId }: Props) {
           {[
             { mode: 1 as CompareMode, label: 'BT vs FT (same scenario)' },
             { mode: 2 as CompareMode, label: 'Scenario A vs B' },
-            { mode: 3 as CompareMode, label: 'Different deployments' },
           ].map(({ mode, label }) => (
             <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: SP.xs, cursor: 'pointer', marginBottom: 6 }}>
               <input

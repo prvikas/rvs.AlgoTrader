@@ -776,7 +776,7 @@ export function ResultsTab({ strategyId }: Props) {
                     )}
                   </React.Fragment>
                 )}
-              })}
+              )}
             </tbody>
           </table>
         </div>
@@ -803,9 +803,18 @@ function NumericCell({ value, pct, colored, negative, decimals = 1 }: {
 
 function SkeletonRows() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
       {[1, 2, 3].map(i => (
-        <div key={i} style={{ height: 32, background: C.surface2, borderRadius: 4, opacity: 0.5 }} />
+        <div
+          key={i}
+          style={{
+            height: 32,
+            background: C.surface2,
+            borderRadius: 4,
+            opacity: 0.5,
+            marginBottom: i === 3 ? 0 : 6,
+          }}
+        />
       ))}
     </div>
   )
