@@ -143,15 +143,15 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
       drawdownScaling: { enabled: false, reduceSizeAtDrawdownPct: 10, minSizeMultiplier: 0.5 },
     }
   )
-  const [stopStateMachine, setStopStateMachine] = useState<StopStateMachine>(
-    initialData?.stopStateMachine ?? {
-      states: [{
-        id: 'state-initial', label: 'Initial',
-        stopType: StopType.ATRMultiple, value: 0,
-      }],
-      allowedRanges: {},
+  const [stopStateMachine, setStopStateMachine] = useState<StopStateMachine>(() => {
+    const sm = initialData?.stopStateMachine
+    // Guard: sm might be present in stored JSON but missing states (malformed or old format)
+    if (sm && Array.isArray(sm.states) && sm.states.length > 0) return sm
+    return {
+      states: [{ id: 'state-initial', label: 'Initial', stopType: StopType.ATRMultiple, value: 0 }],
+      allowedRanges: sm?.allowedRanges ?? {},
     }
-  )
+  })
   const [profitBooking, setProfitBooking] = useState<ProfitBookingRule>(
     initialData?.profitBooking ?? {
       enabled: false, triggerR: 1, bookPct: 50,
@@ -165,22 +165,28 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
       : defaultOptionsConfig())
   )
 
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle')
+
   const createMut = useMutation({
     mutationFn: (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>) =>
       strategyDomainApi.createStrategy(s),
-    onSuccess: (created: Strategy) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['strategies'] })
-      onSaved?.(created)
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
     },
+    onError: () => setSaveStatus('error'),
   })
 
   const updateMut = useMutation({
     mutationFn: (s: Partial<Strategy>) =>
       strategyDomainApi.updateStrategy(strategyId!, s),
-    onSuccess: (updated: Strategy) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['strategies'] })
-      onSaved?.(updated)
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
     },
+    onError: () => setSaveStatus('error'),
   })
 
   function validate(): boolean {
@@ -212,13 +218,18 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
     }
   }
 
-  function save(andGoToScenarios = false) {
+  function save() {
     if (!validate()) return
+    setSaveStatus('idle')
     const payload = buildPayload()
     if (strategyId) {
-      updateMut.mutate(payload, { onSuccess: (s: Strategy) => andGoToScenarios && onSaved?.(s) })
+      updateMut.mutate(payload, {
+        onSuccess: (s: Strategy) => onSaved?.(s),
+      })
     } else {
-      createMut.mutate(payload)
+      createMut.mutate(payload, {
+        onSuccess: (s: Strategy) => onSaved?.(s),
+      })
     }
   }
 
@@ -249,11 +260,17 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
 
   const isPending = createMut.isPending || updateMut.isPending
 
+  // Show Options Spread tab only when explicitly creating an options strategy,
+  // OR when loading an existing strategy that already has options config enabled.
+  const showOptionsTab = strategyKind === 'options' || optionsConfig.enabled
+
   const TABS: { key: SubTab; label: string }[] = [
-    { key: 'core',    label: 'Core & Indicators' },
-    { key: 'rules',   label: 'Rules' },
-    { key: 'risk',    label: 'Risk & Regime' },
-    { key: 'options', label: `Options Spread${optionsConfig.enabled ? ' *' : ''}` },
+    { key: 'core',  label: 'Core & Indicators' },
+    { key: 'rules', label: 'Rules' },
+    { key: 'risk',  label: 'Risk & Regime' },
+    ...(showOptionsTab
+      ? [{ key: 'options' as SubTab, label: `Options Spread${optionsConfig.enabled ? ' ✦' : ''}` }]
+      : []),
   ]
 
   // ── Option-strategy template definitions ─────────────────────────────────
@@ -867,11 +884,11 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
       {subTab === 'rules' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.xxl }}>
           {[
-            { key: 'longEntry' as const, label: 'Long Entry', block: longEntry, set: setLongEntry, isEntry: true },
-            { key: 'shortEntry' as const, label: 'Short Entry', block: shortEntry, set: setShortEntry, isEntry: true },
-            { key: 'longExit' as const, label: 'Long Exit', block: longExit, set: setLongExit, isEntry: false },
-            { key: 'shortExit' as const, label: 'Short Exit', block: shortExit, set: setShortExit, isEntry: false },
-          ].map(({ key, label, block, set, isEntry }) => (
+            { key: 'longEntry' as const, label: 'Long Entry', block: longEntry, set: setLongEntry },
+            { key: 'shortEntry' as const, label: 'Short Entry', block: shortEntry, set: setShortEntry },
+            { key: 'longExit' as const, label: 'Long Exit', block: longExit, set: setLongExit },
+            { key: 'shortExit' as const, label: 'Short Exit', block: shortExit, set: setShortExit },
+          ].map(({ key, label, block, set }) => (
             <div key={key}>
               <div style={{ display: 'flex', alignItems: 'center', gap: SP.sm, marginBottom: SP.sm }}>
                 <label style={checkLabel}>
@@ -879,14 +896,19 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                     onChange={e => set(prev => ({ ...prev, enabled: e.target.checked }))} />
                   <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
                 </label>
-                {block.enabled && (
-                  <select
-                    value={block.groupOperator}
-                    onChange={e => set(prev => ({ ...prev, groupOperator: e.target.value as ExitCombineLogic }))}
-                    style={{ background: C.surface2, border: `1px solid ${C.border}`, color: C.textSub, borderRadius: 4, padding: '2px 6px', fontSize: 11 }}
-                  >
-                    {logicOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+                {/* Between-groups operator — only shown (and meaningful) when 2+ groups exist */}
+                {block.enabled && block.groups.length > 1 && (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: SP.sm }}>
+                    <span style={{ fontSize: 10, color: C.textMuted }}>Between groups:</span>
+                    <select
+                      value={block.groupOperator}
+                      onChange={e => set(prev => ({ ...prev, groupOperator: e.target.value as ExitCombineLogic }))}
+                      style={{ background: C.surface2, border: `1px solid ${C.border}`, color: C.textSub, borderRadius: 4, padding: '2px 6px', fontSize: 11 }}
+                      title="How multiple groups are combined: ALL groups must match (AND) or ANY group (OR)"
+                    >
+                      {logicOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </span>
                 )}
               </div>
               {block.enabled && block.groups.map((grp, i) => (
@@ -914,10 +936,6 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                 </button>
               )}
 
-              {/* Signal Waterfall Panel (PROMPT-002) — entry blocks only */}
-              {isEntry && indicators.length > 0 && (
-                <SignalWaterfallPanel indicators={indicators} />
-              )}
             </div>
           ))}
         </div>
@@ -1010,46 +1028,56 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
               )}
             </Block>
 
-            {/* Stop State Machine (PROMPT-002) — replaces simple Stop Loss block */}
-            <Block title="Stop State Machine">
+            {/* Stop State Machine */}
+            <Block title="Stop Loss Management">
               <div style={{ fontSize: 10, color: C.textMuted, marginBottom: SP.sm }}>
-                States activate in sequence. State 1 (Initial) is always active from entry.
-                Each subsequent state fires when its activation condition is met.
+                Define how your stop loss changes as the trade moves in your favour.
+                The <strong style={{ color: C.textSub }}>Initial</strong> stop is always active from entry.
+                Add extra states to tighten or move the stop once a profit target (R) or time condition is met.
               </div>
               {stopStateMachine.states.map((state, idx) => (
                 <div key={state.id} style={{
-                  border: `1px solid ${C.border}`, borderRadius: 5, padding: '8px 10px',
-                  marginBottom: 6,
+                  border: `1px solid ${idx === 0 ? C.border : C.border3}`,
+                  borderRadius: 5, padding: '10px 12px', marginBottom: 8,
                   background: idx === 0 ? C.surface2 : C.surface,
-                  position: 'relative',
                 }}>
                   {/* State header */}
-                  <div style={{ display: 'flex', gap: SP.sm, alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ display: 'flex', gap: SP.sm, alignItems: 'center', marginBottom: 8 }}>
                     <span style={{
-                      fontSize: 10, fontWeight: 700, color: idx === 0 ? C.blue : C.textDim,
-                      background: idx === 0 ? '#1e3a5f' : C.surface3,
-                      borderRadius: 3, padding: '2px 6px', minWidth: 24, textAlign: 'center',
-                    }}>#{idx + 1}</span>
-                    <input
-                      value={state.label}
-                      readOnly={idx === 0}
-                      onChange={e => {
-                        const next = [...stopStateMachine.states]
-                        next[idx] = { ...next[idx], label: e.target.value }
-                        setStopStateMachine(p => ({ ...p, states: next }))
-                      }}
-                      style={{ ...inputStyle, flex: 1, fontWeight: 600, background: idx === 0 ? 'transparent' : undefined }}
-                    />
+                      fontSize: 10, fontWeight: 700,
+                      color: idx === 0 ? C.blue : C.amber,
+                      background: idx === 0 ? '#1e3a5f' : '#2a1f00',
+                      border: `1px solid ${idx === 0 ? '#2563eb44' : '#f59e0b44'}`,
+                      borderRadius: 3, padding: '2px 7px', whiteSpace: 'nowrap',
+                    }}>
+                      {idx === 0 ? 'INITIAL — active from entry' : `STATE ${idx + 1} — activates on condition below`}
+                    </span>
                     {idx > 0 && (
                       <button
                         onClick={() => setStopStateMachine(p => ({ ...p, states: p.states.filter((_, i) => i !== idx) }))}
-                        style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}>
+                        style={{ background: 'none', border: 'none', color: C.textMuted, cursor: 'pointer', fontSize: 14, lineHeight: 1, marginLeft: 'auto' }}>
                         ×
                       </button>
                     )}
                   </div>
+
+                  {/* Label (editable for non-initial) */}
+                  {idx > 0 && (
+                    <Field label="Label">
+                      <input
+                        value={state.label}
+                        onChange={e => {
+                          const next = [...stopStateMachine.states]
+                          next[idx] = { ...next[idx], label: e.target.value }
+                          setStopStateMachine(p => ({ ...p, states: next }))
+                        }}
+                        style={{ ...inputStyle, marginBottom: 6 }}
+                      />
+                    </Field>
+                  )}
+
                   {/* Stop type + value */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: SP.xs }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 90px', gap: SP.xs }}>
                     <Field label="Stop type">
                       <select value={state.stopType}
                         onChange={e => {
@@ -1072,15 +1100,19 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                         style={inputStyle} />
                     </Field>
                   </div>
-                  {/* Activation condition (only for non-initial states) */}
+
+                  {/* Activation condition — shown for every non-initial state */}
                   {idx > 0 && (
-                    <div style={{ marginTop: SP.xs }}>
-                      <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 4 }}>
-                        Activation condition (first met triggers this state)
+                    <div style={{
+                      marginTop: SP.sm, padding: '8px 10px',
+                      background: C.surface2, borderRadius: 4,
+                      border: `1px solid ${C.border2}`,
+                    }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: C.amber, marginBottom: 6 }}>
+                        Activation condition — switch to this state when (first met):
                       </div>
-                      <div style={{ display: 'flex', gap: SP.xs, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ fontSize: 10, color: C.textDim }}>R≥</span>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.sm }}>
+                        <Field label="Profit ≥ R multiple">
                           <input type="number" step={0.1} min={0}
                             placeholder="e.g. 1"
                             value={state.activationCondition?.triggerR ?? ''}
@@ -1089,11 +1121,9 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                               next[idx] = { ...next[idx], activationCondition: { ...next[idx].activationCondition, triggerR: e.target.value ? Number(e.target.value) : undefined } }
                               setStopStateMachine(p => ({ ...p, states: next }))
                             }}
-                            style={{ ...inputStyle, width: 65 }} />
-                        </div>
-                        <span style={{ fontSize: 10, color: C.textDim }}>or</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <span style={{ fontSize: 10, color: C.textDim }}>bars≥</span>
+                            style={inputStyle} />
+                        </Field>
+                        <Field label="Bars held ≥">
                           <input type="number" min={0}
                             placeholder="e.g. 5"
                             value={state.activationCondition?.triggerBars ?? ''}
@@ -1102,10 +1132,14 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                               next[idx] = { ...next[idx], activationCondition: { ...next[idx].activationCondition, triggerBars: e.target.value ? Number(e.target.value) : undefined } }
                               setStopStateMachine(p => ({ ...p, states: next }))
                             }}
-                            style={{ ...inputStyle, width: 65 }} />
-                        </div>
+                            style={inputStyle} />
+                        </Field>
                       </div>
-                      <Field label="On activation: move stop to">
+                      <div style={{ fontSize: 10, color: C.textDim, marginTop: 4 }}>
+                        Leave both blank to activate immediately after the previous state.
+                        Fill only one, or both (whichever is met first triggers activation).
+                      </div>
+                      <Field label="On activation — also move stop to">
                         <select value={state.moveStopTo ?? ''}
                           onChange={e => {
                             const next = [...stopStateMachine.states]
@@ -1113,10 +1147,17 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                             setStopStateMachine(p => ({ ...p, states: next }))
                           }}
                           style={inputStyle}>
-                          <option value="">— keep new stop type —</option>
+                          <option value="">— no change —</option>
                           {moveStopOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
                       </Field>
+                    </div>
+                  )}
+
+                  {/* Hint on the initial state when there are no extra states */}
+                  {idx === 0 && stopStateMachine.states.length === 1 && (
+                    <div style={{ fontSize: 10, color: C.textDim, marginTop: SP.xs, fontStyle: 'italic' }}>
+                      Click <strong>+ Add State</strong> below to define how the stop tightens as the trade profits.
                     </div>
                   )}
                 </div>
@@ -1125,7 +1166,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                 onClick={() => {
                   const newState: StopState = {
                     id: `state-${Date.now()}`,
-                    label: `State ${stopStateMachine.states.length + 1}`,
+                    label: `Breakeven / Trail`,
                     stopType: StopType.ATRMultiple, value: 1.5,
                     activationCondition: { triggerR: 1 },
                   }
@@ -1133,7 +1174,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                 }}
                 style={addBtnStyle}
               >
-                + Add Stop State
+                + Add State
               </button>
             </Block>
 
@@ -1356,14 +1397,35 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
 
       {/* Page footer */}
       <div style={{
-        display: 'flex', gap: SP.sm, justifyContent: 'flex-end',
+        display: 'flex', gap: SP.sm, justifyContent: 'flex-end', alignItems: 'center',
         paddingTop: SP.lg, marginTop: SP.lg, borderTop: `1px solid ${C.border}`,
       }}>
+        {/* Save status flash */}
+        {saveStatus === 'saved' && (
+          <span style={{ fontSize: 11, color: C.green, marginRight: SP.sm }}>✓ Saved</span>
+        )}
+        {saveStatus === 'error' && (
+          <span style={{ fontSize: 11, color: C.red, marginRight: SP.sm }}>✗ Save failed — check console</span>
+        )}
+        {Object.keys(errors).length > 0 && (() => {
+          // Surface tab-specific cross-tab hints so the user knows where to look
+          const coreErrors = ['name', 'tradingStyle', 'exitBehaviour', 'maxRisk', 'maxTrades']
+          const errKeys = Object.keys(errors)
+          const hasCore = errKeys.some(k => coreErrors.includes(k))
+          const hint = subTab !== 'core' && hasCore
+            ? 'Fix errors in Core & Indicators tab before saving'
+            : 'Fix errors above before saving'
+          return (
+            <span style={{ fontSize: 11, color: C.red, marginRight: SP.sm }}>
+              {hint}
+            </span>
+          )
+        })()}
         <button onClick={() => onCancel?.()} style={cancelBtnStyle}>Cancel</button>
-        <button onClick={() => save(false)} disabled={isPending} style={secondaryBtnStyle}>
+        <button onClick={save} disabled={isPending} style={secondaryBtnStyle}>
           {isPending ? '…' : 'Save Strategy'}
         </button>
-        <button onClick={() => save(true)} disabled={isPending} style={primaryBtnStyle}>
+        <button onClick={save} disabled={isPending} style={primaryBtnStyle}>
           {isPending ? '…' : 'Save & Go to Scenarios'}
         </button>
       </div>
@@ -1637,73 +1699,6 @@ function StatPill({
         {label}
       </span>
       <span style={{ fontWeight: 700, color, fontFamily: "'JetBrains Mono', monospace" }}>{value}</span>
-    </div>
-  )
-}
-
-// PROMPT-002: Signal Waterfall Panel — shows indicator layer chain for entry blocks
-function SignalWaterfallPanel({ indicators }: { indicators: IndicatorConfig[] }) {
-  const [open, setOpen] = useState(false)
-  const hasAnyLayer = indicators.some(i => i.signalLayer)
-  if (!hasAnyLayer) return null
-  return (
-    <div style={{ marginTop: SP.sm }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          width: '100%', background: C.surface2, border: `1px solid ${C.border}`,
-          color: C.textSub, borderRadius: 4, padding: '5px 10px', cursor: 'pointer',
-          fontSize: 11, textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        }}
-      >
-        <span>Signal Waterfall</span>
-        <span style={{ fontSize: 10, color: C.textDim }}>{open ? '▲ hide' : '▼ show'}</span>
-      </button>
-      {open && (
-        <div style={{
-          border: `1px solid ${C.border}`, borderTop: 'none', borderRadius: '0 0 4px 4px',
-          background: C.surface, padding: '8px 10px',
-        }}>
-          <div style={{ fontSize: 10, color: C.textMuted, marginBottom: 6 }}>
-            Layers evaluate top → bottom. A failed layer blocks all layers below it.
-          </div>
-          {Object.values(SignalLayer).map((layer, layerIdx) => {
-            const layerInds = indicators
-              .filter(i => i.signalLayer === layer)
-              .sort((a, b) => (a.layerOrder ?? 0) - (b.layerOrder ?? 0))
-            const isBlocked = layerIdx > 0
-            return (
-              <div key={layer} style={{
-                marginBottom: 4, borderLeft: `3px solid ${layerInds.length > 0 ? C.blue : C.border2}`,
-                paddingLeft: 8,
-              }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 2 }}>
-                  {layerIdx + 1}. {SIGNAL_LAYER_LABELS[layer]}
-                </div>
-                {layerInds.length === 0 ? (
-                  <div style={{ fontSize: 10, color: C.textDim, fontStyle: 'italic', paddingLeft: 4 }}>
-                    No indicators — layer skipped
-                  </div>
-                ) : layerInds.map(ind => (
-                  <div key={ind.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '2px 4px', fontSize: 11,
-                  }}>
-                    <span style={{
-                      fontSize: 9, fontWeight: 700, color: isBlocked ? C.textDim : '#93c5fd',
-                      background: isBlocked ? C.surface3 : '#1e3a5f',
-                      borderRadius: 3, padding: '1px 5px', minWidth: 14, textAlign: 'center',
-                    }}>—</span>
-                    <span style={{ color: C.text }}>{ind.type}</span>
-                    <span style={{ fontSize: 10, color: C.textMuted }}>{ind.timeframe}</span>
-                    <span style={{ fontSize: 10, color: C.textDim }}>{ind.role}</span>
-                  </div>
-                ))}
-              </div>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }

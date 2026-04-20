@@ -38,8 +38,13 @@ public class BacktestJobManagerTests
         pusher.Setup(p => p.PushCompletedAsync(It.IsAny<string>(), It.IsAny<BacktestJobStatusDto>()))
               .Returns(Task.CompletedTask);
 
+        // Clock must return a real "now" so the 24h cutoff is relative to actual current time.
+        var fakeClock = new Mock<rvs.AlgoTrader.Domain.Interfaces.IClock>();
+        var nowInstant = NodaTime.SystemClock.Instance.GetCurrentInstant();
+        fakeClock.Setup(c => c.NowInstant()).Returns(nowInstant);
+
         var manager = new BacktestJobManager(scopeFactory, pusher.Object,
-            Mock.Of<rvs.AlgoTrader.Domain.Interfaces.IClock>(),
+            fakeClock.Object,
             NullLogger<BacktestJobManager>.Instance);
 
         // Enqueue first job, then immediately mark it stale (before next Enqueue triggers eviction)
@@ -63,13 +68,17 @@ public class BacktestJobManagerTests
         pusher.Setup(p => p.PushCompletedAsync(It.IsAny<string>(), It.IsAny<BacktestJobStatusDto>()))
               .Returns(Task.CompletedTask);
 
+        var fakeClock = new Mock<rvs.AlgoTrader.Domain.Interfaces.IClock>();
+        var nowInstant = NodaTime.SystemClock.Instance.GetCurrentInstant();
+        fakeClock.Setup(c => c.NowInstant()).Returns(nowInstant);
+
         var manager = new BacktestJobManager(scopeFactory, pusher.Object,
-            Mock.Of<rvs.AlgoTrader.Domain.Interfaces.IClock>(),
+            fakeClock.Object,
             NullLogger<BacktestJobManager>.Instance);
 
         var jobId = await manager.EnqueueAsync(MakeDto(), CancellationToken.None);
-        // Mark completed but StartedAt = now (< 24h)
-        MarkJobCompleted(jobId, manager);
+        // Mark completed with StartedAt = 1 hour ago (well within 24h window)
+        MarkJobCompleted(jobId, manager, nowInstant.ToDateTimeOffset().AddHours(-1));
 
         // Trigger eviction
         await manager.EnqueueAsync(MakeDto(), CancellationToken.None);
@@ -90,13 +99,15 @@ public class BacktestJobManagerTests
         status.SetValue(job, BacktestJobStatus.Completed);
     }
 
-    private static void MarkJobCompleted(string jobId, BacktestJobManager manager)
+    private static void MarkJobCompleted(string jobId, BacktestJobManager manager, DateTimeOffset? startedAt = null)
     {
         var job = GetJob(jobId, manager);
         if (job == null) return;
         var status = job.GetType().GetProperty("Status")!;
         status.SetValue(job, BacktestJobStatus.Completed);
-        // Leave StartedAt = UtcNow (default — recent)
+        // Explicitly set StartedAt so the test is not affected by the MinValue default
+        var startedAtProp = job.GetType().GetProperty("StartedAt")!;
+        startedAtProp.SetValue(job, startedAt ?? DateTimeOffset.UtcNow);
     }
 
     private static object? GetJob(string jobId, BacktestJobManager manager)

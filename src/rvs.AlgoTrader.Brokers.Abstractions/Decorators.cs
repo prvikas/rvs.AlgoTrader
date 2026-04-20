@@ -101,6 +101,7 @@ public class SessionAwareBrokerClient(
 public class ReconnectingBrokerStreamClient(
     IBrokerStreamClient inner,
     IPublishEndpoint bus,
+    IClock clock,
     ILogger<ReconnectingBrokerStreamClient> logger,
     string brokerName) : IBrokerStreamClient
 {
@@ -132,7 +133,7 @@ public class ReconnectingBrokerStreamClient(
                 "CONNECTION_LOST",
                 attempt + 1,
                 Guid.NewGuid().ToString(),
-                SystemClock.Instance.GetCurrentInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
+                clock.GetCurrentInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
 
             await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
             attempt++;
@@ -145,7 +146,7 @@ public class ReconnectingBrokerStreamClient(
                     delaySeconds * attempt,
                     _subscribedTokens.ToList().AsReadOnly(),
                     Guid.NewGuid().ToString(),
-                    SystemClock.Instance.GetCurrentInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
+                    clock.GetCurrentInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
             }
             catch (Exception ex)
             {

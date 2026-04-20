@@ -25,6 +25,7 @@ public class MStockClient(
     HttpClient http,
     MStockAuth auth,
     IOptions<MStockOptions> options,
+    IClock clock,
     ILogger<MStockClient> logger) : IFullBrokerClient
 {
     private readonly DateTimeZone _ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
@@ -137,7 +138,7 @@ public class MStockClient(
                 item.TryGetProperty("price", out var p) && p.GetDecimal() > 0 ? (decimal?)p.GetDecimal() : null,
                 item.TryGetProperty("trigger_price", out var tp) && tp.GetDecimal() > 0 ? (decimal?)tp.GetDecimal() : null,
                 item.GetProperty("status").GetString()!,
-                DateTimeOffset.UtcNow));
+                clock.GetCurrentInstant().ToDateTimeOffset()));
         }
         return orders;
     }
@@ -149,7 +150,7 @@ public class MStockClient(
         var json = await response.Content.ReadAsStringAsync(ct);
         var doc = JsonDocument.Parse(json);
         var d = doc.RootElement.GetProperty("data");
-        var now = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
+        var now = clock.GetCurrentInstant().InZone(_ist);
         return new BrokerQuote(brokerToken, d.GetProperty("ltp").GetDecimal(),
             d.GetProperty("open").GetDecimal(), d.GetProperty("high").GetDecimal(),
             d.GetProperty("low").GetDecimal(), d.GetProperty("close").GetDecimal(),
@@ -333,7 +334,7 @@ public class MStockClient(
             d.GetProperty("available_cash").GetDecimal(),
             d.GetProperty("used_margin").GetDecimal(),
             d.GetProperty("net_balance").GetDecimal(),
-            SystemClock.Instance.GetCurrentInstant().InZone(_ist));
+            clock.GetCurrentInstant().InZone(_ist));
     }
 
     public async Task<IReadOnlyList<BrokerPosition>> GetPositionsAsync(CancellationToken ct)
@@ -406,7 +407,7 @@ public class MStockClient(
                 if (doc.RootElement.TryGetProperty("symbol", out var sym) &&
                     doc.RootElement.TryGetProperty("ltp", out var ltp))
                 {
-                    var now = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
+                    var now = clock.GetCurrentInstant().InZone(_ist);
                     yield return new BrokerTick(sym.GetString()!, ltp.GetDecimal(), 0, now);
                 }
             }
@@ -432,7 +433,7 @@ public class MStockClient(
         samples.Sort();
         return new LatencyReport("MStock",
             samples[samples.Count / 2], samples[(int)(samples.Count * 0.95)], samples[^1],
-            samples.Count, SystemClock.Instance.GetCurrentInstant().InZone(_ist));
+            samples.Count, clock.GetCurrentInstant().InZone(_ist));
     }
 
     // ── Instrument Master (Scrip Master) ─────────────────────────────────────

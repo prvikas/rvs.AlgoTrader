@@ -150,7 +150,16 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
     }
 
     public async Task<bool> HasDataAsync(string symbol, string timeframe, DateOnly date, CancellationToken ct = default)
-        => await db.Candles.AnyAsync(c => c.InternalSymbol == symbol && c.Timeframe == timeframe, ct);
+    {
+        // AP-014: bound timestamps — check for at least one closed candle on the given IST calendar day.
+        var dayStart = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var dayEnd   = date.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var from = Instant.FromDateTimeUtc(dayStart);
+        var to   = Instant.FromDateTimeUtc(dayEnd);
+        return await db.Candles.AnyAsync(
+            c => c.InternalSymbol == symbol && c.Timeframe == timeframe
+              && c.IsClosed && c.OpenTime >= from && c.OpenTime < to, ct);
+    }
 
     // ── ICandleRepository.GetOrAggregateAsync ────────────────────────────────
 

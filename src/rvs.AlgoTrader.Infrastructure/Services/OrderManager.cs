@@ -44,7 +44,7 @@ public sealed class OrderManager(
             state:         order.BrokerOrderId != null ? OrderManagerState.Submitted : OrderManagerState.Pending,
             correlationId: correlationId,
             strategyRunId: instance.RuntimeState?.CurrentRunId,
-            submittedAt:   DateTimeOffset.UtcNow);
+            submittedAt:   clock.NowInstant().ToDateTimeOffset());
 
         _entries[order.Id] = entry;
 
@@ -62,7 +62,7 @@ public sealed class OrderManager(
         entry.State      = isPartial ? OrderManagerState.PartialFill : OrderManagerState.Filled;
         entry.FillPrice  = fillPrice;
         entry.FilledQty  = filledQty;
-        entry.UpdatedAt  = DateTimeOffset.UtcNow;
+        entry.UpdatedAt  = clock.NowInstant().ToDateTimeOffset();
 
         logger.LogInformation("[OrderManager] Fill via WebSocket: {BrokerOrderId} qty={Qty} @ {Price} partial={Partial}",
             brokerOrderId, filledQty, fillPrice, isPartial);
@@ -108,7 +108,7 @@ public sealed class OrderManager(
                 logger.LogWarning(ex, "[OrderManager] Poll failed for {OrderId}", entry.OrderId);
                 entry.State      = OrderManagerState.Error;
                 entry.ErrorReason = ex.Message;
-                entry.UpdatedAt  = DateTimeOffset.UtcNow;
+                entry.UpdatedAt  = clock.NowInstant().ToDateTimeOffset();
             }
 
             // Increase poll interval up to cap
@@ -119,7 +119,7 @@ public sealed class OrderManager(
         {
             entry.State      = OrderManagerState.Expired;
             entry.ErrorReason = "Tracking timeout";
-            entry.UpdatedAt  = DateTimeOffset.UtcNow;
+            entry.UpdatedAt  = clock.NowInstant().ToDateTimeOffset();
             logger.LogWarning("[OrderManager] Order {OrderId} expired before reaching terminal state", entry.OrderId);
         }
 
@@ -132,7 +132,7 @@ public sealed class OrderManager(
     {
         var prev = entry.State;
         entry.State     = MapBrokerStatus(brokerOrder.Status);
-        entry.UpdatedAt = DateTimeOffset.UtcNow;
+        entry.UpdatedAt = clock.NowInstant().ToDateTimeOffset();
 
         // Detect new fill
         bool newFill = entry.State is OrderManagerState.Filled or OrderManagerState.PartialFill

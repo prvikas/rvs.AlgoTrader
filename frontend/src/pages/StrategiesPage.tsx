@@ -72,6 +72,10 @@ export function StrategiesPage() {
   const { data: strategies = [], isLoading, error, refetch } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => strategyDomainApi.listStrategies(),
+    // Avoid spurious refetches that cause the list to flicker between the
+    // optimistically-seeded cache and the in-flight server response.
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   })
 
   const deleteMut = useMutation({
@@ -168,7 +172,7 @@ export function StrategiesPage() {
               <div style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 3 }}>{s.name}</div>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                 <span style={{ fontSize: 10, color: C.textMuted }}>{s.primaryTimeframe}</span>
-                {s.instruments[0] && (
+                {s.instruments?.[0] && (
                   <span style={{ fontSize: 10, color: C.textDim, fontFamily: F.mono }}>{s.instruments[0]}</span>
                 )}
                 <StyleBadge style={s.tradingStyle} />
@@ -261,7 +265,16 @@ export function StrategiesPage() {
             </div>
             <StrategyDefinitionPage
               strategyKind={creatingType}
-              onSaved={(s: Strategy) => { setCreating(false); setCreatingType(null); selectStrategy(s.id) }}
+              onSaved={(s: Strategy) => {
+                // Seed the cache before navigating so selectedStrategy resolves
+                // immediately — the async refetch will confirm/update it in the background.
+                qc.setQueryData<Strategy[]>(['strategies'], old =>
+                  old ? [...old.filter(x => x.id !== s.id), s] : [s]
+                )
+                setCreating(false)
+                setCreatingType(null)
+                selectStrategy(s.id)
+              }}
               onCancel={() => setCreatingType(null)}
             />
           </div>
@@ -282,7 +295,12 @@ export function StrategiesPage() {
             <StrategyDefinitionPage
               strategyId={selectedStrategy.id}
               initialData={selectedStrategy}
-              onSaved={() => setEditingDefinition(false)}
+              onSaved={(s: Strategy) => {
+                qc.setQueryData<Strategy[]>(['strategies'], old =>
+                  old ? old.map(x => x.id === s.id ? s : x) : [s]
+                )
+                setEditingDefinition(false)
+              }}
               onCancel={() => setEditingDefinition(false)}
             />
           </div>
@@ -300,7 +318,7 @@ export function StrategiesPage() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: SP.sm }}>
                   <span style={{ fontSize: 15, fontWeight: 700 }}>{selectedStrategy.name}</span>
                   <span style={{ fontSize: 11, color: C.textMuted }}>{selectedStrategy.primaryTimeframe}</span>
-                  {selectedStrategy.instruments.map(i => (
+                  {(selectedStrategy.instruments ?? []).map(i => (
                     <span key={i} style={{ fontSize: 10, color: C.textDim, fontFamily: F.mono }}>{i}</span>
                   ))}
                   <StyleBadge style={selectedStrategy.tradingStyle} />
@@ -349,9 +367,17 @@ export function StrategiesPage() {
             <div style={{ flex: 1, overflowY: 'auto', padding: CONTENT_PAD }}>
               {tab === 'definition' && (
                 <StrategyDefinitionPage
+                  key={selectedStrategy.updatedAt}
                   strategyId={selectedStrategy.id}
                   initialData={selectedStrategy}
-                  onSaved={() => qc.invalidateQueries({ queryKey: ['strategies'] })}
+                  onSaved={(s: Strategy) => {
+                    qc.setQueryData<Strategy[]>(['strategies'], old =>
+                      old ? old.map(x => x.id === s.id ? s : x) : [s]
+                    )
+                    // No invalidateQueries here: setQueryData is synchronous, and a
+                    // concurrent refetch would overwrite the local update before the
+                    // server confirms, causing a flicker.
+                  }}
                   onCancel={() => {}}
                 />
               )}

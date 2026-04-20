@@ -86,6 +86,22 @@ catch (Exception ex)
     throw; // Always fatal — the app cannot run against an out-of-date schema
 }
 
+// Reset any scenario stuck in Running state from the previous server run.
+// BacktestJobManager is in-memory — jobs don't survive restarts, so every
+// "Running" scenario at startup is a stale record with no corresponding job.
+try
+{
+    using var scope = app.Services.CreateScope();
+    var scenarioSvc = scope.ServiceProvider.GetRequiredService<rvs.AlgoTrader.Application.Services.IStrategyDefinitionScenarioService>();
+    var resetCount = await scenarioSvc.ResetStaleRunningAsync(CancellationToken.None);
+    if (resetCount > 0)
+        Console.WriteLine($"[Startup] Reset {resetCount} stale Running scenario(s) → Draft");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[Startup] Warning: could not reset stale Running scenarios: {ex.Message}");
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

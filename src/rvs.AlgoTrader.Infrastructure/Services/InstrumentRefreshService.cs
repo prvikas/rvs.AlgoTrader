@@ -105,12 +105,13 @@ public class InstrumentRefreshService(
 
         // 2. Stage in memory with 30-minute TTL
         var token   = Guid.NewGuid().ToString("N")[..12];
-        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
+        var nowDto  = clock.NowInstant().ToDateTimeOffset();
+        var expiresAt = nowDto.AddMinutes(30);
         _stagingCache[token] = new StagedRefresh(brokerName, instruments.ToList(), expiresAt);
 
         // Evict any other expired entries while we're here
         var expired = _stagingCache
-            .Where(kvp => kvp.Value.ExpiresAt < DateTimeOffset.UtcNow)
+            .Where(kvp => kvp.Value.ExpiresAt < nowDto)
             .Select(kvp => kvp.Key)
             .ToList();
         foreach (var k in expired) _stagingCache.TryRemove(k, out _);
@@ -199,7 +200,7 @@ public class InstrumentRefreshService(
             StagingToken:     token,
             BrokerName:       brokerName,
             TotalDownloaded:  instruments.Count,
-            StagedAt:         DateTimeOffset.UtcNow,
+            StagedAt:         clock.NowInstant().ToDateTimeOffset(),
             ExpiresInMinutes: 30,
             Exchanges:        byExchange,
             EquityCategories: categoryRows);
@@ -213,7 +214,7 @@ public class InstrumentRefreshService(
             throw new InvalidOperationException(
                 "Staging token not found or expired. Please download the instruments again.");
 
-        if (staged.ExpiresAt < DateTimeOffset.UtcNow)
+        if (staged.ExpiresAt < clock.NowInstant().ToDateTimeOffset())
         {
             _stagingCache.TryRemove(req.StagingToken, out _);
             throw new InvalidOperationException(

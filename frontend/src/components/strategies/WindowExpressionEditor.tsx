@@ -27,7 +27,9 @@ export function WindowExpressionEditor({ value, indicators, onChange }: Props) {
         >
           <option value="">— pick —</option>
           {indicators.map(i => (
-            <option key={i.id} value={i.id}>{i.type} ({i.timeframe})</option>
+            <option key={i.id} value={i.id}>
+              {i.label?.trim() ? i.label.trim() : `${i.type} (${i.timeframe})`}
+            </option>
           ))}
         </select>
       </div>

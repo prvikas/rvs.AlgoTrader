@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
@@ -9,7 +10,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// In-memory idempotency store with 24-hour TTL cleanup.
 /// Used when Redis is not available (local dev / single-instance).
 /// </summary>
-public sealed class InMemoryIdempotencyService(ILogger<InMemoryIdempotencyService> logger) : IIdempotencyService
+public sealed class InMemoryIdempotencyService(IClock clock, ILogger<InMemoryIdempotencyService> logger) : IIdempotencyService
 {
     private readonly ConcurrentDictionary<string, (string Json, DateTimeOffset ExpiresAt)> _store = new();
     private static readonly TimeSpan Ttl = TimeSpan.FromHours(24);
@@ -18,7 +19,7 @@ public sealed class InMemoryIdempotencyService(ILogger<InMemoryIdempotencyServic
     {
         if (_store.TryGetValue(key, out var entry))
         {
-            if (entry.ExpiresAt > DateTimeOffset.UtcNow)
+            if (entry.ExpiresAt > clock.NowInstant().ToDateTimeOffset())
             {
                 logger.LogDebug("Idempotency hit for key {Key}", key);
                 var cached = JsonSerializer.Deserialize<JsonElement>(entry.Json);
@@ -32,7 +33,7 @@ public sealed class InMemoryIdempotencyService(ILogger<InMemoryIdempotencyServic
     public Task StoreAsync(string key, object response, CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(response);
-        _store[key] = (json, DateTimeOffset.UtcNow.Add(Ttl));
+        _store[key] = (json, clock.NowInstant().ToDateTimeOffset().Add(Ttl));
         return Task.CompletedTask;
     }
 }

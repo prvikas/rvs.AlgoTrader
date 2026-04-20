@@ -40,6 +40,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Alert rules persistence | DONE | MonitoringAlertRule entity+EF config; IAlertRulesRepository+EfAlertRulesRepository; DbSet wired; Create/Delete/Get handlers use real DB; AlertsController return type updated |
 | MarketCalendar 2026 | DONE | NSE holidays 2026 added to MarketCalendarService static set (Republic Day through Christmas) |
 | CancelOrder wired | DONE | CancelOrderCommandHandler calls IBrokerClientFactory+CancelOrderAsync; MarkCancelled via GetByBrokerOrderIdAsync; IOrderRepository.GetByBrokerOrderIdAsync added |
-| AP-001 fixes | DONE | SystemClock.Instance removed from BacktestRunRepository.SaveAsync, BacktestJobManager, OrderManager, MarketEvent.Create; IClock injected; test updated |
+| app_config schema | DONE | Migration 041 adds value_json+actor columns (040 was a CREATE TABLE IF NOT EXISTS no-op); backfills to_json(value); SeedAppConfigAsync updated to insert value_json; repair check added |
+| AP-001 fixes | DONE | IClock injected everywhere; zero DateTime.Now/UtcNow/SystemClock.Instance left outside DI registrations; covers OrderManager, BrokerSessionManager(both), BacktestService, BacktestJobManager, InMemoryIdempotency/KillSwitch/BrokerSession, PositionReconciliation, RedisEncryptedTokenStore, AuthController, McpController, ZerodhaClient, MStockClient, UpstoxClient, Decorators.ReconnectingBrokerStreamClient |
 
 ## Update rule: revise affected rows only; do not mark DONE without code support.

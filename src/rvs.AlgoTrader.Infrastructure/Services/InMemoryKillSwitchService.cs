@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
@@ -7,7 +8,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// In-memory kill switch. Used when Redis is not available (local dev / single-instance).
 /// State is lost on restart — kill switch defaults to inactive on startup.
 /// </summary>
-public sealed class InMemoryKillSwitchService(ILogger<InMemoryKillSwitchService> logger) : IKillSwitchService
+public sealed class InMemoryKillSwitchService(IClock clock, ILogger<InMemoryKillSwitchService> logger) : IKillSwitchService
 {
     // All 4 fields are written together — a lock ensures an atomic snapshot on read.
     // volatile alone would only guarantee visibility of _isActive but not the other fields.
@@ -29,7 +30,7 @@ public sealed class InMemoryKillSwitchService(ILogger<InMemoryKillSwitchService>
             _isActive = true;
             _activatedBy = actor;
             _reason = reason;
-            _activatedAt = DateTimeOffset.UtcNow;
+            _activatedAt = clock.NowInstant().ToDateTimeOffset();
         }
         logger.LogWarning("Kill switch ACTIVATED by {Actor}: {Reason} [{CorrelationId}]", actor, reason, correlationId);
         return Task.CompletedTask;

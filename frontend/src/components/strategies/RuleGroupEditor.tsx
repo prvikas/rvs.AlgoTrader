@@ -68,16 +68,19 @@ export function RuleGroupEditor({ group, indicators, onChange, onDelete, onDupli
             fontWeight: 600, outline: 'none',
           }}
         />
+        <span style={{ fontSize: 10, color: C.textMuted, flexShrink: 0 }}>
+          {group.conditions.length} cond. — match
+        </span>
         <select
           value={group.logicalOperator}
           onChange={e => onChange({ ...group, logicalOperator: e.target.value as ExitCombineLogic })}
           style={{ background: C.surface3, border: `1px solid ${C.border}`, color: C.textSub, borderRadius: 4, padding: '2px 6px', fontSize: 10 }}
+          title="How conditions inside this group are combined: ALL must be true (AND) or ANY one (OR)"
         >
           {logicOptions.map(o => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-        <span style={{ fontSize: 10, color: C.textMuted }}>{group.conditions.length} cond.</span>
         <button onClick={onDuplicate} style={actionBtnStyle} title="Duplicate group">⧉</button>
         <button onClick={onDelete} style={{ ...actionBtnStyle, color: C.red }} title="Delete group">×</button>
       </div>

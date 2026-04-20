@@ -386,6 +386,9 @@ export interface BacktestRequest {
   toDate: string
   initialCapital: number
   riskPerTradePercent?: number
+  /** GUID string — links this job to a strategy definition scenario so the backend
+   *  auto-updates scenario.Status → Backtested and saves metrics on completion. */
+  scenarioId?: string
   /** Fill model. Default = 0 (NextBarOpen). */
   fillModel?: FillModel
   /** Slippage in basis points applied when fillModel = 1. Default = 5 bps. */
@@ -1178,12 +1181,20 @@ interface PatchDefinitionScenarioRequest {
 function dtoToStrategy(dto: StrategyDefinitionDto): Strategy {
   let parsed: Partial<Strategy> = {}
   try { parsed = JSON.parse(dto.definitionJson) as Partial<Strategy> } catch { /* ignore */ }
+
+  // Normalise array fields up-front — guards against null/missing values in stored JSON
+  // that would crash list-rendering code accessing .[0] or .map().
+  const instruments = Array.isArray(parsed.instruments) ? parsed.instruments : []
+  const indicators  = Array.isArray(parsed.indicators)  ? parsed.indicators  : []
+  // Normalise stopStateMachine.states — may be absent or non-array in old DB rows
+  const stopStateMachine = parsed.stopStateMachine != null
+    ? { ...parsed.stopStateMachine, states: Array.isArray(parsed.stopStateMachine.states) ? parsed.stopStateMachine.states : [] }
+    : parsed.stopStateMachine
+
   return {
     // defaults for missing fields so form always has valid state
     primaryTimeframe: Timeframe.D1,
-    instruments:      [],
     status:           StrategyStatus.Draft,
-    indicators:       [],
     longEntry:        { enabled: true,  groupOperator: ExitCombineLogic.AND, groups: [] },
     shortEntry:       { enabled: false, groupOperator: ExitCombineLogic.AND, groups: [] },
     longExit:         { enabled: true,  groupOperator: ExitCombineLogic.OR,  groups: [] },
@@ -1204,6 +1215,10 @@ function dtoToStrategy(dto: StrategyDefinitionDto): Strategy {
     riskControls: { maxRiskPerTradePercent: 1, maxTradesPerDay: 5 },
     // overlay parsed fields (these override the defaults above)
     ...parsed,
+    // Re-assert normalised values — must come AFTER ...parsed so they win
+    instruments,
+    indicators,
+    ...(stopStateMachine !== undefined ? { stopStateMachine } : {}),
     // top-level fields always come from the DB row
     id:           dto.id,
     name:         dto.name,
@@ -1400,7 +1415,11 @@ export const strategyDomainApi = {
     const parsed = (() => { try { return JSON.parse(dto.definitionJson) as Partial<Strategy> } catch { return {} } })()
     const instruments = (parsed.instruments ?? [])
     const symbol = instruments[0] ?? ''
-    const timeframe = parsed.primaryTimeframe ?? 'D1'
+    // Normalise timeframe to values the backend validator accepts.
+    // Old DB rows may have stored '1D' or '1h' before the enum was corrected;
+    // cast to string to allow the dead-branch comparisons that handle those rows.
+    const rawTf = (parsed.primaryTimeframe ?? '1d') as string
+    const timeframe = rawTf === '1D' ? '1d' : rawTf === '1h' ? '60m' : rawTf
 
     if (!symbol) throw new Error('Strategy has no instruments — add at least one symbol in Core & Indicators.')
 
@@ -1423,7 +1442,8 @@ export const strategyDomainApi = {
       `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`,
       { status: ScenarioStatus.Running } satisfies PatchDefinitionScenarioRequest)
 
-    // Launch real async backtest
+    // Launch real async backtest — pass scenarioId so the backend auto-updates
+    // scenario.Status → Backtested and saves lastMetrics on completion.
     const btResp = await backtestApi.start({
       strategyName:    'GenericRules',
       parametersJson:  definitionJson,
@@ -1432,6 +1452,7 @@ export const strategyDomainApi = {
       fromDate:        scenario.backtestRange.from,
       toDate:          scenario.backtestRange.to,
       initialCapital:  scenario.capital,
+      scenarioId:      scenarioId,
     })
     const jobId: string = btResp.data?.data?.jobId ?? ''
 

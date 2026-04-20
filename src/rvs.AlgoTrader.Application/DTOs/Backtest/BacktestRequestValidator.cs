@@ -11,7 +11,7 @@ namespace rvs.AlgoTrader.Application.DTOs.Backtest;
 public class BacktestRequestDtoValidator : AbstractValidator<BacktestRequestDto>
 {
     private static readonly HashSet<string> ValidTimeframes =
-        ["1m", "3m", "5m", "15m", "30m", "60m", "1d"];
+        ["1m", "3m", "5m", "10m", "15m", "30m", "60m", "1h", "4h", "1d"];
 
     public BacktestRequestDtoValidator()
     {

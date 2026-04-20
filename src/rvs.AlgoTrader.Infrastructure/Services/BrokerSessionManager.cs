@@ -31,6 +31,7 @@ public class BrokerSessionManager(
     IConnectionMultiplexer redis,
     IBrokerClientFactory factory,
     INotificationService notifications,
+    IClock clock,
     ILogger<BrokerSessionManager> logger)
     : rvs.AlgoTrader.Brokers.Abstractions.IBrokerSessionManager,
       rvs.AlgoTrader.Application.Services.IAppBrokerSessionManager
@@ -55,7 +56,7 @@ public class BrokerSessionManager(
         var expiry = _redis.StringGet(ExpiryKey(brokerName));
         if (!expiry.HasValue) return false;
         if (!DateTimeOffset.TryParse(expiry.ToString(), out var expiresAt)) return true;
-        return expiresAt > DateTimeOffset.UtcNow.AddMinutes(5); // 5-min buffer
+        return expiresAt > clock.NowInstant().ToDateTimeOffset().AddMinutes(5); // 5-min buffer
     }
 
     public async Task StoreSessionAsync(string brokerName, LoginResult result, CancellationToken ct)
@@ -63,7 +64,7 @@ public class BrokerSessionManager(
         if (!result.Success || result.AccessToken == null) return;
 
         await _redis.StringSetAsync(TokenKey(brokerName), result.AccessToken,
-            result.ExpiresAt.HasValue ? result.ExpiresAt.Value - DateTimeOffset.UtcNow : TimeSpan.FromHours(8));
+            result.ExpiresAt.HasValue ? result.ExpiresAt.Value - clock.NowInstant().ToDateTimeOffset() : TimeSpan.FromHours(8));
 
         if (result.ExpiresAt.HasValue)
             await _redis.StringSetAsync(ExpiryKey(brokerName), result.ExpiresAt.Value.ToString("O"));
@@ -74,7 +75,7 @@ public class BrokerSessionManager(
         // mStock feed token — needed by RestoreToken on process restart
         if (!string.IsNullOrEmpty(result.FeedToken))
             await _redis.StringSetAsync(FeedTokenKey(brokerName), result.FeedToken,
-                result.ExpiresAt.HasValue ? result.ExpiresAt.Value - DateTimeOffset.UtcNow : TimeSpan.FromHours(8));
+                result.ExpiresAt.HasValue ? result.ExpiresAt.Value - clock.NowInstant().ToDateTimeOffset() : TimeSpan.FromHours(8));
 
         logger.LogInformation("[{Broker}] Session stored. Expires: {Expiry}", brokerName,
             result.ExpiresAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "unknown");

@@ -9,9 +9,9 @@ export enum Timeframe {
   M5  = '5m',
   M15 = '15m',
   M30 = '30m',
-  H1  = '1h',
+  H1  = '60m',   // MStock + validator both use '60m' for hourly
   H4  = '4h',
-  D1  = '1D',
+  D1  = '1d',    // lowercase — matches backend validator and all broker clients
 }
 
 export enum TradingStyle {
@@ -279,6 +279,9 @@ export interface ParamRange {
 
 export interface IndicatorConfig {
   id: string
+  /** Human-readable name shown in condition dropdowns (e.g. "EMA 9", "EMA 21").
+   *  Falls back to "{type} ({timeframe})" when absent. */
+  label?: string
   type: IndicatorType
   timeframe: Timeframe
   role: IndicatorRole

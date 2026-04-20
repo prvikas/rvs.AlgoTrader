@@ -164,6 +164,20 @@ public class StrategyDefinitionScenarioService(IConfiguration config) : IStrateg
         return await cmd.ExecuteNonQueryAsync(ct) > 0;
     }
 
+    public async Task<int> ResetStaleRunningAsync(CancellationToken ct)
+    {
+        await using var conn = new NpgsqlConnection(Cs);
+        await conn.OpenAsync(ct);
+
+        // BacktestJobManager is in-memory; all jobs are lost on server restart.
+        // Any scenario still in Running state has no live job — reset to Draft so
+        // the user can re-run rather than seeing a perpetual "Running" indicator.
+        await using var cmd = new NpgsqlCommand(
+            "UPDATE strategy_definition_scenarios SET status = 'Draft', updated_at = NOW() WHERE status = 'Running'",
+            conn);
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     private static StrategyDefinitionScenarioDto MapRow(NpgsqlDataReader r) => new(
         Id:                    r.GetGuid(0),
         StrategyDefinitionId:  r.GetGuid(1),

@@ -405,6 +405,45 @@ public class DatabaseMigrationRunner(
                 """,
                 "strategy_instances.allocated_capital"
             ),
+
+            // ── 040_app_config_and_symbol_prefs ───────────────────────────────
+            // Migration 040 originally used CREATE TABLE IF NOT EXISTS which was a
+            // no-op on existing DBs, leaving value_json and is_active absent.
+            // The fixed 040 uses ALTER TABLE ADD COLUMN IF NOT EXISTS.
+            // Re-run 040 if either critical column is still missing.
+            (
+                "040_app_config_and_symbol_prefs.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'app_config'
+                  AND column_name  = 'value_json';
+                """,
+                "app_config.value_json"
+            ),
+            (
+                "040_app_config_and_symbol_prefs.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'symbol_data_preferences'
+                  AND column_name  = 'is_active';
+                """,
+                "symbol_data_preferences.is_active"
+            ),
+
+            // ── 041_app_config_schema_fix ──────────────────────────────────────
+            // Backstop: re-run 041 if value_json is still absent after 040.
+            (
+                "041_app_config_schema_fix.sql",
+                """
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name   = 'app_config'
+                  AND column_name  = 'value_json';
+                """,
+                "app_config.value_json (041 backstop)"
+            ),
         };
 
         var toDelete = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -493,16 +532,26 @@ public class DatabaseMigrationRunner(
 
         foreach (var (key, value) in seeds)
         {
-            // Use parameterized query — never interpolate into SQL
+            // Use parameterized query — never interpolate into SQL.
+            // Seed into both value (original InitialMigration column) and value_json
+            // (added by migration 041) so AppConfigService.GetAsync can read them.
+            // value_json stores the value as a JSON string (double-quoted).
+            var valueJson = System.Text.Json.JsonSerializer.Serialize(value);
             cmd.Parameters.Clear();
-            cmd.CommandText = "INSERT INTO app_config (key, value, updated_at) VALUES (@k, @v, NOW()) ON CONFLICT (key) DO NOTHING;";
-            var pk = cmd.CreateParameter(); pk.ParameterName = "@k"; pk.Value = key;   cmd.Parameters.Add(pk);
-            var pv = cmd.CreateParameter(); pv.ParameterName = "@v"; pv.Value = value; cmd.Parameters.Add(pv);
+            cmd.CommandText = """
+                INSERT INTO app_config (key, value, value_json, actor, updated_at)
+                VALUES (@k, @v, @vj, 'system', NOW())
+                ON CONFLICT (key) DO NOTHING;
+                """;
+            var pk  = cmd.CreateParameter(); pk.ParameterName  = "@k";  pk.Value  = key;       cmd.Parameters.Add(pk);
+            var pv  = cmd.CreateParameter(); pv.ParameterName  = "@v";  pv.Value  = value;     cmd.Parameters.Add(pv);
+            var pvj = cmd.CreateParameter(); pvj.ParameterName = "@vj"; pvj.Value = valueJson; cmd.Parameters.Add(pvj);
             try { await cmd.ExecuteNonQueryAsync(ct); }
-            catch (NpgsqlException ex) when (ex.SqlState == "42P01")
+            catch (NpgsqlException ex) when (ex.SqlState is "42P01" or "42703")
             {
-                // app_config table does not exist yet on first run (PostgreSQL error 42P01: undefined_table);
-                // migrations will create it and the seed will succeed on next startup.
+                // 42P01 = table does not exist yet (first run before InitialMigration).
+                // 42703 = value_json/actor column not yet added (before migration 041 runs).
+                // In both cases, migrations will create/alter the table; seed succeeds on next startup.
             }
             cmd.Parameters.Clear();
         }

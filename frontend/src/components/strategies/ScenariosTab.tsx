@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { strategyDomainApi } from '../../api/client'
+import { strategyDomainApi, apiClient, backtestApi, BacktestJobStatus } from '../../api/client'
 import {
   OverrideSection, ParamRange,
   Scenario, ScenarioStatus, Strategy, RunMetrics,
@@ -9,6 +9,8 @@ import { C, F, SP, TABLE_CELL } from '../../styles/tokens'
 import { ScenarioDrawer } from './ScenarioDrawer'
 import { RightDrawer } from '../ui/RightDrawer'
 import { useEnums } from '../../context/EnumsContext'
+import { useBacktestSignalR } from '../../hooks/useBacktestSignalR'
+import { BacktestResultViewer } from './BacktestResultViewer'
 
 interface Props {
   strategy: Strategy
@@ -405,9 +407,89 @@ export function ScenariosTab({ strategy }: Props) {
   const [promotingScenario, setPromotingScenario] = useState<Scenario | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
+  // ── Visualization viewer ──────────────────────────────────────────────────
+  // When set, replaces the scenario table with BacktestResultViewer
+  const [viewingScenarioId, setViewingScenarioId] = useState<string | null>(null)
+
+  // ── Real-time job tracking ─────────────────────────────────────────────────
+  const [activeJob, setActiveJob] = useState<{ scenarioId: string; jobId: string } | null>(null)
+  const [jobProgress, setJobProgress] = useState<BacktestJobStatus | null>(null)
+
+  // Save metrics to DB and reset state when a job finishes
+  async function handleJobCompleted(status: BacktestJobStatus) {
+    if (!activeJob) return
+    const { scenarioId } = activeJob
+    try {
+      if (status.status === 'Completed' && status.result) {
+        const metrics: RunMetrics = {
+          returnPct:      (status.result.totalReturn  ?? 0) * 100,
+          maxDrawdownPct: (status.result.maxDrawdown  ?? 0) * 100,
+          sharpe:          status.result.sharpeRatio  ?? 0,
+          winRate:        (status.result.winRate      ?? 0) * 100,
+          profitFactor:    status.result.profitFactor ?? 0,
+          tradeCount:      status.result.totalTrades  ?? 0,
+          avgRPerTrade:    0,
+          expectancy:      status.result.expectancyPerTrade ?? 0,
+          avgRealisedRR:   0,
+        }
+        await apiClient.patch(
+          `/strategy-definitions/${strategy.id}/scenarios/${scenarioId}`,
+          { status: 'Backtested', lastMetricsJson: JSON.stringify(metrics), lastRunAt: new Date().toISOString() }
+        )
+      } else {
+        // Failed or cancelled — reset to Draft
+        await apiClient.patch(
+          `/strategy-definitions/${strategy.id}/scenarios/${scenarioId}`,
+          { status: 'Draft' }
+        )
+      }
+    } catch { /* ignore patch errors — query invalidation will still refresh UI */ }
+    setActiveJob(null)
+    setJobProgress(null)
+    qc.invalidateQueries({ queryKey: ['scenarios', strategy.id] })
+  }
+
+  // ── SignalR real-time stream ───────────────────────────────────────────────
+  const { isConnected: signalRConnected, liveChartBars } = useBacktestSignalR({
+    jobId: activeJob?.jobId ?? null,
+    onProgress: (status) => setJobProgress(status),
+    onCompleted: (status) => { void handleJobCompleted(status) },
+  })
+
+  // ── HTTP polling — always runs while a job is active ─────────────────────
+  // SignalR gives faster per-bar updates, but we can't rely on it exclusively:
+  // the job may complete before the subscription is registered (race on fast datasets).
+  // Both SignalR and polling update the same `jobProgress` state — last write wins,
+  // which is harmless since they carry the same fields.
+  useEffect(() => {
+    if (!activeJob) return
+    const { jobId } = activeJob
+    const timer = setInterval(async () => {
+      try {
+        const resp = await backtestApi.status(jobId)
+        const status = resp.data?.data
+        if (!status) return
+        setJobProgress(status)
+        const done = status.status === 'Completed' || status.status === 'Failed' || status.status === 'Cancelled'
+        if (done) {
+          clearInterval(timer)
+          void handleJobCompleted(status)
+        }
+      } catch { /* network error — keep polling */ }
+    }, 1500)
+    return () => clearInterval(timer)
+  }, [activeJob?.jobId]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const { data: scenarios = [], isLoading, error, refetch } = useQuery({
     queryKey: ['scenarios', strategy.id],
     queryFn: () => strategyDomainApi.listScenarios(strategy.id),
+    // Refresh every 5 s while any scenario shows Running — catches backend-side
+    // updates (e.g. status flipped to Backtested by BacktestJobManager) even if
+    // the frontend's SignalR + polling somehow missed the completion event.
+    refetchInterval: (query) => {
+      const list = query.state.data as Scenario[] | undefined
+      return list?.some(s => s.status === ScenarioStatus.Running) ? 5000 : false
+    },
   })
 
   const deleteMut = useMutation({
@@ -417,7 +499,15 @@ export function ScenariosTab({ strategy }: Props) {
 
   const runMut = useMutation({
     mutationFn: (sid: string) => strategyDomainApi.runScenario(strategy.id, sid),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['scenarios', strategy.id] }),
+    onSuccess: (result, sid) => {
+      qc.invalidateQueries({ queryKey: ['scenarios', strategy.id] })
+      if (result.jobId) {
+        setActiveJob({ scenarioId: sid, jobId: result.jobId })
+        setJobProgress(null)
+        // Auto-open the visualization viewer so user can see live progress + chart
+        setViewingScenarioId(sid)
+      }
+    },
   })
 
   function openCreate() { setEditingId(undefined); setDrawerOpen(true) }
@@ -458,6 +548,39 @@ export function ScenariosTab({ strategy }: Props) {
 
   const COLS = ['Name / Hypothesis', 'Capital', 'Range', 'Overrides', 'Return', 'DD', 'PF', 'Status', 'Actions']
 
+  // ── Viewer mode: full-width BacktestResultViewer instead of the scenario table ──
+  const viewingScenario = viewingScenarioId
+    ? scenarios.find(s => s.id === viewingScenarioId) ?? null
+    : null
+
+  if (viewingScenario) {
+    return (
+      <>
+        <BacktestResultViewer
+          strategy={strategy}
+          scenario={viewingScenario}
+          liveChartBars={liveChartBars}
+          jobProgress={activeJob?.scenarioId === viewingScenario.id ? jobProgress : null}
+          activeJobId={activeJob?.scenarioId === viewingScenario.id ? activeJob.jobId : null}
+          signalRConnected={signalRConnected}
+          onBack={() => setViewingScenarioId(null)}
+        />
+        {/* Keep drawers accessible even while viewing */}
+        <RightDrawer
+          isOpen={drawerOpen}
+          title={editingId ? 'Edit Scenario' : 'New Scenario'}
+          onClose={closeDrawer}
+        >
+          <ScenarioDrawer
+            strategy={strategy}
+            scenarioId={editingId}
+            onClose={closeDrawer}
+          />
+        </RightDrawer>
+      </>
+    )
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: SP.sm, marginBottom: SP.md }}>
@@ -487,9 +610,13 @@ export function ScenariosTab({ strategy }: Props) {
                   scenario={s}
                   onEdit={() => openEdit(s.id)}
                   onRun={() => runMut.mutate(s.id)}
+                  onView={() => setViewingScenarioId(s.id)}
                   onDelete={() => deleteMut.mutate(s.id)}
                   onPromote={() => setPromotingScenario(s)}
                   loading={runMut.isPending || deleteMut.isPending}
+                  colCount={COLS.length}
+                  jobProgress={activeJob?.scenarioId === s.id ? jobProgress : null}
+                  signalRConnected={signalRConnected}
                 />
               ))}
 
@@ -524,10 +651,14 @@ export function ScenariosTab({ strategy }: Props) {
                         scenario={s}
                         onEdit={() => openEdit(s.id)}
                         onRun={() => runMut.mutate(s.id)}
+                        onView={() => setViewingScenarioId(s.id)}
                         onDelete={() => deleteMut.mutate(s.id)}
                         onPromote={() => setPromotingScenario(s)}
                         loading={runMut.isPending || deleteMut.isPending}
                         indented
+                        colCount={COLS.length}
+                        jobProgress={activeJob?.scenarioId === s.id ? jobProgress : null}
+                        signalRConnected={signalRConnected}
                       />
                     ))}
                   </React.Fragment>
@@ -577,71 +708,164 @@ export function ScenariosTab({ strategy }: Props) {
 
 // ── Scenario row ──────────────────────────────────────────────────────────────
 
-function ScenarioRow({ scenario: s, onEdit, onRun, onDelete, onPromote, loading, indented }: {
+function ScenarioRow({ scenario: s, onEdit, onRun, onView, onDelete, onPromote, loading, indented, colCount, jobProgress, signalRConnected }: {
   scenario: Scenario
   onEdit: () => void
   onRun: () => void
+  onView: () => void
   onDelete: () => void
   onPromote: () => void
   loading: boolean
   indented?: boolean
+  colCount: number
+  jobProgress: BacktestJobStatus | null
+  signalRConnected: boolean
 }) {
+  const isRunning = s.status === ScenarioStatus.Running
   return (
-    <tr style={{ borderBottom: `1px solid ${C.border2}` }}>
-      <td style={{ ...tdStyle, paddingLeft: indented ? 24 : undefined }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {s.isBaseline && (
-            <span style={{
-              fontSize: 9, fontWeight: 700, color: C.amber,
-              padding: '1px 5px', borderRadius: 2,
-              border: `1px solid ${C.amber44}`, background: C.amber11,
-            }}>BASE</span>
-          )}
-          <span style={{ fontWeight: 600 }}>{s.name}</span>
-        </div>
-        {s.hypothesis && (
-          <div
-            title={s.hypothesis}
-            style={{ fontSize: 10, color: C.textMuted, marginTop: 2, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {s.hypothesis.length > 60 ? s.hypothesis.slice(0, 57) + '…' : s.hypothesis}
+    <React.Fragment>
+      <tr style={{ borderBottom: isRunning ? 'none' : `1px solid ${C.border2}` }}>
+        <td style={{ ...tdStyle, paddingLeft: indented ? 24 : undefined }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {s.isBaseline && (
+              <span style={{
+                fontSize: 9, fontWeight: 700, color: C.amber,
+                padding: '1px 5px', borderRadius: 2,
+                border: `1px solid ${C.amber44}`, background: C.amber11,
+              }}>BASE</span>
+            )}
+            <span style={{ fontWeight: 600 }}>{s.name}</span>
           </div>
-        )}
-        {s.hypothesisTag && (
-          <span style={{
-            fontSize: 9, color: C.blue, padding: '1px 4px', borderRadius: 2,
-            border: `1px solid ${C.blue44}`, background: C.blue11, marginTop: 2, display: 'inline-block',
-          }}>
-            {s.hypothesisTag}
-          </span>
-        )}
-      </td>
-      <td style={{ ...tdStyle, fontFamily: F.mono, textAlign: 'right' }}>
-        ₹{(s.capital / 1000).toFixed(0)}K
-      </td>
-      <td style={{ ...tdStyle, color: C.textMuted }}>
-        {s.backtestRange.from.slice(0, 10)} – {s.backtestRange.to.slice(0, 10)}
-      </td>
-      <td style={{ ...tdStyle, color: C.textSub, maxWidth: 180 }} title={
-        s.parameterOverrides.map(o => `${o.paramKey}: ${o.baseValue}→${o.overrideValue}`).join(', ')
-      }>
-        {overridesSummary(s)}
-      </td>
-      <MetricCell value={s.lastMetrics?.returnPct} positive={(s.lastMetrics?.returnPct ?? 0) >= 0} />
-      <MetricCell value={s.lastMetrics?.maxDrawdownPct} positive={false} />
-      <MetricCell value={s.lastMetrics?.profitFactor} />
-      <td style={tdStyle}>
-        <StatusChip status={s.status} promotionNotes={s.promotionNotes} />
-      </td>
-      <td style={tdStyle}>
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          <ActionBtn label="Run" onClick={onRun} loading={loading} />
-          <ActionBtn label="Edit" onClick={onEdit} />
-          <ActionBtn label="→ Fwd" onClick={onPromote} />
-          <ActionBtn label="Delete" danger onClick={onDelete} loading={loading} />
-        </div>
-      </td>
-    </tr>
+          {s.hypothesis && (
+            <div
+              title={s.hypothesis}
+              style={{ fontSize: 10, color: C.textMuted, marginTop: 2, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {s.hypothesis.length > 60 ? s.hypothesis.slice(0, 57) + '…' : s.hypothesis}
+            </div>
+          )}
+          {s.hypothesisTag && (
+            <span style={{
+              fontSize: 9, color: C.blue, padding: '1px 4px', borderRadius: 2,
+              border: `1px solid ${C.blue44}`, background: C.blue11, marginTop: 2, display: 'inline-block',
+            }}>
+              {s.hypothesisTag}
+            </span>
+          )}
+        </td>
+        <td style={{ ...tdStyle, fontFamily: F.mono, textAlign: 'right' }}>
+          ₹{(s.capital / 1000).toFixed(0)}K
+        </td>
+        <td style={{ ...tdStyle, color: C.textMuted }}>
+          {s.backtestRange.from.slice(0, 10)} – {s.backtestRange.to.slice(0, 10)}
+        </td>
+        <td style={{ ...tdStyle, color: C.textSub, maxWidth: 180 }} title={
+          s.parameterOverrides.map(o => `${o.paramKey}: ${o.baseValue}→${o.overrideValue}`).join(', ')
+        }>
+          {overridesSummary(s)}
+        </td>
+        <MetricCell value={s.lastMetrics?.returnPct} positive={(s.lastMetrics?.returnPct ?? 0) >= 0} />
+        <MetricCell value={s.lastMetrics?.maxDrawdownPct} positive={false} />
+        <MetricCell value={s.lastMetrics?.profitFactor} />
+        <td style={tdStyle}>
+          <StatusChip status={s.status} promotionNotes={s.promotionNotes} />
+        </td>
+        <td style={tdStyle}>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            <ActionBtn label="Run" onClick={onRun} loading={loading} disabled={isRunning} title={isRunning ? 'Backtest is already running' : undefined} />
+            {(isRunning || s.status === ScenarioStatus.Backtested) && (
+              <ActionBtn label={isRunning ? 'View Live' : 'View'} onClick={onView} />
+            )}
+            <ActionBtn label="Edit" onClick={onEdit} disabled={isRunning} />
+            <ActionBtn label="→ Fwd" onClick={onPromote} disabled={s.status !== ScenarioStatus.Backtested} />
+            <ActionBtn label="Delete" danger onClick={onDelete} loading={loading} disabled={isRunning} />
+          </div>
+        </td>
+      </tr>
+
+      {/* ── Real-time progress panel ── */}
+      {isRunning && (
+        <tr style={{ borderBottom: `1px solid ${C.border2}` }}>
+          <td colSpan={colCount} style={{ padding: '10px 14px', background: C.amber11 }}>
+            {jobProgress && (jobProgress.status === 'Running' || jobProgress.status === 'Downloading') ? (
+              /* ── Live progress from SignalR / HTTP poll ── */
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <span style={{
+                    display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                    background: C.amber, flexShrink: 0,
+                    animation: 'pulse 1.2s ease-in-out infinite',
+                  }} />
+                  <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>
+                    {jobProgress.status === 'Downloading' ? 'Downloading data…' : 'Backtest running…'}
+                  </span>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>
+                    {!signalRConnected && <span style={{ color: C.textDim, fontSize: 10 }}>(polling)</span>}
+                  </span>
+                </div>
+
+                {/* Progress bar */}
+                <div style={{ position: 'relative', height: 6, background: C.surface3, borderRadius: 3, marginBottom: 8, overflow: 'hidden' }}>
+                  <div style={{
+                    position: 'absolute', left: 0, top: 0, height: '100%',
+                    width: `${jobProgress.progressPct}%`,
+                    background: C.amber, borderRadius: 3,
+                    transition: 'width 0.4s ease',
+                  }} />
+                </div>
+
+                {/* Metrics row */}
+                <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+                  <Stat label="Progress" value={`${jobProgress.progressPct.toFixed(1)}%`} />
+                  {jobProgress.totalBars > 0 && (
+                    <Stat label="Bar" value={`${jobProgress.currentBar.toLocaleString()} / ${jobProgress.totalBars.toLocaleString()}`} />
+                  )}
+                  <Stat label="Trades" value={String(jobProgress.tradesSoFar)} />
+                  {jobProgress.currentEquity > 0 && (
+                    <Stat
+                      label="Equity"
+                      value={`₹${Math.round(jobProgress.currentEquity).toLocaleString('en-IN')}`}
+                      color={jobProgress.currentEquity >= s.capital ? C.green : C.red}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : jobProgress && (jobProgress.status === 'Failed' || jobProgress.status === 'Cancelled') ? (
+              /* ── Error state ── */
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 12, color: C.red, fontWeight: 600 }}>
+                  {jobProgress.status === 'Failed' ? '✗ Backtest failed' : '✗ Backtest cancelled'}
+                </span>
+                {jobProgress.error && (
+                  <span style={{ fontSize: 11, color: C.textMuted }}>{jobProgress.error}</span>
+                )}
+              </div>
+            ) : (
+              /* ── Waiting for first progress event ── */
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{
+                  display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                  background: C.amber, animation: 'pulse 1.2s ease-in-out infinite',
+                }} />
+                <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>Starting backtest…</span>
+                <span style={{ fontSize: 11, color: C.textMuted }}>
+                  {signalRConnected ? 'Connected via real-time stream' : 'Connecting to engine…'}
+                </span>
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </React.Fragment>
+  )
+}
+
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 9, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+      <span style={{ fontSize: 12, fontFamily: F.mono, color: color ?? C.text, fontWeight: 600 }}>{value}</span>
+    </div>
   )
 }
 
@@ -649,19 +873,21 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onDelete, onPromote, loading,
 
 import React from 'react'
 
-function ActionBtn({ label, onClick, loading, danger }: {
-  label: string; onClick: () => void; loading?: boolean; danger?: boolean
+function ActionBtn({ label, onClick, loading, danger, disabled, title }: {
+  label: string; onClick: () => void; loading?: boolean; danger?: boolean; disabled?: boolean; title?: string
 }) {
+  const isDisabled = loading || disabled
   return (
     <button
       onClick={onClick}
-      disabled={loading}
+      disabled={isDisabled}
+      title={title}
       style={{
         background: danger ? C.redBg : C.surface2,
         color: danger ? C.red : C.textSub,
         border: `1px solid ${danger ? C.red44 : C.border}`,
-        borderRadius: 4, padding: '3px 8px', cursor: loading ? 'not-allowed' : 'pointer',
-        fontSize: 11, opacity: loading ? 0.6 : 1,
+        borderRadius: 4, padding: '3px 8px', cursor: isDisabled ? 'not-allowed' : 'pointer',
+        fontSize: 11, opacity: isDisabled ? 0.4 : 1,
       }}
     >
       {loading ? '…' : label}

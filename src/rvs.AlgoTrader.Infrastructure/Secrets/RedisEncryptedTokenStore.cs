@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using StackExchange.Redis;
 using rvs.AlgoTrader.Application.Services;
 
@@ -21,6 +22,7 @@ namespace rvs.AlgoTrader.Infrastructure.Secrets;
 public sealed class RedisEncryptedTokenStore(
     IConnectionMultiplexer redis,
     IConfiguration config,
+    IClock clock,
     ILogger<RedisEncryptedTokenStore> logger) : ITokenStore
 {
     private const string ConfigKey = "TokenStore:EncryptionKey";
@@ -32,7 +34,7 @@ public sealed class RedisEncryptedTokenStore(
 
     public async Task SetAsync(string key, string token, DateTimeOffset expiresAt, CancellationToken ct = default)
     {
-        var ttl = expiresAt - DateTimeOffset.UtcNow;
+        var ttl = expiresAt - clock.NowInstant().ToDateTimeOffset();
         if (ttl <= TimeSpan.Zero)
         {
             logger.LogWarning("[TokenStore] SetAsync called with already-expired TTL for key={Key}", key);

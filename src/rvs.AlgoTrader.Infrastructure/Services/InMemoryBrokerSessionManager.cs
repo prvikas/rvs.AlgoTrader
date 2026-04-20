@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 
@@ -13,6 +14,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// the in-memory dict before any requests arrive.
 /// </summary>
 public class InMemoryBrokerSessionManager(
+    IClock clock,
     ILogger<InMemoryBrokerSessionManager> logger,
     DbBrokerSessionPersistence dbPersistence)
     : IBrokerSessionManager, IAppBrokerSessionManager
@@ -32,7 +34,7 @@ public class InMemoryBrokerSessionManager(
     {
         if (!_sessions.TryGetValue(brokerName, out var entry)) return false;
         if (entry.ExpiresAt.HasValue)
-            return entry.ExpiresAt.Value > DateTimeOffset.UtcNow.AddMinutes(5);
+            return entry.ExpiresAt.Value > clock.NowInstant().ToDateTimeOffset().AddMinutes(5);
         return !string.IsNullOrEmpty(entry.AccessToken);
     }
 

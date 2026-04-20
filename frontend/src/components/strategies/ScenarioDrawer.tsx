@@ -121,26 +121,55 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: SP.md }}>
-      {/* Inheritance notice */}
-      <div style={{
-        fontSize: 10, color: C.textMuted, fontStyle: 'italic',
-        padding: SP.sm, background: C.surface2, borderRadius: 4,
-      }}>
-        INHERITED FROM: {strategy.name}<br />
-        Indicators, rules, and exit structure are fixed. Only parameter values may be overridden
-        within the ranges set by the strategy.
-      </div>
 
-      {/* Hypothesis context (PROMPT-002) */}
+      {/* ── 1. Run configuration — FIRST so Name is immediately visible ── */}
       <section>
-        <SectionLabel>HYPOTHESIS</SectionLabel>
+        <SectionLabel>SCENARIO DETAILS</SectionLabel>
         <div style={{ display: 'flex', flexDirection: 'column', gap: SP.sm }}>
-          <Field label="Hypothesis (what are you testing?)">
+          <Field label="Name *" error={errors.name}>
+            <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g. Base case — EMA 21" />
+          </Field>
+          <Field label="Description">
+            <textarea
+              value={description} onChange={e => setDescription(e.target.value)}
+              rows={2} style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </Field>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.sm }}>
+            <Field label="Capital (₹) *" error={errors.capital}>
+              <input
+                type="number" min={1} value={capital}
+                onChange={e => setCapital(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </Field>
+            <Field label="Broker account">
+              <select value={broker} onChange={e => setBroker(e.target.value as Broker)} style={inputStyle}>
+                {brokerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.sm }}>
+            <Field label="Backtest from">
+              <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={inputStyle} />
+            </Field>
+            <Field label="Backtest to">
+              <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={inputStyle} />
+            </Field>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 2. Hypothesis ── */}
+      <section>
+        <SectionLabel>HYPOTHESIS (optional)</SectionLabel>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: SP.sm }}>
+          <Field label="What are you testing?">
             <textarea
               value={hypothesis}
               onChange={e => setHypothesis(e.target.value)}
               placeholder="e.g. Shortening the EMA period will improve win rate in trending regimes…"
-              rows={3}
+              rows={2}
               style={{ ...inputStyle, resize: 'vertical' }}
             />
           </Field>
@@ -157,44 +186,54 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
               display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
               padding: '6px 0', fontSize: 12, color: isBaseline ? C.green : C.textMuted,
             }}>
-              <input
-                type="checkbox"
-                checked={isBaseline}
-                onChange={e => setIsBaseline(e.target.checked)}
-              />
-              Mark as baseline
+              <input type="checkbox" checked={isBaseline} onChange={e => setIsBaseline(e.target.checked)} />
+              Baseline
             </label>
           </div>
         </div>
       </section>
 
-      {/* Inherited indicators read-only */}
-      <section>
-        <SectionLabel>INHERITED INDICATORS — READ ONLY</SectionLabel>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-          <thead>
-            <tr style={{ background: C.surface2 }}>
-              {['Indicator', 'TF', 'Role', 'Base Params'].map(h => (
-                <th key={h} style={thStyle}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {strategy.indicators.map(ind => (
-              <tr key={ind.id} style={{ borderBottom: `1px solid ${C.border2}` }}>
-                <td style={tdStyle}>{ind.type}</td>
-                <td style={{ ...tdStyle, color: C.textMuted }}>{ind.timeframe}</td>
-                <td style={{ ...tdStyle, color: C.textMuted }}>{ind.role}</td>
-                <td style={{ ...tdStyle, color: C.textDim, fontSize: 10 }}>
-                  {Object.entries(ind.baseParams).map(([k, v]) => `${k}:${v}`).join(', ')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      {/* ── 3. Inherited notice ── */}
+      <div style={{
+        fontSize: 10, color: C.textMuted, fontStyle: 'italic',
+        padding: SP.sm, background: C.surface2, borderRadius: 4,
+      }}>
+        Strategy: <strong style={{ color: C.textSub }}>{strategy.name}</strong> — indicators, rules, and exit structure are inherited and fixed. Only parameter values may be overridden below.
+      </div>
 
-      {/* Parameter overrides */}
+      {/* ── 4. Inherited indicators read-only ── */}
+      {strategy.indicators.length > 0 && (
+        <section>
+          <SectionLabel>INHERITED INDICATORS</SectionLabel>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+            <thead>
+              <tr style={{ background: C.surface2 }}>
+                {['Indicator', 'TF', 'Params'].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {strategy.indicators.map(ind => (
+                <tr key={ind.id} style={{ borderBottom: `1px solid ${C.border2}` }}>
+                  <td style={tdStyle}>
+                    {ind.label?.trim()
+                      ? <><strong>{ind.label}</strong> <span style={{ color: C.textMuted, fontSize: 10 }}>({ind.type})</span></>
+                      : ind.type
+                    }
+                  </td>
+                  <td style={{ ...tdStyle, color: C.textMuted }}>{ind.timeframe}</td>
+                  <td style={{ ...tdStyle, color: C.textDim, fontSize: 10 }}>
+                    {Object.entries(ind.baseParams).map(([k, v]) => `${k}:${v}`).join(', ')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* ── 5. Parameter overrides ── */}
       <section>
         <SectionLabel>PARAMETER OVERRIDES</SectionLabel>
         {strategy.indicators.map(ind => {
@@ -287,42 +326,6 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
             ))}
           </div>
         )}
-      </section>
-
-      {/* Run configuration */}
-      <section>
-        <SectionLabel>RUN CONFIGURATION</SectionLabel>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: SP.sm }}>
-          <Field label="Name *" error={errors.name}>
-            <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
-          </Field>
-          <Field label="Description">
-            <textarea
-              value={description} onChange={e => setDescription(e.target.value)}
-              rows={2} style={{ ...inputStyle, resize: 'vertical' }}
-            />
-          </Field>
-          <Field label="Capital (₹) *" error={errors.capital}>
-            <input
-              type="number" min={1} value={capital}
-              onChange={e => setCapital(Number(e.target.value))}
-              style={inputStyle}
-            />
-          </Field>
-          <Field label="Broker account">
-            <select value={broker} onChange={e => setBroker(e.target.value as Broker)} style={inputStyle}>
-              {brokerOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.sm }}>
-            <Field label="Backtest from">
-              <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={inputStyle} />
-            </Field>
-            <Field label="Backtest to">
-              <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={inputStyle} />
-            </Field>
-          </div>
-        </div>
       </section>
 
       {/* Footer */}

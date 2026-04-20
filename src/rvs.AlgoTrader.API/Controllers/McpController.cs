@@ -1,6 +1,7 @@
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using NodaTime;
 using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.Commands.Strategy;
 using rvs.AlgoTrader.Application.DTOs.Backtest;
@@ -26,7 +27,8 @@ public class McpController(
     IKillSwitchService           killSwitch,
     IBacktestJobManager          jobManager,
     IBacktestRunRepository       backtestRunRepo,
-    IStrategyInstanceRepository  strategyRepo) : ControllerBase
+    IStrategyInstanceRepository  strategyRepo,
+    IClock                       clock) : ControllerBase
 {
     // ── GET /mcp/strategy-status ─────────────────────────────────────────────
 
@@ -141,7 +143,7 @@ public class McpController(
         return Ok(ApiResponse<McpKillSwitchResponseDto>.Ok(new McpKillSwitchResponseDto(
             Scope:     "global",
             Active:    request.Active,
-            AppliedAt: DateTimeOffset.UtcNow,
+            AppliedAt: clock.GetCurrentInstant().ToDateTimeOffset(),
             AuditId:   Guid.NewGuid())));
     }
 

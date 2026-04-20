@@ -33,8 +33,8 @@ public class CreateStrategyInstanceCommandValidator : AbstractValidator<CreateSt
         RuleFor(x => x.Timeframe)
             .NotEmpty().When(x => x.WatchlistId == null)
             .WithMessage("Timeframe is required when no WatchlistId is provided.")
-            .Must(tf => tf is null || new[] { "1m","3m","5m","15m","30m","60m","1d" }.Contains(tf))
-            .WithMessage("Timeframe must be one of: 1m, 3m, 5m, 15m, 30m, 60m, 1d.")
+            .Must(tf => tf is null || new[] { "1m","3m","5m","10m","15m","30m","60m","1h","4h","1d" }.Contains(tf))
+            .WithMessage("Timeframe must be one of: 1m, 3m, 5m, 10m, 15m, 30m, 60m, 1h, 4h, 1d.")
             .When(x => x.Timeframe != null);
     }
 }

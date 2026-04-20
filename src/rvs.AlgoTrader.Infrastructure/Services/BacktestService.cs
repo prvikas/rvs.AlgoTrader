@@ -16,10 +16,12 @@ public class BacktestService(
     IBacktestEngine engine,
     IHistoricalDownloadService downloader,
     IBacktestRunRepository runRepo,
+    IClock clock,
     ILogger<BacktestService> logger) : IBacktestService
 {
     public async Task<BacktestResultDto> RunAsync(BacktestRequestDto dto, CancellationToken ct)
     {
+        var startedAt = clock.NowInstant().ToDateTimeOffset();
         var request = BuildRequest(dto);
 
         // First attempt
@@ -43,7 +45,7 @@ public class BacktestService(
 
             if (!dl.Success || dl.BarCount == 0)
             {
-                return MapToDto(result) with
+                return MapToDto(result, startedAt) with
                 {
                     Error = $"No data available for {dto.InternalSymbol}/{dto.Timeframe} " +
                             $"({dto.FromDate} – {dto.ToDate}). " +
@@ -61,12 +63,12 @@ public class BacktestService(
         // Persist successful run to DB
         if (result.Success)
         {
-            var dto2 = MapToDto(result);
+            var dto2 = MapToDto(result, startedAt);
             await runRepo.SaveAsync(dto2, ct);
             return dto2;
         }
 
-        return MapToDto(result);
+        return MapToDto(result, startedAt);
     }
 
     public Task<object> RunWalkForwardAsync(BacktestRequestDto dto, CancellationToken ct)
@@ -85,7 +87,7 @@ public class BacktestService(
         SlippageBasisPoints: dto.SlippageBasisPoints,
         BrokerageFlatPerSide: dto.BrokerageFlatPerSide);
 
-    private static BacktestResultDto MapToDto(BacktestResult r) => new(
+    private static BacktestResultDto MapToDto(BacktestResult r, DateTimeOffset startedAt) => new(
         Id: null,
         Success: r.Success,
         StrategyName: r.StrategyName,
@@ -117,7 +119,7 @@ public class BacktestService(
         MaxLots: r.MaxLots,
         DataHash: r.DataHash,
         Error: r.Error,
-        StartedAt: DateTimeOffset.UtcNow,
+        StartedAt: startedAt,
         Trades: r.Trades.Select(t =>
         {
             // R-multiple: NetPnl ÷ initial monetary risk

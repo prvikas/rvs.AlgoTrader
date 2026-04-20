@@ -93,7 +93,7 @@ public class BacktestJobManager(
         {
             // BJ-2: Stamp actual execution start (not enqueue time) so StartedAt reflects when
             // the job began running, not when it was queued.
-            job.StartedAt = DateTimeOffset.UtcNow;
+            job.StartedAt = clock.NowInstant().ToDateTimeOffset();
             job.Status = BacktestJobStatus.Running;
             await pusher.PushProgressAsync(jobId, job.ToDto());
 
@@ -148,7 +148,7 @@ public class BacktestJobManager(
             }
 
             // Map result → DTO
-            var resultDto = MapToDto(result);
+            var resultDto = MapToDto(result, clock.NowInstant().ToDateTimeOffset());
 
             // Persist if successful
             if (result.Success)
@@ -203,7 +203,7 @@ public class BacktestJobManager(
     // BJ-1: Remove completed/failed/cancelled jobs older than 24h from the in-memory dictionary.
     private void CleanupOldJobs()
     {
-        var cutoff = DateTimeOffset.UtcNow.AddHours(-24);
+        var cutoff = clock.NowInstant().ToDateTimeOffset().AddHours(-24);
         foreach (var (id, job) in _jobs)
         {
             if (job.Status is BacktestJobStatus.Completed or BacktestJobStatus.Failed or BacktestJobStatus.Cancelled
@@ -232,7 +232,7 @@ public class BacktestJobManager(
         BreakEvenAt1R:        dto.BreakEvenAt1R,
         CircuitBreakerPct:    dto.CircuitBreakerPct);
 
-    private static BacktestResultDto MapToDto(BacktestResult r) => new(
+    private static BacktestResultDto MapToDto(BacktestResult r, DateTimeOffset startedAt) => new(
         Id: null,
         Success: r.Success,
         StrategyName: r.StrategyName,
@@ -264,7 +264,7 @@ public class BacktestJobManager(
         MaxLots: r.MaxLots,
         DataHash: r.DataHash,
         Error: r.Error,
-        StartedAt: DateTimeOffset.UtcNow,
+        StartedAt: startedAt,
         Trades: r.Trades.Select(t => new BacktestTradeDto(
             Direction: t.Direction,
             EntryPrice: t.EntryPrice,
@@ -312,7 +312,7 @@ internal sealed class BacktestJob(string jobId)
 {
     public string  JobId          { get; } = jobId;
     /// <summary>Set at actual execution start (RunJobAsync) — not enqueue time — so it reflects when work began.</summary>
-    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.MinValue;
     /// <summary>Set when this job was triggered by EnqueueScenarioAsync or when ScenarioId is provided in BacktestRequestDto.</summary>
     public Guid?   ScenarioId     { get; init; }
     public BacktestJobStatus Status { get; set; } = BacktestJobStatus.Queued;

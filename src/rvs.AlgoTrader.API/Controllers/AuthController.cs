@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using NodaTime;
 using rvs.AlgoTrader.Application.Commands.Broker;
 using rvs.AlgoTrader.Application.DTOs.Auth;
 using rvs.AlgoTrader.Application.DTOs.Broker;
@@ -19,6 +20,7 @@ namespace rvs.AlgoTrader.API.Controllers;
 public class AuthController(
     IMediator mediator,
     IConfiguration config,
+    IClock clock,
     IOptions<FeaturesOptions> featuresOptions,
     IOptions<LocalAuthOptions> localAuthOptions) : ControllerBase
 {
@@ -76,7 +78,7 @@ public class AuthController(
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(
             Token: jwtToken,
             BrokerName: "None",
-            ExpiresAt: DateTimeOffset.UtcNow.AddHours(24)
+            ExpiresAt: clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24)
         )));
     }
 
@@ -103,7 +105,7 @@ public class AuthController(
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(
             Token: jwtToken,
             BrokerName: brokerResult.BrokerName,
-            ExpiresAt: DateTimeOffset.UtcNow.AddHours(24)
+            ExpiresAt: clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24)
         )));
     }
 
@@ -127,7 +129,7 @@ public class AuthController(
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(
             Token: jwtToken,
             BrokerName: "None",
-            ExpiresAt: DateTimeOffset.UtcNow.AddHours(24)
+            ExpiresAt: clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24)
         )));
     }
 

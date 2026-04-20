@@ -15,4 +15,11 @@ public interface IStrategyDefinitionScenarioService
     Task<StrategyDefinitionScenarioDto?> UpdateAsync(Guid id, UpsertDefinitionScenarioRequest request, CancellationToken ct);
     Task<StrategyDefinitionScenarioDto?> PatchAsync(Guid id, PatchDefinitionScenarioRequest request, CancellationToken ct);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct);
+
+    /// <summary>
+    /// Resets all scenarios stuck in the Running state back to Draft.
+    /// Called once on startup: BacktestJobManager is in-memory, so any scenario
+    /// still marked Running after a server restart has no corresponding live job.
+    /// </summary>
+    Task<int> ResetStaleRunningAsync(CancellationToken ct);
 }

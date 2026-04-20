@@ -21,7 +21,8 @@ public class UpstoxOptions
 public class UpstoxClient(
     HttpClient http,
     UpstoxAuth auth,
-    IOptions<UpstoxOptions> options) : IFullBrokerClient
+    IOptions<UpstoxOptions> options,
+    IClock clock) : IFullBrokerClient
 {
     private readonly DateTimeZone _ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
     private string? _accessToken;
@@ -139,7 +140,7 @@ public class UpstoxClient(
                 item.TryGetProperty("price", out var p) && p.GetDecimal() > 0 ? (decimal?)p.GetDecimal() : null,
                 item.TryGetProperty("trigger_price", out var tp) && tp.GetDecimal() > 0 ? (decimal?)tp.GetDecimal() : null,
                 item.GetProperty("status").GetString()!,
-                DateTimeOffset.UtcNow));
+                clock.GetCurrentInstant().ToDateTimeOffset()));
         }
         return orders;
     }
@@ -151,7 +152,7 @@ public class UpstoxClient(
         var json = await response.Content.ReadAsStringAsync(ct);
         var doc = JsonDocument.Parse(json);
         var d = doc.RootElement.GetProperty("data").EnumerateObject().First().Value;
-        var now = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
+        var now = clock.GetCurrentInstant().InZone(_ist);
         return new BrokerQuote(brokerToken, d.GetProperty("last_price").GetDecimal(),
             d.GetProperty("ohlc").GetProperty("open").GetDecimal(),
             d.GetProperty("ohlc").GetProperty("high").GetDecimal(),
@@ -239,7 +240,7 @@ public class UpstoxClient(
             d.GetProperty("available_margin").GetDecimal(),
             d.GetProperty("used_margin").GetDecimal(),
             d.GetProperty("net").GetDecimal(),
-            SystemClock.Instance.GetCurrentInstant().InZone(_ist));
+            clock.GetCurrentInstant().InZone(_ist));
     }
 
     public async Task<IReadOnlyList<BrokerPosition>> GetPositionsAsync(CancellationToken ct)
@@ -353,7 +354,7 @@ public class UpstoxClient(
             var frame = ms.ToArray();
             ms.SetLength(0);
 
-            var now = SystemClock.Instance.GetCurrentInstant().InZone(_ist);
+            var now = clock.GetCurrentInstant().InZone(_ist);
             foreach (var tick in DecodeFeedResponse(frame, now))
                 yield return tick;
         }
@@ -497,7 +498,7 @@ public class UpstoxClient(
         samples.Sort();
         return new LatencyReport("Upstox",
             samples[samples.Count / 2], samples[(int)(samples.Count * 0.95)], samples[^1],
-            samples.Count, SystemClock.Instance.GetCurrentInstant().InZone(_ist));
+            samples.Count, clock.GetCurrentInstant().InZone(_ist));
     }
 
     // ── Instrument Master ─────────────────────────────────────────────────────
