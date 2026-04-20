@@ -499,7 +499,7 @@ function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId }: {
   strategyId: string; scenarioId: string; runId: string
 }) {
   // All runs from listRuns now have real UUID IDs; fetch trades from the saved-run endpoint.
-  const { data: realTrades, isLoading } = useQuery({
+  const { data: realTrades, isLoading, error } = useQuery({
     queryKey: ['bt-trades-real', runId],
     queryFn: async () => {
       const r = await backtestApi.trades(runId)
@@ -507,6 +507,10 @@ function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId }: {
     },
     enabled: runId.length > 0,
   })
+
+  if (error) {
+    console.error('Failed to load trades for run', runId, error)
+  }
 
   const btTrades: BacktestTradeResult[] = realTrades ?? []
 
@@ -623,11 +627,13 @@ export function ResultsTab({ strategyId }: Props) {
     queryFn: () => strategyDomainApi.listRuns(strategyId),
   })
 
+  const toDateStr = (iso: string) => iso.slice(0, 10)
+
   const filtered = runs.filter(r => {
     if (selectedScenarios.length > 0 && !selectedScenarios.includes(r.scenarioId)) return false
     if (modeFilter !== 'All' && r.mode !== modeFilter) return false
-    if (fromDate && r.dateRange.from < fromDate) return false
-    if (toDate && r.dateRange.to > toDate) return false
+    if (fromDate && toDateStr(r.dateRange.from) < fromDate) return false
+    if (toDate && toDateStr(r.dateRange.to) > toDate) return false
     return true
   })
 
@@ -769,7 +775,7 @@ export function ResultsTab({ strategyId }: Props) {
                       </tr>
                     )}
                   </React.Fragment>
-                )
+                )}
               })}
             </tbody>
           </table>

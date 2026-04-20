@@ -201,7 +201,8 @@ export function StrategiesPage() {
               >
                 ←
               </button>
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>New Strategy</h2>
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>New Strategy
+              </h2>
             </div>
             <div style={{ maxWidth: 600, margin: '0 auto' }}>
               <div style={{ fontSize: 13, color: C.textMuted, marginBottom: SP.lg, textAlign: 'center' }}>
@@ -266,11 +267,7 @@ export function StrategiesPage() {
             <StrategyDefinitionPage
               strategyKind={creatingType}
               onSaved={(s: Strategy) => {
-                // Seed the cache before navigating so selectedStrategy resolves
-                // immediately — the async refetch will confirm/update it in the background.
-                qc.setQueryData<Strategy[]>(['strategies'], old =>
-                  old ? [...old.filter(x => x.id !== s.id), s] : [s]
-                )
+                qc.invalidateQueries({ queryKey: ['strategies'] })
                 setCreating(false)
                 setCreatingType(null)
                 selectStrategy(s.id)
@@ -295,10 +292,8 @@ export function StrategiesPage() {
             <StrategyDefinitionPage
               strategyId={selectedStrategy.id}
               initialData={selectedStrategy}
-              onSaved={(s: Strategy) => {
-                qc.setQueryData<Strategy[]>(['strategies'], old =>
-                  old ? old.map(x => x.id === s.id ? s : x) : [s]
-                )
+              onSaved={() => {
+                qc.invalidateQueries({ queryKey: ['strategies'] })
                 setEditingDefinition(false)
               }}
               onCancel={() => setEditingDefinition(false)}

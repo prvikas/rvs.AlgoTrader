@@ -1315,7 +1315,10 @@ function backtestResultToRunResult(dto: BacktestResult, strategyId: string): Run
     scenarioId:    dto.scenarioId ?? '',
     strategyId,
     mode:          RunMode.Backtest,
-    dateRange:     { from: dto.fromDate ?? '', to: dto.toDate ?? '' },
+    dateRange:     {
+      from: dto.fromDate?.slice(0, 10) ?? '',
+      to:   dto.toDate?.slice(0, 10)   ?? '',
+    },
     engineVersion: '1',
     dataVersion:   dto.dataHash ?? '',
     completedAt:   dto.startedAt ?? new Date().toISOString(),
@@ -1337,22 +1340,27 @@ export const strategyDomainApi = {
   // ── Strategy CRUD — real /api/strategy-definitions backend ────────────────
   listStrategies: async (): Promise<Strategy[]> => {
     const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto[]>>('/strategy-definitions')
-    return (resp.data?.data ?? []).map(dtoToStrategy)
+    if (!resp.data?.success) {
+      throw new Error(resp.data?.error ?? 'Failed to load strategies')
+    }
+    return (resp.data.data ?? []).map(dtoToStrategy)
   },
 
   getStrategy: async (id: string): Promise<Strategy | null> => {
-    try {
-      const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${id}`)
-      return resp.data?.data ? dtoToStrategy(resp.data.data) : null
-    } catch {
-      return null
+    const resp = await apiClient.get<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${id}`)
+    if (!resp.data?.success) {
+      throw new Error(resp.data?.error ?? `Strategy ${id} not found`)
     }
+    return resp.data.data ? dtoToStrategy(resp.data.data) : null
   },
 
   createStrategy: async (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>): Promise<Strategy> => {
     const body: UpsertStrategyDefinitionRequest = strategyToUpsertRequest(s as Strategy)
     const resp = await apiClient.post<ApiResponse<StrategyDefinitionDto>>('/strategy-definitions', body)
-    return dtoToStrategy(resp.data.data!)
+    if (!resp.data?.success || !resp.data.data) {
+      throw new Error(resp.data?.error ?? 'Failed to create strategy')
+    }
+    return dtoToStrategy(resp.data.data)
   },
 
   updateStrategy: async (id: string, s: Partial<Strategy>): Promise<Strategy> => {
@@ -1361,7 +1369,10 @@ export const strategyDomainApi = {
     const merged = { ...(existing ?? {}), ...s } as Strategy
     const body: UpsertStrategyDefinitionRequest = strategyToUpsertRequest(merged)
     const resp = await apiClient.put<ApiResponse<StrategyDefinitionDto>>(`/strategy-definitions/${id}`, body)
-    return dtoToStrategy(resp.data.data!)
+    if (!resp.data?.success || !resp.data.data) {
+      throw new Error(resp.data?.error ?? 'Failed to update strategy')
+    }
+    return dtoToStrategy(resp.data.data)
   },
 
   deleteStrategy: async (id: string): Promise<void> => {
@@ -1371,28 +1382,38 @@ export const strategyDomainApi = {
   listScenarios: async (strategyId: string): Promise<Scenario[]> => {
     const resp = await apiClient.get<ApiResponse<DefinitionScenarioDto[]>>(
       `/strategy-definitions/${strategyId}/scenarios`)
-    return (resp.data?.data ?? []).map(scenarioDtoToScenario)
+    if (!resp.data?.success) {
+      throw new Error(resp.data?.error ?? 'Failed to load scenarios')
+    }
+    return (resp.data.data ?? []).map(scenarioDtoToScenario)
   },
 
   createScenario: async (strategyId: string, s: Omit<Scenario, 'id' | 'strategyId'>): Promise<Scenario> => {
     const body = scenarioToUpsertRequest(s)
     const resp = await apiClient.post<ApiResponse<DefinitionScenarioDto>>(
       `/strategy-definitions/${strategyId}/scenarios`, body)
-    return scenarioDtoToScenario(resp.data.data!)
+    if (!resp.data?.success || !resp.data.data) {
+      throw new Error(resp.data?.error ?? 'Failed to create scenario')
+    }
+    return scenarioDtoToScenario(resp.data.data)
   },
 
   updateScenario: async (strategyId: string, scenarioId: string, s: Partial<Scenario>): Promise<Scenario> => {
     // Fetch existing to merge with partial update
     const existingResp = await apiClient.get<ApiResponse<DefinitionScenarioDto>>(
       `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`)
-    const existing = existingResp.data?.data
-      ? scenarioDtoToScenario(existingResp.data.data)
-      : ({} as Scenario)
+    if (!existingResp.data?.success || !existingResp.data.data) {
+      throw new Error(existingResp.data?.error ?? 'Failed to load scenario for update')
+    }
+    const existing = scenarioDtoToScenario(existingResp.data.data)
     const merged = { ...existing, ...s }
     const body = scenarioToUpsertRequest(merged)
     const resp = await apiClient.put<ApiResponse<DefinitionScenarioDto>>(
       `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`, body)
-    return scenarioDtoToScenario(resp.data.data!)
+    if (!resp.data?.success || !resp.data.data) {
+      throw new Error(resp.data?.error ?? 'Failed to update scenario')
+    }
+    return scenarioDtoToScenario(resp.data.data)
   },
 
   deleteScenario: async (strategyId: string, scenarioId: string): Promise<void> => {
@@ -1511,12 +1532,11 @@ export const strategyDomainApi = {
   },
 
   listRuns: async (strategyId: string): Promise<RunResult[]> => {
-    try {
-      const resp = await backtestApi.byDefinition(strategyId)
-      return (resp.data?.data ?? []).map(dto => backtestResultToRunResult(dto, strategyId))
-    } catch {
-      return []
+    const resp = await backtestApi.byDefinition(strategyId)
+    if (!resp.data?.success) {
+      throw new Error(resp.data?.error ?? 'Failed to load backtest results')
     }
+    return (resp.data.data ?? []).map(dto => backtestResultToRunResult(dto, strategyId))
   },
 
   // PROMPT-002: listTrades is only called when runId is not a real GUID (non-saved runs).
