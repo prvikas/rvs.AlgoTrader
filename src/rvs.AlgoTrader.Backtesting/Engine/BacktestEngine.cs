@@ -829,7 +829,11 @@ public class BacktestEngine(
 
         double ivFrac      = Math.Max(0.05, (double)(atmIvPct / 100m));
         const double RFR   = 0.065; // RBI repo rate
-        decimal entryComm  = request.BrokerageFlatPerSide * signal.Legs.Count;
+                                    
+        // Each leg has one entry order side; exit commission is charged separately at close.
+        // This is correct as-is IF bsEngine charges separately at close — verify exit side too.
+        // If BrokerageFlatPerSide = ₹20/side, a 2-leg spread = ₹40 entry + ₹40 exit = ₹80 total.
+        decimal entryComm = request.BrokerageFlatPerSide * signal.Legs.Count; // ← fine if exit also charges ×LegCount
 
         var resolvedLegs = new List<(SpreadLeg Leg, decimal Strike, decimal EntryLegPrice, LocalDate LegExpiry)>();
         decimal netCredit = 0m;
@@ -1249,7 +1253,7 @@ public class BacktestEngine(
             var hasTp = trade.TakeProfit > trade.EntryPrice;
 
             // Gap-fill: candle opened below SL — fill at open, not at SL
-            if (candle.Open <= trade.StopLoss)
+            if (candle.Open < trade.StopLoss)
             {
                 exitPrice  = candle.Open;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
@@ -1281,7 +1285,7 @@ public class BacktestEngine(
             var hasTp = trade.TakeProfit > 0 && trade.TakeProfit < trade.EntryPrice;
 
             // Gap-fill: candle opened above SL — fill at open
-            if (candle.Open >= trade.StopLoss)
+            if (candle.Open > trade.StopLoss)
             {
                 exitPrice  = candle.Open;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
@@ -1336,11 +1340,8 @@ public class BacktestEngine(
         var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
         if (stopDistance == 0) return 0;
 
-        var sizeByRisk = (int)(riskAmount / stopDistance);
-        if (sizeByRisk <= 0)
-        {
-            return 0;
-        }
+        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
+        // sizeByRisk is now at least 1; maxByCapital below will still enforce affordability
 
         // Cap position to configured capital usage (default 95%) — matches Pine's
         // strategy.default_qty_type = strategy.percent_of_equity (100%).
@@ -1389,7 +1390,17 @@ public class BacktestEngine(
             else curConsecLosses = 0;
         }
 
-        var returns   = trades.Select(t => (double)(t.NetPnl / request.InitialCapital)).ToArray();
+        // Build a running equity-at-entry lookup for per-trade return normalization
+        var equityAtEntry = new decimal[trades.Count];
+        {
+            var runEq = request.InitialCapital;
+            for (int idx = 0; idx < trades.Count; idx++)
+            {
+                equityAtEntry[idx] = Math.Max(1m, runEq);   // guard against zero
+                runEq += trades[idx].NetPnl;
+            }
+        }
+        var returns = trades.Select((t, idx) => (double)(t.NetPnl / equityAtEntry[idx])).ToArray();
         var avgReturn = returns.Average();
         var stdDev    = Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Average());
 
