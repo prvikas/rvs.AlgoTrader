@@ -171,16 +171,15 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
         if (stored.Count >= 1)
             return stored;
 
-        // 2. No stored data — fall back to 1m candles and aggregate on the fly
-        // (1d is the one case where we still prefer direct download — not aggregated from 1m
-        //  because an NSE trading day is 375 bars = expensive + boundary complex)
-        if (targetTimeframe == "1m" || targetTimeframe == "1d")
+        // 2. No stored data — fall back to 1m candles and aggregate on the fly.
+        // 1m is the only true base timeframe; 1d can be built from 1m when broker auth fails.
+        if (targetTimeframe == "1m")
         {
             logger.LogWarning(
-                "[CandleRepo] No stored candles for {Symbol}/{Tf} between {From} and {To}. " +
+                "[CandleRepo] No stored candles for {Symbol}/1m between {From} and {To}. " +
                 "Cannot aggregate (base timeframe). Trigger a historical download first.",
-                symbol, targetTimeframe, from, to);
-            return stored; // nothing to aggregate from/to
+                symbol, from, to);
+            return stored;
         }
 
         var oneMinute = await GetAsync(symbol, "1m", from, to, ct);
@@ -190,7 +189,7 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
                 "[CandleRepo] No candles for {Symbol} at {Tf} or 1m between {From} and {To}. " +
                 "DB is empty for this range — historical download required.",
                 symbol, targetTimeframe, from, to);
-            return stored; // no source data at all
+            return stored;
         }
 
         logger.LogDebug("[CandleRepo] Aggregating {Count} 1m bars → {Tf} for {Symbol}", oneMinute.Count, targetTimeframe, symbol);
@@ -204,6 +203,9 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
     private static IReadOnlyList<ClosedCandle> AggregateCandles(
         IReadOnlyList<ClosedCandle> oneMinuteCandles, string symbol, string targetTimeframe)
     {
+        if (targetTimeframe == "1d")
+            return AggregateToDailyCandles(oneMinuteCandles, symbol);
+
         var minutes = TimeframeToMinutes(targetTimeframe);
         if (minutes <= 0) return Array.Empty<ClosedCandle>();
 
@@ -237,6 +239,37 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
                 open, high, low, close, volume));
         }
 
+        return result;
+    }
+
+    /// <summary>
+    /// Builds daily OHLCV bars from 1m candles by grouping on IST calendar date.
+    /// Each group's open = first bar, high = max, low = min, close = last bar, volume = sum.
+    /// </summary>
+    private static IReadOnlyList<ClosedCandle> AggregateToDailyCandles(
+        IReadOnlyList<ClosedCandle> oneMinuteCandles, string symbol)
+    {
+        var groups = oneMinuteCandles
+            .GroupBy(c => c.OpenTime.ToInstant().InZone(Ist).Date)
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        var result = new List<ClosedCandle>(groups.Count);
+        foreach (var group in groups)
+        {
+            var bars = group.OrderBy(c => c.OpenTime.ToInstant()).ToList();
+            if (bars.Count == 0) continue;
+
+            result.Add(new ClosedCandle(
+                symbol, "1d",
+                bars[0].OpenTime,
+                bars[^1].CloseTime,
+                bars[0].Open,
+                bars.Max(b => b.High),
+                bars.Min(b => b.Low),
+                bars[^1].Close,
+                bars.Sum(b => b.Volume)));
+        }
         return result;
     }
 

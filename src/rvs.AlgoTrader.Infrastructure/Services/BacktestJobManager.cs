@@ -137,14 +137,50 @@ public class BacktestJobManager(
 
                 if (!dl.Success || dl.BarCount == 0)
                 {
-                    job.Status = BacktestJobStatus.Failed;
-                    job.Error  = $"No data for {dto.InternalSymbol}/{dto.Timeframe}. {dl.Error ?? "0 bars returned."}";
-                    await pusher.PushCompletedAsync(jobId, job.ToDto());
-                    return;
-                }
+                    // For broker auth failures (HTTP 401) the download failed but the candles
+                    // table may already contain data from a prior successful download.
+                    // Retry the engine with whatever is cached — if it has enough bars the
+                    // backtest can still run without a fresh broker connection.
+                    bool isBrokerAuthError = dl.Error != null &&
+                        (dl.Error.Contains("401") ||
+                         dl.Error.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase));
 
-                job.Status = BacktestJobStatus.Running;
-                result = await engine.RunAsync(request, ct, progress);
+                    if (isBrokerAuthError)
+                    {
+                        logger.LogWarning(
+                            "[BacktestJob] {JobId} — broker session expired (401). Retrying engine with existing cached candles for {Symbol}/{Tf}.",
+                            jobId, dto.InternalSymbol, dto.Timeframe);
+
+                        job.Status = BacktestJobStatus.Running;
+                        await pusher.PushProgressAsync(jobId, job.ToDto());
+                        result = await engine.RunAsync(request, ct, progress);
+
+                        if (!result.Success)
+                        {
+                            job.Status = BacktestJobStatus.Failed;
+                            job.Error  =
+                                $"Broker session expired (HTTP 401 Unauthorized — {dto.BrokerName}). " +
+                                $"Could not download fresh data for {dto.InternalSymbol}/{dto.Timeframe}, " +
+                                "and no sufficient cached data was found in the database. " +
+                                "Re-authenticate with MStock via Settings → Broker Login, then retry.";
+                            await pusher.PushCompletedAsync(jobId, job.ToDto());
+                            return;
+                        }
+                        // Cached data was sufficient — fall through to persist the result.
+                    }
+                    else
+                    {
+                        job.Status = BacktestJobStatus.Failed;
+                        job.Error  = $"No data for {dto.InternalSymbol}/{dto.Timeframe}. {dl.Error ?? "0 bars returned."}";
+                        await pusher.PushCompletedAsync(jobId, job.ToDto());
+                        return;
+                    }
+                }
+                else
+                {
+                    job.Status = BacktestJobStatus.Running;
+                    result = await engine.RunAsync(request, ct, progress);
+                }
             }
 
             // Map result → DTO
@@ -160,20 +196,30 @@ public class BacktestJobManager(
                     var savedId = await runRepo.SaveAsync(resultDto, CancellationToken.None);
                     resultDto = resultDto with { Id = savedId.ToString() };
 
-                    // Update scenario status → Backtested when this was a scenario-tagged run
+                    // Update scenario status → Backtested when this was a scenario-tagged run.
+                    // Uses IStrategyDefinitionScenarioService (strategy_definition_scenarios table),
+                    // NOT IStrategyScenarioRepository which targets the old strategy_scenarios table.
                     if (job.ScenarioId.HasValue)
                     {
-                        var scenarioRepo = scope.ServiceProvider.GetRequiredService<IStrategyScenarioRepository>();
-                        var scenario = await scenarioRepo.GetByIdAsync(job.ScenarioId.Value, CancellationToken.None);
-                        if (scenario != null)
-                        {
-                            scenario.Status            = ScenarioStatus.Backtested;
-                            scenario.LastBacktestRunId = savedId;
-                            scenario.UpdatedAt         = clock.NowInstant();
-                            await scenarioRepo.UpdateAsync(scenario, CancellationToken.None);
-                            logger.LogInformation("[BacktestJob] {JobId} — scenario {ScenarioId} promoted to Backtested",
+                        var defScenarioSvc = scope.ServiceProvider
+                            .GetRequiredService<IStrategyDefinitionScenarioService>();
+                        var patch = new Application.DTOs.Strategy.PatchDefinitionScenarioRequest(
+                            Status:         "Backtested",
+                            LastRunAt:      clock.NowInstant().ToDateTimeOffset(),
+                            LastMetricsJson: System.Text.Json.JsonSerializer.Serialize(new {
+                                resultDto.TotalPnl, resultDto.TotalReturn, resultDto.SharpeRatio,
+                                resultDto.MaxDrawdown, resultDto.WinRate, resultDto.TotalTrades
+                            }));
+                        var updated = await defScenarioSvc.PatchAsync(
+                            job.ScenarioId.Value, patch, CancellationToken.None);
+                        if (updated != null)
+                            logger.LogInformation(
+                                "[BacktestJob] {JobId} — definition scenario {ScenarioId} promoted to Backtested",
                                 jobId, job.ScenarioId.Value);
-                        }
+                        else
+                            logger.LogWarning(
+                                "[BacktestJob] {JobId} — definition scenario {ScenarioId} not found for status update",
+                                jobId, job.ScenarioId.Value);
                     }
                 }
                 catch (Exception ex) { logger.LogWarning(ex, "[BacktestJob] {JobId} — failed to persist result", jobId); }
@@ -265,23 +311,41 @@ public class BacktestJobManager(
         DataHash: r.DataHash,
         Error: r.Error,
         StartedAt: startedAt,
-        Trades: r.Trades.Select(t => new BacktestTradeDto(
-            Direction: t.Direction,
-            EntryPrice: t.EntryPrice,
-            ExitPrice: t.ExitPrice,
-            Quantity: t.Quantity,
-            ExitReason: t.ExitReason,
-            GrossPnl: t.GrossPnl,
-            NetPnl: t.NetPnl,
-            EntryTime: t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
-            ExitTime: t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o"),
-            Mae: t.Direction == "BUY"
+        Trades: r.Trades.Select(t =>
+        {
+            // MAE = adverse excursion (how far price moved against us)
+            var mae = t.Direction == "BUY"
                 ? Math.Max(0m, t.EntryPrice - t.WorstPrice)
-                : Math.Max(0m, t.WorstPrice - t.EntryPrice),
-            Mfe: t.Direction == "BUY"
-                ? Math.Max(0m, t.BestPrice - t.EntryPrice)
-                : Math.Max(0m, t.EntryPrice - t.BestPrice)
-        )).ToList(),
+                : Math.Max(0m, t.WorstPrice - t.EntryPrice);
+            // MFE = favourable excursion (how far price moved for us)
+            var mfe = t.Direction == "BUY"
+                ? Math.Max(0m, t.BestPrice  - t.EntryPrice)
+                : Math.Max(0m, t.EntryPrice - t.BestPrice);
+            // R-Multiple = NetPnl / InitialRisk where InitialRisk = |entry - initialStop| × qty
+            var initialRisk = Math.Abs(t.EntryPrice - t.InitialStopLoss) * t.Quantity;
+            var rMultiple   = initialRisk > 0 ? Math.Round(t.NetPnl / initialRisk, 2) : 0m;
+            return new BacktestTradeDto(
+                Direction:         t.Direction,
+                EntryPrice:        t.EntryPrice,
+                ExitPrice:         t.ExitPrice,
+                Quantity:          t.Quantity,
+                ExitReason:        t.ExitReason,
+                GrossPnl:          t.GrossPnl,
+                NetPnl:            t.NetPnl,
+                EntryTime:         t.EntryTime.ToInstant().ToDateTimeOffset().ToString("o"),
+                ExitTime:          t.ExitTime.ToInstant().ToDateTimeOffset().ToString("o"),
+                Mae:               mae,
+                Mfe:               mfe,
+                EntryCommission:   t.EntryCommission,
+                ExitCommission:    t.ExitCommission,
+                TotalCost:         t.EntryCommission + t.ExitCommission,
+                SlippageAmount:    t.SlippageAmount,
+                StopLoss:          t.StopLoss,
+                TakeProfit:        t.TakeProfit,
+                HoldingBars:       t.HoldingBars,
+                RMultiple:         rMultiple,
+                LegsJson:          t.LegsJson);
+        }).ToList(),
         MonthlyBreakdown: r.MonthlyBreakdown.Select(m => new BacktestMonthlyBreakdownDto(m.Year, m.Month, m.Pnl, m.Trades, m.WinRate)).ToList(),
         YearlyBreakdown: r.YearlyBreakdown.Select(y => new BacktestYearlyBreakdownDto(y.Year, y.Pnl, y.Return, y.Trades, y.WinRate)).ToList(),
         ChartSample: r.ChartSample?.Select(MapToChartBarDto).ToList(),

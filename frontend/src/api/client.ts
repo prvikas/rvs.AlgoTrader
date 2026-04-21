@@ -517,7 +517,7 @@ export interface BacktestChartBar {
   low: number
   close: number
   volume: number
-  signal?: 'BUY' | 'SELL' | null         // trade signal on this bar
+  signal?: 'BUY' | 'SELL' | 'EXIT' | null  // trade signal on this bar ('EXIT' = strategy-driven exit pending)
   signalPrice?: number
   stopLoss?: number
   takeProfit?: number

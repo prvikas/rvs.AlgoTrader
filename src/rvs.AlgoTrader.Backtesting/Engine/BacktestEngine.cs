@@ -604,6 +604,9 @@ public class BacktestEngine(
                 }
             }
 
+            // When the strategy does not provide an explicit stop-loss signal.StopLoss is always
+            // non-null here (CalculatePositionSize returns 0 and skips when it's null), but keep
+            // the fallback so the compiler doesn't warn about nullable dereference.
             var initialSl = signal.StopLoss ?? entryPrice * 0.99m;
 
             // Deduct entry commission immediately so equity is accurate for subsequent sizing
@@ -618,7 +621,12 @@ public class BacktestEngine(
                 EntryPrice: entryPrice,
                 ExitPrice: 0,
                 StopLoss:        initialSl,
-                TakeProfit:      signal.TakeProfit ?? entryPrice * 1.02m,
+                // When the strategy does not provide a TakeProfit, use 0 to disable the TP exit.
+                // TryClosePosition only fires the TP check when TakeProfit is on the profitable
+                // side of EntryPrice (> EntryPrice for longs, < EntryPrice for shorts).
+                // This prevents a hard-coded 2% cap from cutting short strategy-driven exits
+                // (ExitLong / ExitShort signals) that may target 3R+ moves.
+                TakeProfit:      signal.TakeProfit ?? 0m,
                 EntryTime: entryTime,
                 ExitTime: entryTime,
                 GrossPnl: 0,
@@ -1204,16 +1212,22 @@ public class BacktestEngine(
 
         if (trade.Direction == "BUY")
         {
+            // TakeProfit = 0 means strategy did not set an explicit target — only SL applies.
+            // When hasTp = false, the trade stays open until a strategy ExitLong signal closes it
+            // (pendingStrategyExit path). This prevents the old hardcoded 2% default from capping
+            // profitable VCP / trend-following moves at 2R.
+            var hasTp = trade.TakeProfit > trade.EntryPrice;
+
             // Gap-fill: candle opened below SL — fill at open, not at SL
             if (candle.Open <= trade.StopLoss)
             {
                 exitPrice  = candle.Open;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
-            else if (candle.Low <= trade.StopLoss && candle.High >= trade.TakeProfit)
+            else if (hasTp && candle.Low <= trade.StopLoss && candle.High >= trade.TakeProfit)
             {
                 // Both SL and TP touched: use candle midpoint heuristic to decide which hit first.
-                // If mid > TP, assume TP was hit from below early in the bar; otherwise SL.
+                // If mid >= TP, assume TP was hit from below early in the bar; otherwise SL.
                 var mid = (candle.High + candle.Low) / 2m;
                 if (mid >= trade.TakeProfit)
                 { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
@@ -1225,18 +1239,21 @@ public class BacktestEngine(
                 exitPrice  = trade.StopLoss;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
-            else if (candle.High >= trade.TakeProfit)
+            else if (hasTp && candle.High >= trade.TakeProfit)
             { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
         }
         else // SELL / short
         {
+            // For shorts, TP must be strictly below EntryPrice to be meaningful.
+            var hasTp = trade.TakeProfit > 0 && trade.TakeProfit < trade.EntryPrice;
+
             // Gap-fill: candle opened above SL — fill at open
             if (candle.Open >= trade.StopLoss)
             {
                 exitPrice  = candle.Open;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
-            else if (candle.High >= trade.StopLoss && candle.Low <= trade.TakeProfit)
+            else if (hasTp && candle.High >= trade.StopLoss && candle.Low <= trade.TakeProfit)
             {
                 var mid = (candle.High + candle.Low) / 2m;
                 if (mid <= trade.TakeProfit)
@@ -1249,7 +1266,7 @@ public class BacktestEngine(
                 exitPrice  = trade.StopLoss;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
-            else if (candle.Low <= trade.TakeProfit)
+            else if (hasTp && candle.Low <= trade.TakeProfit)
             { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
         }
 

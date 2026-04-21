@@ -171,7 +171,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
     mutationFn: (s: Omit<Strategy, 'id' | 'createdAt' | 'updatedAt'>) =>
       strategyDomainApi.createStrategy(s),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['strategies'] })
+      qc.invalidateQueries({ queryKey: ['strategy-definitions'] })
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
     },
@@ -182,7 +182,7 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
     mutationFn: (s: Partial<Strategy>) =>
       strategyDomainApi.updateStrategy(strategyId!, s),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['strategies'] })
+      qc.invalidateQueries({ queryKey: ['strategy-definitions'] })
       setSaveStatus('saved')
       setTimeout(() => setSaveStatus('idle'), 2000)
     },

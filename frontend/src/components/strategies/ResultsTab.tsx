@@ -125,12 +125,16 @@ function TimeOfDayHeatmap({ trades }: { trades: TradeRecord[] }) {
   const sums: number[][] = DAYS.map(() => HOURS.map(() => 0))
 
   trades.forEach(t => {
-    const d = new Date(t.entryTime)
-    const dow = d.getDay() - 1 // 0=Mon
+    // Convert to IST (UTC+5:30) so trade hours map to the correct market-session bucket.
+    // Using getUTC* on an adjusted timestamp avoids locale-dependent getHours() results.
+    const utcMs  = new Date(t.entryTime).getTime()
+    const istMs  = utcMs + 5.5 * 60 * 60 * 1000
+    const istDate = new Date(istMs)
+    const dow = istDate.getUTCDay() - 1 // 0=Mon in IST
     if (dow < 0 || dow > 4) return
-    const hour = d.getHours()
-    const halfHour = d.getMinutes() >= 30 ? 1 : 0
-    const bucket = (hour - 9) * 2 + halfHour
+    const hour     = istDate.getUTCHours()
+    const halfHour = istDate.getUTCMinutes() >= 30 ? 1 : 0
+    const bucket   = (hour - 9) * 2 + halfHour
     if (bucket < 0 || bucket >= HOURS.length) return
     sums[dow][bucket] += t.pnlR
     counts[dow][bucket]++
@@ -242,8 +246,8 @@ function StreakAnalysis({ trades }: { trades: TradeRecord[] }) {
 function ExitReasonDonut({ trades }: { trades: TradeRecord[] }) {
   if (trades.length === 0) return <EmptyChartState label="Exit Reason Donut" />
 
-  const reasons: TradeRecord['exitReason'][] = ['StopHit', 'TargetHit', 'TrailingStop', 'SessionEnd', 'Manual']
-  const colors = [C.red, C.green, C.amber, C.blue, C.textSub]
+  const reasons: TradeRecord['exitReason'][] = ['StopHit', 'TargetHit', 'TrailingStop', 'SessionEnd', 'Strategy', 'Manual']
+  const colors = [C.red, C.green, C.amber, C.blue, '#a78bfa', C.textSub]
   const counts = reasons.map(r => trades.filter(t => t.exitReason === r).length)
   const total = counts.reduce((a, b) => a + b, 0)
   const R = 50, cx = 80, cy = 65
@@ -346,41 +350,75 @@ function TradesTable({ trades }: { trades: BacktestTradeResult[] }) {
   const fmt = (v: number, dec = 2) => v.toLocaleString('en-IN', { maximumFractionDigits: dec, minimumFractionDigits: dec })
   const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
 
-  const SortTh = ({ label, k }: { label: string; k: keyof BacktestTradeResult }) => (
+  // Column help texts (Issue 8)
+  const COL_HELP: Partial<Record<keyof BacktestTradeResult | 'exit' | 'num', string>> = {
+    entryTime:     'Trade entry date & time in IST (Asia/Kolkata)',
+    direction:     'Trade direction: BUY (long) or SELL (short)',
+    quantity:      'Number of shares / lots / contracts traded',
+    entryPrice:    'Actual fill price at entry (next-bar open in default fill model)',
+    exitPrice:     'Actual fill price at exit',
+    stopLoss:      'Stop-loss price set at entry — trade exits automatically if price hits this level',
+    takeProfit:    'Take-profit / target price — trade exits when price reaches this level',
+    holdingBars:   'Number of candle bars the position was open (1 bar = 1 candle of the tested timeframe)',
+    totalCost:     'Total brokerage paid: entry commission + exit commission',
+    slippageAmount:'Simulated slippage cost in ₹ (qty × entry price × slippage basis-points / 10000)',
+    grossPnl:      'Gross P&L before brokerage and slippage deductions',
+    netPnl:        'Net P&L after brokerage and slippage (what you actually keep)',
+    rMultiple:     'R-Multiple = Net P&L ÷ Initial Risk ₹.  +2R means the trade made twice its initial risk.  −1R = full stop hit.',
+    mae:           'Maximum Adverse Excursion — worst price move against the position (in ₹ from entry)',
+    mfe:           'Maximum Favorable Excursion — best price move in favour of the position (in ₹ from entry)',
+    exit:          'Exit reason: StopLoss / TakeProfit / TrailStop / StrategyExit / ManualClose / EndOfData',
+  }
+
+  const HelpIcon = ({ col }: { col: keyof typeof COL_HELP }) => (
+    <span
+      title={COL_HELP[col] ?? ''}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 12, height: 12, borderRadius: '50%',
+        background: 'rgba(120,120,160,0.25)', color: C.textMuted,
+        fontSize: 8, fontWeight: 700, marginLeft: 3, cursor: 'help',
+        verticalAlign: 'middle', lineHeight: 1, flexShrink: 0,
+      }}
+    >?</span>
+  )
+
+  const SortTh = ({ label, k, help }: { label: string; k: keyof BacktestTradeResult; help?: keyof typeof COL_HELP }) => (
     <th
       onClick={() => toggleSort(k)}
       style={{ ...tradeTh, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}
     >
       {label}{sortKey === k ? (sortAsc ? ' ▲' : ' ▼') : ''}
+      {help && <HelpIcon col={help} />}
     </th>
   )
 
   return (
     <div>
       <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 6 }}>
-        Click column headers to sort · Click row to expand spread legs
+        Click column headers to sort · Click row to expand spread legs · Hover ? for column help
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
           <thead>
             <tr style={{ background: C.surface2 }}>
               <th style={tradeTh}>#</th>
-              <SortTh label="Date (IST)" k="entryTime" />
-              <SortTh label="Dir" k="direction" />
-              <SortTh label="Qty" k="quantity" />
-              <SortTh label="Entry ₹" k="entryPrice" />
-              <SortTh label="Exit ₹" k="exitPrice" />
-              <SortTh label="SL ₹" k="stopLoss" />
-              <SortTh label="Target ₹" k="takeProfit" />
-              <SortTh label="Bars" k="holdingBars" />
-              <SortTh label="Brokerage ₹" k="totalCost" />
-              <SortTh label="Slip ₹" k="slippageAmount" />
-              <SortTh label="Gross ₹" k="grossPnl" />
-              <SortTh label="Net ₹" k="netPnl" />
-              <SortTh label="R" k="rMultiple" />
-              <SortTh label="MAE" k="mae" />
-              <SortTh label="MFE" k="mfe" />
-              <th style={tradeTh}>Exit</th>
+              <SortTh label="Date (IST)"   k="entryTime"      help="entryTime" />
+              <SortTh label="Dir"          k="direction"      help="direction" />
+              <SortTh label="Qty"          k="quantity"       help="quantity" />
+              <SortTh label="Entry ₹"      k="entryPrice"     help="entryPrice" />
+              <SortTh label="Exit ₹"       k="exitPrice"      help="exitPrice" />
+              <SortTh label="SL ₹"         k="stopLoss"       help="stopLoss" />
+              <SortTh label="Target ₹"     k="takeProfit"     help="takeProfit" />
+              <SortTh label="Bars"         k="holdingBars"    help="holdingBars" />
+              <SortTh label="Brokerage ₹"  k="totalCost"      help="totalCost" />
+              <SortTh label="Slip ₹"       k="slippageAmount" help="slippageAmount" />
+              <SortTh label="Gross ₹"      k="grossPnl"       help="grossPnl" />
+              <SortTh label="Net ₹"        k="netPnl"         help="netPnl" />
+              <SortTh label="R"            k="rMultiple"      help="rMultiple" />
+              <SortTh label="MAE"          k="mae"            help="mae" />
+              <SortTh label="MFE"          k="mfe"            help="mfe" />
+              <th style={tradeTh}>Exit <HelpIcon col="exit" /></th>
             </tr>
           </thead>
           <tbody>
@@ -521,6 +559,9 @@ function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId }: {
     if (r === 'TRAIL_STOP') return 'TrailingStop'
     if (r === 'TAKE_PROFIT') return 'TargetHit'
     if (r === 'END_OF_DATA' || r === 'SESSION_END') return 'SessionEnd'
+    // VCP and other strategies exit via ExitLong/ExitShort signal → "STRATEGY_EXIT:..."
+    if (r.startsWith('STRATEGY_EXIT') || r === 'SIGNAL_EXIT') return 'Strategy'
+    // Manual close via UI
     return 'Manual'
   }
   const chartTrades: TradeRecord[] = btTrades.map((t, i) => ({

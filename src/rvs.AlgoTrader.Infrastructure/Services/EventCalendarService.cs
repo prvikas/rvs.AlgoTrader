@@ -152,8 +152,14 @@ public class EventCalendarService(AlgoTraderDbContext db, IClock clock) : IEvent
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private const string EventSelectSql =
-        "SELECT id, event_date, event_time, event_type, title, description, impact, " +
-        "symbol, source, is_recurring, created_at FROM market_events";
+        "SELECT id, " +
+        "event_date    AS \"EventDate\", " +
+        "event_time    AS \"EventTime\", " +
+        "event_type    AS \"EventType\", " +
+        "title, description, impact, symbol, source, " +
+        "is_recurring  AS \"IsRecurring\", " +
+        "created_at    AS \"CreatedAt\" " +
+        "FROM market_events";
 
     private static string Esc(string s) => s.Replace("'", "''");
 

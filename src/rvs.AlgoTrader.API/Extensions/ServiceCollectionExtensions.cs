@@ -40,7 +40,23 @@ public static class ServiceCollectionExtensions
             });
         });
 
-        services.AddSignalR();
+        // SignalR: must use the same JSON options as AddControllers so that enum values
+        // (BacktestJobStatus, etc.) are serialised as strings, not integers.
+        // Without this, TypeScript receives { status: 2 } instead of { status: "Running" }
+        // and all status comparisons in the frontend fail silently.
+        services.AddSignalR()
+            .AddJsonProtocol(opts =>
+            {
+                opts.PayloadSerializerOptions.PropertyNamingPolicy =
+                    System.Text.Json.JsonNamingPolicy.CamelCase;
+                opts.PayloadSerializerOptions.DefaultIgnoreCondition =
+                    System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+                opts.PayloadSerializerOptions.Converters.Add(
+                    new System.Text.Json.Serialization.JsonStringEnumConverter());
+                // NodaTime types used in BacktestResultDto (dates/instants)
+                opts.PayloadSerializerOptions.ConfigureForNodaTime(
+                    NodaTime.DateTimeZoneProviders.Tzdb);
+            });
 
         var jwtKey = config["JWT__SECRET"] ?? throw new InvalidOperationException("JWT__SECRET not configured");
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

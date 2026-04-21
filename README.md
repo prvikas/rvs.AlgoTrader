@@ -4,72 +4,6 @@
 
 ---
 
-## 🗓️ Monthly Engineering Review — Last Business Day of Every Month
-
-> **Every role below must complete their review checklist before the end of each month.**
-> Open new GitHub Issues for any gaps found. Tag them with the appropriate label (`sre`, `performance`, `bug`, `enhancement`).
-> Review session should be completed **before EOD on the last business day of the month**.
-
----
-
-### 🔧 SRE Review — Site Reliability Engineer
-
-Review the following areas and open issues for any gaps found. Reference issues [#132](https://github.com/prvikas/rvs.AlgoTrader/issues/132)–[#140](https://github.com/prvikas/rvs.AlgoTrader/issues/140) as baseline.
-
-**Monthly SRE Checklist:**
-
-- [ ] **Observability** — Prometheus metrics collecting? Grafana dashboards loading? No missing panels?
-- [ ] **Alerting** — All Telegram/email alerts firing correctly? No alert fatigue (too many false positives)?
-- [ ] **SLO Compliance** — Review SLO error budgets. Is any SLO below target for the month?
-- [ ] **Pre-Market Check** — Did the 08:45 IST readiness check pass every trading day this month? Any failures uninvestigated?
-- [ ] **DB Backup** — Verify last backup completed successfully. Test restore on staging if not done in 30 days
-- [ ] **DB Migrations** — Any new migrations added without a corresponding `.down.sql` rollback script?
-- [ ] **Disk / DB Growth** — Check `ohlcv_bars` row count and compressed size vs. last month. Retention policy running?
-- [ ] **Log Sink** — Are logs persisting to file sink? Seq ingesting without errors? No log volume filling up?
-- [ ] **Deployment Runbook** — Any production deployment this month? Post-mortem written if incident occurred?
-- [ ] **Staging Environment** — Does staging reflect production config? Any drift between envs?
-- [ ] **Circuit Breaker** — Was the broker API circuit breaker triggered this month? Root cause documented?
-- [ ] **Incident Log** — Any unresolved P0/P1 incidents from this month? Runbook updated after each incident?
-
-**Labels to use:** `sre` `bug` `data-integrity` `observability` `resilience`
-
----
-
-### ⚡ Performance Review — Performance Engineer
-
-Review the following areas and open issues for any gaps found. Reference issues [#141](https://github.com/prvikas/rvs.AlgoTrader/issues/141)–[#148](https://github.com/prvikas/rvs.AlgoTrader/issues/148) as baseline.
-
-**Monthly Performance Checklist:**
-
-- [ ] **DB Query Plans** — Run `EXPLAIN ANALYZE` on top-5 slowest queries (check pg_stat_statements). Any new seq scans on large tables?
-- [ ] **Index Health** — Any new query patterns added this month without corresponding composite indexes? Index bloat > 30%?
-- [ ] **Backtest Speed** — Run benchmark: 1-year 5-min NIFTY backtest. Is it completing < 5s? Any regression from last month?
-- [ ] **BulkInsert Throughput** — Historical downloader: 10k candle insert time < 400ms? Any EF Core batching regressions?
-- [ ] **Redis Memory** — `INFO memory` on Redis. Any keys without TTL growing unbounded? Total memory vs. last month?
-- [ ] **Redis Round-Trips** — `CandleCache.AppendAsync` still using pipeline/Lua? No regression to 2-call pattern?
-- [ ] **Walk-Forward Timing** — 8-window walk-forward completing < 10s? Parallelism semaphore not deadlocking?
-- [ ] **LOH Allocation** — dotMemory / BenchmarkDotNet: Any new LOH allocations > 5 MB per request introduced this month?
-- [ ] **Heap Growth** — Is the API process heap growing over a 24-hour market day? Measure start-of-day vs. end-of-day RSS
-- [ ] **API Latency** — p95 latency for `/api/backtest` < 10s? `/api/strategies` < 100ms? `/api/orders` < 500ms?
-- [ ] **TimescaleDB Compression** — Compression job ran? Chunks older than 7 days compressed? Compression ratio > 80%?
-- [ ] **Hangfire Jobs** — Any recurring jobs taking longer than their schedule interval? Backlog queue depth > 0?
-
-**Labels to use:** `performance` `bug` `database` `cache`
-
----
-
-### 📋 Review Issue Template
-
-When opening a monthly review issue, use this title format:
-```
-[MONTHLY-REVIEW] {Month} {Year} — {Role} gaps
-```
-Example: `[MONTHLY-REVIEW] March 2026 — SRE gaps`
-
-Tag the issue with `monthly-review` label and link back to this section.
-
----
-
 ## Vision
 
 The long-term goal is an **Argus-class institutional trading platform** purpose-built for Indian markets (NSE/BSE/MCX/CDS). Not a retail scanner. Not a webhook-based signal copier. A full-stack quantitative research and execution engine where:
@@ -80,8 +14,23 @@ The long-term goal is an **Argus-class institutional trading platform** purpose-
 - A **Systematic Trader** runs live strategies in Paper or Live mode, with full trailing stop / break-even / partial exit management
 - A **Portfolio Manager** monitors P&L attribution by strategy, symbol, session, exit type — and exports tax lots for ITR-3 filing
 - A **Fund Manager** promotes paper-tested strategies to live with a single approval gate, with full audit trail
-- An **Execution Researcher** models realistic slippage, bid-ask spreads, and market impact before deployment
-- A **Quant Developer** extends the platform via clean interfaces (`IStrategy`, `IIndicatorLibrary`, `IBrokerClient`) without touching core infrastructure
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Backend API | .NET 9, C# 13, ASP.NET Core minimal APIs |
+| ORM / DB | PostgreSQL (TimescaleDB), EF Core + raw SQL migrations |
+| Cache / Queue | Redis (AES-256-GCM token store, Lua capital reserve), RabbitMQ |
+| Real-time | SignalR (backtest progress push), WebSocket (broker feeds) |
+| Options Math | Custom Black-Scholes engine, Newton-Raphson IV solver |
+| Broker APIs | mStock Type B, Zerodha Kite v3, Upstox v3 (pluggable via `IBrokerClient`) |
+| Frontend | React 19, TypeScript, Recharts, React Query |
+| Job Scheduling | Hangfire (9 recurring jobs, IST-aware session windows) |
+| Testing | xUnit, FluentAssertions, Moq, Vitest (frontend) |
+| Auth | Local JWT (`LocalAuth`), 6-tier RBAC |
 
 ---
 
@@ -112,9 +61,162 @@ The long-term goal is an **Argus-class institutional trading platform** purpose-
 └────────────────┴────────────────┴───────────────┴───────────────────┘
 ```
 
+### Execution engine modes
+
+The same `IStrategy` runs identically across all three modes — only `IExecutionEngine` differs:
+
+| Mode | Class | Description |
+|------|-------|-------------|
+| Historical backtest | `BacktestExecutionEngine` | Replays OHLCV from DB; synthetic option chain; no broker calls |
+| Forward test (paper) | `SimulatedExecutionEngine` | Live market data; simulated fills; no real orders |
+| Live | `LiveExecutionEngine` | Real broker orders; 8-gate pre-flight check; approval gate required |
+
 ---
 
-## Core Lifecycle
+## Strategy Lifecycle Flow
+
+```
+Strategy Definition
+      │
+      ├─ Scenario 1 (Draft)
+      │      │
+      │      ├─ [Backtest] → BacktestJobManager → SignalR push → Results stored
+      │      │      │
+      │      │      └─ Status: Backtested
+      │      │
+      │      ├─ [→ Fwd Test] → SimulatedExecutionEngine (paper fills, live data)
+      │      │      │
+      │      │      └─ Status: FwdTesting
+      │      │
+      │      ├─ [Approval Gate] → CAGR/drawdown checks + manual review
+      │      │      │
+      │      │      └─ Status: LiveCandidate
+      │      │
+      │      └─ [Deploy Live] → LiveExecutionEngine (real broker, real capital)
+      │             │
+      │             └─ Status: Live
+      │
+      └─ Scenario 2 (alternate params, side-by-side comparison)
+```
+
+### Scenario status lifecycle
+
+`Draft → Running → Backtested → FwdTesting → LiveCandidate → Live → Archived`
+
+### Backtest pipeline detail
+
+1. `BacktestJobManager` receives a run request, saves job state to DB
+2. Checks candle cache (`ICandleCache`) — if insufficient, triggers `HistoricalDownloadService`
+3. **On 401 broker auth error**: retries the engine with existing cached DB candles; only fails if cache is also insufficient — surfaces actionable "Re-authenticate via Settings → Broker Login" message
+4. Engine runs `IStrategy.EvaluateAsync` per bar (no partial candles — AP-007)
+5. Progress pushed via SignalR (`BacktestProgressHub`) and polled via HTTP every 1500ms
+6. On completion: `backtest_runs` row updated, trades persisted, results available in Results tab
+
+---
+
+## Strategies UI
+
+The **Strategies** page (`/strategies`) is organised around **strategy definitions**, not running instances:
+
+- **Left sidebar** — lists all strategy definitions (name, type, instrument, timeframe)
+- **Scenarios tab** — create and manage scenarios per definition; lifecycle-aware action buttons per status
+- **Compare tab** — side-by-side metric comparison between two scenarios of the same definition
+- **Results tab** — trade-level analysis (17-column sortable table, MAE/MFE scatter, R-multiple histogram, streak chart)
+
+Scenario row shows instrument symbol + timeframe stacked below the scenario name, inherited from the strategy definition.
+
+---
+
+## Repository Layout
+
+```
+rvs.AlgoTrader/
+├── src/
+│   ├── rvs.AlgoTrader.API/              # ASP.NET Core host, controllers, middleware, SignalR hubs
+│   ├── rvs.AlgoTrader.Domain/           # Domain models, IStrategy, SignalResult, value objects
+│   ├── rvs.AlgoTrader.Application/      # MediatR handlers, FluentValidation, use-case services
+│   ├── rvs.AlgoTrader.Infrastructure/   # EF Core repos, SQL migrations, broker clients, Redis, Hangfire
+│   ├── rvs.AlgoTrader.Backtesting/      # BacktestExecutionEngine, PerformanceCalculator, WalkForward
+│   ├── rvs.AlgoTrader.Strategies/       # All IStrategy implementations (11 strategies)
+│   ├── rvs.AlgoTrader.Brokers.Abstractions/  # IBrokerClient, IOrderManager contracts
+│   ├── rvs.AlgoTrader.Brokers.MStock/   # mStock Type B API adapter
+│   ├── rvs.AlgoTrader.Brokers.Zerodha/  # Zerodha Kite v3 adapter
+│   └── rvs.AlgoTrader.Brokers.Upstox/   # Upstox v3 adapter
+├── frontend/                            # React 19 admin UI (React Query, Recharts)
+├── tests/
+│   ├── rvs.AlgoTrader.Tests.Unit/       # 117 unit tests (strategy logic, indicators, handlers)
+│   ├── rvs.AlgoTrader.UnitTests/        # 88 legacy unit tests
+│   ├── rvs.AlgoTrader.Tests.Architecture/  # 14 architecture boundary tests (ArchUnitNET)
+│   ├── rvs.AlgoTrader.IntegrationTests/ # Integration tests (require Docker)
+│   └── rvs.AlgoTrader.Tests.UI/         # 22 Vitest frontend component tests
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── PLAN.md
+│   ├── IMPLEMENTATION_STATUS.md
+│   ├── STRATEGY_SPECS.md                # Authoritative per-strategy specifications
+│   ├── UI_DESIGN_SPEC.md
+│   ├── BACKTEST_WORKFLOW.md
+│   ├── ANTI_PATTERNS.md
+│   └── WORKFLOW.md
+├── run-tests.sh                         # Test runner: unit | arch | integration | e2e | all
+└── CLAUDE.md                            # AI agent instructions and hard rules
+```
+
+---
+
+## Quick Start
+
+```bash
+# 1. Start infrastructure (TimescaleDB, Redis, RabbitMQ, Vault, Prometheus, Grafana)
+docker compose up -d
+
+# 2. Start API (runs DB migrations automatically on startup)
+dotnet run --project src/rvs.AlgoTrader.API
+
+# 3. Start frontend (proxies API to :62318)
+cd frontend && npm run dev    # opens :3000
+
+# 4. Run tests
+./run-tests.sh unit           # fast — no Docker needed
+./run-tests.sh arch           # architecture boundary checks
+./run-tests.sh all            # requires Docker for integration/E2E
+```
+
+---
+
+## Database Migrations
+
+Migrations are plain SQL files in `src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/`. They **run automatically on every API startup** — no CLI, no manual steps.
+
+### Adding a migration
+
+```sql
+-- 042_YourDescription.sql  (always next number, zero-padded to 3 digits)
+-- Idempotent — always use IF NOT EXISTS
+ALTER TABLE some_table ADD COLUMN IF NOT EXISTS new_col TEXT;
+CREATE INDEX IF NOT EXISTS ix_some_table_col ON some_table (new_col);
+```
+
+Restart the API. `DatabaseMigrationRunner` auto-discovers all `*.sql` files in numeric order.
+
+### Migration history (001–041)
+
+| Range | What it covers |
+|-------|----------------|
+| 001–010 | Core schema: instruments, strategies, backtest_runs, broker_sessions, scenarios |
+| 011–020 | Orders, spread positions/legs, forward test sessions, audit_log |
+| 021–030 | Risk controls, capital allocation, alerts, scenario versions |
+| 027 | TimescaleDB hypertable for `ohlcv_bars` |
+| 031–040 | Strategy definitions/instances, IV history, option snapshots, market_news, app_config, symbol_data_prefs |
+| 034 | `iv_history` table |
+| 038 | Option chain snapshots |
+| 039 | `market_news` feed |
+| 040 | `app_config` + `symbol_data_prefs` |
+| 041 | `app_config` schema — adds `value_json` + `actor` columns, backfills, repair check |
+
+---
+
+## Core Lifecycle (with Approval Gate)
 
 ```
 Idea → Research → Backtest → Monte Carlo → Walk-Forward
@@ -129,224 +231,48 @@ Every strategy must pass **all five gates** before capital is deployed:
 | 1. Backtest | Sharpe ≥ 1.0, PF ≥ 1.2, MaxDD < 25%, Trades ≥ 30 |
 | 2. Monte Carlo | P(ruin) < 5%, P95 drawdown < daily loss limit × 15 |
 | 3. Walk-Forward | Out-of-sample Sharpe ≥ 0.7× in-sample |
-| 4. Paper Trade | 30+ paper trades match expected win rate |
+| 4. Paper Trade | 30+ paper trades, win rate matches expected |
 | 5. Risk Review | Portfolio delta, correlation, margin all within limits |
 
 ---
 
-## Roadmap — Milestones
+## Monthly Engineering Review — Last Business Day of Every Month
 
-> Track progress at: **[github.com/prvikas/rvs.AlgoTrader/milestones](https://github.com/prvikas/rvs.AlgoTrader/milestones)**
+> Every role below must complete their review checklist before the end of each month.
 
-### v0.1 — Core Architecture Foundation
-**Status: 🔨 In Progress**
+### SRE Review
 
-All shared contracts, DI wiring, indicator library, candlestick pattern detector, broker abstraction, alert service, and VWAP/session infrastructure. Everything in v0.2–v0.8 depends on this.
+- [ ] Prometheus metrics collecting? Grafana dashboards loading?
+- [ ] All alerts firing correctly? No alert fatigue?
+- [ ] SLO error budgets — any SLO below target for the month?
+- [ ] Pre-market 08:45 IST readiness check passing every trading day?
+- [ ] DB backup completed successfully? Restore tested in 30 days?
+- [ ] Any new migrations without a `.down.sql` rollback?
+- [ ] `ohlcv_bars` row count and compressed size vs. last month?
+- [ ] Circuit breaker triggered this month? Root cause documented?
 
-- `IStrategy` / `StrategyContext` / `SignalResult` contracts
-- `IIndicatorLibrary` — SMA, EMA, ATR, VWAP, Bollinger, RSI, MACD, Stochastic, ADX, OBV, MFI, Williams %R, CCI, Pivot Points, Swing Point detection, Fibonacci levels
-- `CandlePatternDetector` — 25+ patterns (Doji, Engulfing, Hammer, Inside Bar, 3 Soldiers, etc.)
-- Broker abstraction (`IBrokerClient`, `IOrderManager`, `IInstrumentTokenResolver`)
-- `IAlertService` — Telegram, email, webhooks
-- DI registration framework for strategies
-- VWAP session anchor fix (09:15 IST reset)
-- `ITradingCalendarService` — NSE holidays, expiry dates
+**Labels:** `sre` `bug` `data-integrity` `observability` `resilience`
 
-### v0.2 — Data Layer & Market Data
-**Status: 📋 Planned**
+### Performance Review
 
-Data quality and completeness is the foundation of all research. Garbage data = garbage backtests.
+- [ ] `EXPLAIN ANALYZE` on top-5 slowest queries — any new seq scans?
+- [ ] 1-year 5-min NIFTY backtest completing < 5s?
+- [ ] 10k candle bulk insert < 400ms?
+- [ ] Redis memory — any keys without TTL growing unbounded?
+- [ ] Walk-forward 8-window completing < 10s?
+- [ ] API p95 latency: `/api/backtest` < 10s, `/api/strategies` < 100ms?
+- [ ] TimescaleDB compression running? Chunks > 7 days compressed?
 
-- `IHistoricalDataManager` — bulk OHLCV import, gap detection, corporate action adjustments (splits, dividends, bonus)
-- `IEventCalendarService` — RBI MPC, FOMC, earnings, expiry dates, union budget
-- `IMarketBreadthService` — % stocks above SMA20/50/200, Advance/Decline line, New Highs/Lows, Market Regime (Bull/Bear/CrashMode)
-- `IDataFeedHealthMonitor` — WebSocket reconnection, exponential backoff, stale data detection, strategy pause on feed loss
-- Option chain service — live + historical OI, PCR, IV per strike, multi-expiry support
-
-### v0.3 — Options Engine
-**Status: 📋 Planned**
-
-Options are first-class instruments. Greek calculation, IV modeling, and multi-leg execution are prerequisites for all options strategies.
-
-- `IBlackScholesEngine` — European options pricing, full Greeks (Delta, Gamma, Theta, Vega, Rho)
-- `IImpliedVolatilityCalculator` — Newton-Raphson IV solver, IV surface, IV rank, IVP
-- `IOptionLegSelector` — strike selection by Delta / ATM / OTM offset / fixed price
-- `ISpreadOrderManager` — atomic multi-leg placement (`SpreadLeg`, `SpreadOrderRequest`, `CorrelationId`)
-- `spread_positions` + `spread_legs` DB tables
-- `OptionChainSnapshot` — full OI, PCR, IV, PCR(ΔOI), multi-expiry support
-
-### v0.4 — Risk & Execution Engine
-**Status: 📋 Planned**
-
-Capital preservation is non-negotiable. No live strategy runs without passing every risk check on every order.
-
-- `IPortfolioRiskManager` — Daily Loss Limit circuit breaker, max positions, margin utilisation, net delta cap, per-symbol exposure cap
-- `IPositionSizingEngine` — Fixed Fractional, ATR-based, Kelly Criterion (half-Kelly capped), Volatility Targeting
-- `ISlippageModel` — None / Fixed / Percentage / Bid-Ask / ATR-fraction / Volume impact
-- `ICommissionModel` — Zerodha, Upstox, mStock with full Indian charge breakdown (STT, exchange fee, GST, SEBI turnover, stamp duty)
-- `ITrailingStopManager` — Fixed / Trailing % / Trailing ATR / Break-Even / Time Stop / Chandelier
-- Paper Trading Mode (`ExecutionMode.Paper`) — simulated fills at next bar open, virtual P&L, LIVE badge vs PAPER badge in UI
-- `IScalingManager` — pyramid-in tranches (70/30 VCP default), partial profit-taking, break-even after first exit
-
-### v0.5 — Strategy Implementations
-**Status: 📋 Planned** *(Depends on v0.1–v0.4)*
-
-| Strategy | Type | Key Signal |
-|----------|------|------------|
-| STRAT-001 VCP Swing | Equity swing | Volatility Contraction Pattern breakout on daily TF |
-| STRAT-002 Fib Spread | Options credit spread | Fibonacci retracement zone + IV rank filter |
-| STRAT-003 Intraday PCR/VWAP | Intraday options | PCR(ΔOI) bias + delta-targeted strike + VWAP entry |
-| STRAT-004 Iron Condor | Options range | 4-leg defined-risk, theta decay, IVR filter |
-| STRAT-005 Short Straddle | Options premium | ATM CE+PE, IVR > 50, naked selling gate |
-| STRAT-006 Short Strangle | Options premium | OTM 15-delta, naked selling gate, circuit breaker |
-| STRAT-007 Calendar Spread | Options vol | Near-expiry sell + far-expiry buy, IV term structure |
-| STRAT-008 Vertical Spreads | Options directional | Bull Call / Bear Put / Bull Put / Bear Call |
-
-### v0.6 — Multi-Timeframe & Advanced Signals
-**Status: 📋 Planned**
-
-- `ICandleAggregator` — 5m → 15m → 1H → Daily aggregation
-- `StrategyContext.Candles15Min / Candles1Hour / CandlesDaily` — higher TF arrays pre-populated
-- MTF alignment filter — block 5m buy if 15m price below EMA21
-- `IStrategyCorrelationAnalyser` — Pearson correlation matrix, high-correlation warnings on deploy
-- Market Regime context injected into every `EvaluateAsync` call
-
-### v0.7 — Research & Analytics
-**Status: 📋 Planned**
-
-- `IPerformanceCalculator` — Sharpe, Sortino, Calmar, Omega, Information Ratio, MAE/MFE, Edge Ratio, VaR 95%, CVaR, Ulcer Index, Return Skewness/Kurtosis
-- `IMonteCarloSimulator` — 5000 randomised trade sequences, P(ruin), P95 drawdown, RobustnessVerdict
-- `PortfolioConstructionResult` — Markowitz efficient frontier (10,000 Monte Carlo portfolios), diversification ratio, optimal weights
-- Deployment Rating auto-generated: **Strong / Acceptable / Risky / Do Not Deploy**
-- Walk-Forward Optimiser (anchored + rolling windows)
-
-### v0.8 — Trade Journal & Production Readiness
-**Status: 📋 Planned**
-
-- `TradeJournalEntry` — per-trade R-multiple, MAE/MFE, entry/exit reason, manual notes + tags
-- P&L Attribution — by strategy, symbol, month, day-of-week, session (morning/afternoon), exit type
-- Tax Lot Report — ITR-3 Schedule CG / Business Income export, STT per trade, speculative vs non-speculative classification (April–March FY)
-- Admin UI complete: Trade Journal page, Portfolio Analysis page, Event Calendar page, Data Manager page, Risk Dashboard
-- Smoke tests, health checks, production deployment scripts
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Backend API | ASP.NET Core 8, C# 12, minimal APIs |
-| ORM / DB | PostgreSQL, Dapper, raw SQL migrations |
-| Real-time | WebSocket (broker feeds), SignalR (UI push) |
-| Options Math | Custom Black-Scholes engine, Newton-Raphson IV solver |
-| Broker APIs | Zerodha Kite v3, Upstox v3, mStock |
-| Frontend | React / TypeScript, Recharts, Tailwind CSS |
-| Testing | xUnit, FluentAssertions, Moq |
-| CI/CD | GitHub Actions |
-| AI Tooling | Claude (Anthropic) for code generation and PR reviews |
-
----
-
-## Repository Layout
-
-```
-rvs.AlgoTrader/
-├── src/
-│   ├── rvs.AlgoTrader.Api/              # ASP.NET Core host, endpoints, middleware
-│   ├── rvs.AlgoTrader.Core/             # Domain models, IStrategy, SignalResult, contracts
-│   ├── rvs.AlgoTrader.Strategies/       # All IStrategy implementations
-│   ├── rvs.AlgoTrader.Indicators/       # IIndicatorLibrary, CandlePatternDetector
-│   ├── rvs.AlgoTrader.Backtesting/      # BacktestEngine, PerformanceCalculator, MonteCarlo
-│   ├── rvs.AlgoTrader.LiveExecution/    # LiveEngine, PaperEngine, OrderManager, RiskManager
-│   ├── rvs.AlgoTrader.Options/          # BlackScholes, Greeks, IV, OptionLegSelector
-│   ├── rvs.AlgoTrader.Infrastructure/   # PostgreSQL repos, migrations, broker clients
-│   └── rvs.AlgoTrader.Notifications/   # Telegram, email, webhook alerts
-├── frontend/                            # React admin UI
-├── tests/
-│   ├── unit/                            # Strategy logic, indicator calculations
-│   ├── integration/                     # API + DB integration tests
-│   └── smoke/                           # End-to-end smoke tests
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── STRATEGY_SPECS.md                # Per-strategy detailed specs
-│   ├── UI_DESIGN_SPEC.md
-│   ├── BACKTEST_WORKFLOW.md
-│   ├── IMPLEMENTATION_STATUS.md
-│   ├── PLAN.md
-│   └── AGENT_INSTRUCTIONS.md            # How AI agents must work on this repo
-├── scripts/
-│   └── setup-milestones.sh
-└── .github/
-    └── workflows/
-        ├── setup-milestones.yml
-        └── ci.yml
-```
-
----
-
-## Database Migrations
-
-Migrations are plain SQL files in `src/rvs.AlgoTrader.Infrastructure/Persistence/Migrations/`. They **run automatically on every API startup** — no CLI, no manual steps.
-
-### Adding a migration
-
-```sql
--- 009_YourDescription.sql  (always next number, zero-padded to 3 digits)
--- Idempotent — always use IF NOT EXISTS
-ALTER TABLE some_table ADD COLUMN IF NOT EXISTS new_col TEXT;
-CREATE INDEX IF NOT EXISTS ix_some_table_col ON some_table (new_col);
-```
-
-Restart the API. Done. `Program.cs` never changes.
-
-### Current migration history
-
-| File | What it does |
-|------|--------------|
-| `InitialMigration.sql` | Baseline schema — all core tables |
-| `002_InstrumentUniverse.sql` | Instrument universe + seed rows |
-| `003_FixInstrumentColumns.sql` | Derivative instrument columns |
-| `004_BacktestAndForwardTestTrades.sql` | Backtest runs + forward test sessions/trades |
-| `005_BacktestExtendedStats.sql` | Extended stats on backtest_runs |
-| `006_StrategyInstancePnl.sql` | Intraday P&L on strategy_instances |
-| `007_StrategyScenarios.sql` | strategy_scenarios table |
-| `008_BrokerSessions.sql` | broker_sessions for token persistence |
-
----
-
-## For AI Agents — How to Work on This Repo
-
-> See `docs/AGENT_INSTRUCTIONS.md` for full agent protocol.
-
-### Golden Rule
-**Inspect code first. Update docs second. Implement third. Never assume a feature exists — verify in `src/`.**
-
-### Working from milestones
-
-1. Check [GitHub Milestones](https://github.com/prvikas/rvs.AlgoTrader/milestones) for current active milestone
-2. Pick the **lowest-numbered open milestone** (v0.1 before v0.2, etc.)
-3. Within the milestone, pick issues tagged `bug` before `enhancement`
-4. Read the issue's **Acceptance Criteria** checklist — implement every checkbox
-5. Write unit tests first (TDD preferred), then implementation
-6. All new code must have: XML doc comments, unit tests, DB migration (if schema changes)
-7. Open a PR linked to the issue (`Closes #N`)
-8. PR must pass CI before merge
-
-### Do not
-- Skip milestones (v0.3 Options Engine cannot be worked on until v0.1 contracts are done)
-- Implement without reading the issue body — every issue has design sketches and acceptance criteria
-- Add new dependencies without architectural justification
-- Break existing passing tests
+**Labels:** `performance` `bug` `database` `cache`
 
 ---
 
 ## Start Here (New Developer / Agent)
 
-1. [`CLAUDE.md`](CLAUDE.md) — AI agent instructions and code conventions
-2. [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) — What is built vs planned
-3. [`docs/PLAN.md`](docs/PLAN.md) — Ordered implementation plan
-4. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System design
-5. [`docs/STRATEGY_SPECS.md`](docs/STRATEGY_SPECS.md) — Per-strategy detailed specs
-6. [`docs/AGENT_INSTRUCTIONS.md`](docs/AGENT_INSTRUCTIONS.md) — Agent workflow protocol
-7. [GitHub Issues](https://github.com/prvikas/rvs.AlgoTrader/issues) — All tracked work items
-8. [GitHub Milestones](https://github.com/prvikas/rvs.AlgoTrader/milestones) — Ordered delivery plan
+1. [`CLAUDE.md`](CLAUDE.md) — AI agent hard rules, commands, architecture constraints
+2. [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) — What is built (all P1–P9 complete)
+3. [`docs/PLAN.md`](docs/PLAN.md) — Ordered implementation plan and current phase
+4. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System design and layer boundaries
+5. [`docs/STRATEGY_SPECS.md`](docs/STRATEGY_SPECS.md) — Authoritative per-strategy specifications
+6. [`docs/BACKTEST_WORKFLOW.md`](docs/BACKTEST_WORKFLOW.md) — Backtest pipeline and data flow
+7. [`docs/ANTI_PATTERNS.md`](docs/ANTI_PATTERNS.md) — What not to do (AP-001 through AP-022)

@@ -71,10 +71,11 @@ export function StrategiesPage() {
   const selectedId = searchParams.get('id') ?? undefined
 
   const { data: strategies = [], isLoading, error, refetch } = useQuery({
-    queryKey: ['strategies'],
+    // Use 'strategy-definitions' — NOT 'strategies', which GuidedDashboard and
+    // StrategyLabPage populate with StrategyInstance[] via strategiesApi.list().
+    // Sharing that key causes instances to appear here after a Dashboard visit.
+    queryKey: ['strategy-definitions'],
     queryFn: () => strategyDomainApi.listStrategies(),
-    // Avoid spurious refetches that cause the list to flicker between the
-    // optimistically-seeded cache and the in-flight server response.
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   })
@@ -82,7 +83,7 @@ export function StrategiesPage() {
   const deleteMut = useMutation({
     mutationFn: (id: string) => strategyDomainApi.deleteStrategy(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['strategies'] })
+      qc.invalidateQueries({ queryKey: ['strategy-definitions'] })
       if (selectedId) setSearchParams({})
     },
   })
@@ -267,7 +268,7 @@ export function StrategiesPage() {
             <StrategyDefinitionPage
               strategyKind={creatingType}
               onSaved={(s: Strategy) => {
-                qc.invalidateQueries({ queryKey: ['strategies'] })
+                qc.invalidateQueries({ queryKey: ['strategy-definitions'] })
                 setCreating(false)
                 setCreatingType(null)
                 selectStrategy(s.id)
@@ -293,7 +294,7 @@ export function StrategiesPage() {
               strategyId={selectedStrategy.id}
               initialData={selectedStrategy}
               onSaved={() => {
-                qc.invalidateQueries({ queryKey: ['strategies'] })
+                qc.invalidateQueries({ queryKey: ['strategy-definitions'] })
                 setEditingDefinition(false)
               }}
               onCancel={() => setEditingDefinition(false)}
@@ -366,7 +367,7 @@ export function StrategiesPage() {
                   strategyId={selectedStrategy.id}
                   initialData={selectedStrategy}
                   onSaved={(s: Strategy) => {
-                    qc.setQueryData<Strategy[]>(['strategies'], old =>
+                    qc.setQueryData<Strategy[]>(['strategy-definitions'], old =>
                       old ? old.map(x => x.id === s.id ? s : x) : [s]
                     )
                     // No invalidateQueries here: setQueryData is synchronous, and a

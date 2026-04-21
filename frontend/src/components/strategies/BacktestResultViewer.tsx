@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ReferenceLine, ComposedChart, Area, CartesianGrid,
+  ReferenceLine, CartesianGrid,
 } from 'recharts'
 import {
   backtestApi,
@@ -507,33 +507,182 @@ function OverviewTab({ result, scenario, equityCurve, isRunning, jobProgress }: 
   )
 }
 
-// ── Chart tab ─────────────────────────────────────────────────────────────────
+// ── Chart tab — SVG candlestick with indicator overlays ───────────────────────
 
-// Custom dot renderers — check payload before rendering so null-value bars are skipped
-const BuyDot = (props: Record<string, unknown>) => {
-  if (!props.payload || (props.payload as Record<string, unknown>).buy == null) return <g />
+const IND_COLORS = ['#60a5fa', '#f59e0b', '#a78bfa', '#34d399', '#fb923c', '#e879f9']
+
+function CandlestickChart({ bars }: { bars: BacktestChartBar[] }) {
+  // Aggregate to at most 400 visible candles so the SVG stays performant
+  const MAX_BARS = 400
+  const stride = Math.max(1, Math.ceil(bars.length / MAX_BARS))
+  const visible: BacktestChartBar[] = []
+  for (let i = 0; i < bars.length; i += stride) {
+    const g = bars.slice(i, i + stride)
+    if (g.length === 1) { visible.push(g[0]); continue }
+    // Aggregate: OHLCV + carry last bar's indicators + first signal in group
+    const sig = g.find(b => b.signal)
+    visible.push({
+      timeMs:     g[0].timeMs,
+      open:       g[0].open,
+      high:       Math.max(...g.map(b => b.high)),
+      low:        Math.min(...g.map(b => b.low)),
+      close:      g[g.length - 1].close,
+      volume:     g.reduce((s, b) => s + b.volume, 0),
+      signal:     sig?.signal ?? null,
+      signalPrice:sig?.signalPrice,
+      stopLoss:   g[g.length - 1].stopLoss,
+      takeProfit: g[g.length - 1].takeProfit,
+      indicators: g[g.length - 1].indicators,
+    })
+  }
+
+  const W = 900, H = 300
+  const PL = 60, PR = 12, PT = 10, PB = 28
+  const chartW = W - PL - PR
+  const chartH = H - PT - PB
+
+  const prices = visible.flatMap(b => [b.high, b.low])
+  const rawMin = Math.min(...prices), rawMax = Math.max(...prices)
+  const pad    = (rawMax - rawMin) * 0.05 || 1
+  const minP = rawMin - pad, maxP = rawMax + pad
+  const pRange = maxP - minP
+
+  const toY  = (p: number) => PT + chartH * (1 - (p - minP) / pRange)
+  const barW = chartW / visible.length
+  const toX  = (i: number) => PL + (i + 0.5) * barW
+  const bodyW = Math.max(1, barW * 0.6)
+
+  // Collect all unique indicator names present in any bar
+  const indNames = [...new Set(visible.flatMap(b => Object.keys(b.indicators ?? {})))]
+
+  // Y-axis ticks (5 evenly spaced)
+  const yTicks = Array.from({ length: 5 }, (_, k) => minP + pRange * k / 4)
+
+  const fmtIST = (ms: number) =>
+    new Date(ms).toLocaleDateString('en-IN', {
+      timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short',
+    })
+
   return (
-    <circle
-      cx={props.cx as number}
-      cy={props.cy as number}
-      r={5}
-      fill={C.green}
-      stroke={C.surface2}
-      strokeWidth={1.5}
-    />
-  )
-}
-const SellDot = (props: Record<string, unknown>) => {
-  if (!props.payload || (props.payload as Record<string, unknown>).sell == null) return <g />
-  return (
-    <circle
-      cx={props.cx as number}
-      cy={props.cy as number}
-      r={5}
-      fill={C.red}
-      stroke={C.surface2}
-      strokeWidth={1.5}
-    />
+    <div style={{ overflowX: 'auto' }}>
+      <svg width={W} height={H} style={{ display: 'block', userSelect: 'none' }}>
+        {/* Y-axis grid + labels */}
+        {yTicks.map((t, k) => (
+          <g key={k}>
+            <line x1={PL} y1={toY(t)} x2={W - PR} y2={toY(t)}
+              stroke={C.border2} strokeWidth={0.5} strokeDasharray="3 3" />
+            <text x={PL - 4} y={toY(t) + 3} fill={C.textMuted} fontSize={8} textAnchor="end">
+              {t >= 1000 ? `${(t / 1000).toFixed(1)}K` : t.toFixed(0)}
+            </text>
+          </g>
+        ))}
+
+        {/* Candle bodies + wicks */}
+        {visible.map((b, i) => {
+          const x        = toX(i)
+          const isGreen  = b.close >= b.open
+          const color    = isGreen ? '#00d07a' : '#ff4757'
+          const yOpen    = toY(b.open)
+          const yClose   = toY(b.close)
+          const bodyTop  = Math.min(yOpen, yClose)
+          const bodyH    = Math.max(1, Math.abs(yOpen - yClose))
+
+          return (
+            <g key={i}>
+              {/* High–Low wick */}
+              <line x1={x} y1={toY(b.high)} x2={x} y2={toY(b.low)}
+                stroke={color} strokeWidth={Math.max(0.5, Math.min(1, barW * 0.15))} />
+              {/* OHLC body */}
+              <rect x={x - bodyW / 2} y={bodyTop} width={bodyW} height={bodyH}
+                fill={color} opacity={0.82} />
+              {/* SL level — thin red dashed line on bar when position is open */}
+              {b.stopLoss != null && b.stopLoss > 0 && (
+                <line x1={x - bodyW} y1={toY(b.stopLoss)} x2={x + bodyW} y2={toY(b.stopLoss)}
+                  stroke="#ff4757" strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
+              )}
+              {/* TP level — thin green dashed line */}
+              {b.takeProfit != null && b.takeProfit > 0 && (
+                <line x1={x - bodyW} y1={toY(b.takeProfit)} x2={x + bodyW} y2={toY(b.takeProfit)}
+                  stroke="#00d07a" strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
+              )}
+              {/* Entry signal ▲ — green triangle below candle low */}
+              {b.signal === 'BUY' && (() => {
+                const ty = toY(b.low) + 14
+                return (
+                  <polygon
+                    points={`${x},${ty - 8} ${x - 5},${ty + 2} ${x + 5},${ty + 2}`}
+                    fill="#00d07a" stroke="#003820" strokeWidth={0.5}
+                  >
+                    <title>Entry ▲ ₹{(b.signalPrice ?? b.close).toFixed(2)}</title>
+                  </polygon>
+                )
+              })()}
+              {/* Exit / SELL signal ▼ — red triangle above candle high */}
+              {(b.signal === 'SELL' || b.signal === 'EXIT') && (() => {
+                const ty = toY(b.high) - 14
+                return (
+                  <polygon
+                    points={`${x},${ty + 8} ${x - 5},${ty - 2} ${x + 5},${ty - 2}`}
+                    fill="#ff4757" stroke="#380000" strokeWidth={0.5}
+                  >
+                    <title>Exit ▼ ₹{(b.signalPrice ?? b.close).toFixed(2)}</title>
+                  </polygon>
+                )
+              })()}
+            </g>
+          )
+        })}
+
+        {/* Indicator polylines — one per unique indicator name */}
+        {indNames.map((name, ci) => {
+          const pts = visible
+            .map((b, i) => {
+              const v = b.indicators?.[name]
+              return v != null ? `${toX(i).toFixed(1)},${toY(v).toFixed(1)}` : null
+            })
+            .filter((p): p is string => p !== null)
+          if (pts.length < 2) return null
+          return (
+            <polyline key={name} points={pts.join(' ')}
+              fill="none" stroke={IND_COLORS[ci % IND_COLORS.length]}
+              strokeWidth={1} opacity={0.75} strokeLinejoin="round" />
+          )
+        })}
+
+        {/* X-axis date labels — sample ~8 evenly spaced */}
+        {visible.map((b, i) => {
+          const step = Math.max(1, Math.floor(visible.length / 8))
+          if (i % step !== 0) return null
+          return (
+            <text key={i} x={toX(i)} y={H - 6} fill={C.textMuted} fontSize={8} textAnchor="middle">
+              {fmtIST(b.timeMs)}
+            </text>
+          )
+        })}
+      </svg>
+
+      {/* Indicator legend */}
+      {indNames.length > 0 && (
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 6, fontSize: 10, color: C.textMuted }}>
+          {indNames.map((name, ci) => (
+            <span key={name} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{
+                width: 18, height: 2, display: 'inline-block', verticalAlign: 'middle',
+                background: IND_COLORS[ci % IND_COLORS.length],
+              }} />
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 10, color: C.textDim }}>
+        <span style={{ color: '#00d07a' }}>▲ Entry</span>
+        <span style={{ color: '#ff4757' }}>▼ Exit</span>
+        <span style={{ color: '#ff475788' }}>— — SL</span>
+        <span style={{ color: '#00d07a88' }}>— — TP</span>
+      </div>
+    </div>
   )
 }
 
@@ -549,93 +698,21 @@ function ChartTab({ chartBars, isRunning }: {
     )
   }
 
-  const data = chartBars.map(b => ({
-    t: new Date(b.timeMs).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
-    close: b.close,
-    buy:  b.signal === 'BUY'  ? b.close : null,
-    sell: b.signal === 'SELL' ? b.close : null,
-  }))
-
-  const buyCount  = data.filter(d => d.buy  !== null).length
-  const sellCount = data.filter(d => d.sell !== null).length
+  const entryCount = chartBars.filter(b => b.signal === 'BUY').length
+  const exitCount  = chartBars.filter(b => b.signal === 'SELL' || b.signal === 'EXIT').length
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: SP.lg }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <SectionLabel style={{ margin: 0 }}>
-          Price {isRunning
-            ? '(live — last 200 bars)'
-            : `(${chartBars.length.toLocaleString()} bars, downsampled)`
-          }
+          {isRunning ? 'Live — last 200 bars' : `${chartBars.length.toLocaleString()} bars (downsampled to ≤400)`}
         </SectionLabel>
-        <div style={{ display: 'flex', gap: SP.md, fontSize: 10, color: C.textMuted }}>
-          {buyCount  > 0 && <span style={{ color: C.green  }}>● {buyCount} entries</span>}
-          {sellCount > 0 && <span style={{ color: C.red    }}>● {sellCount} exits</span>}
+        <div style={{ display: 'flex', gap: SP.md, fontSize: 10 }}>
+          {entryCount > 0 && <span style={{ color: C.green }}>▲ {entryCount} entries</span>}
+          {exitCount  > 0 && <span style={{ color: C.red   }}>▼ {exitCount} exits</span>}
         </div>
       </div>
-
-      <ResponsiveContainer width="100%" height={280}>
-        <ComposedChart data={data} margin={{ top: 4, right: 20, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={C.border2} />
-          <XAxis
-            dataKey="t"
-            tick={{ fill: C.textMuted, fontSize: 9 }}
-            tickLine={false}
-            interval="preserveStartEnd"
-          />
-          <YAxis
-            tick={{ fill: C.textMuted, fontSize: 9 }}
-            tickLine={false}
-            axisLine={false}
-            width={60}
-            tickFormatter={(v: number) => `₹${v}`}
-          />
-          <Tooltip
-            contentStyle={{ background: C.surface2, border: `1px solid ${C.border}`, fontSize: 11 }}
-            formatter={(v: unknown, name: string) => {
-              const labels: Record<string, string> = {
-                close: 'Close', buy: 'Entry', sell: 'Exit',
-              }
-              return [`₹${(v as number)?.toFixed(2)}`, labels[name] ?? name]
-            }}
-          />
-          <Area
-            type="monotone"
-            dataKey="close"
-            stroke={C.blue}
-            fill={C.blue11}
-            dot={false}
-            strokeWidth={1.5}
-            isAnimationActive={false}
-          />
-          {/* Entry signals — green dots, no connecting line */}
-          <Line
-            type="monotone"
-            dataKey="buy"
-            stroke="transparent"
-            strokeWidth={0}
-            dot={BuyDot as unknown as boolean}
-            activeDot={false}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-          {/* Exit signals — red dots, no connecting line */}
-          <Line
-            type="monotone"
-            dataKey="sell"
-            stroke="transparent"
-            strokeWidth={0}
-            dot={SellDot as unknown as boolean}
-            activeDot={false}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
-
-      <div style={{ fontSize: 10, color: C.textDim }}>
-        ● Green = entry signal &nbsp;|&nbsp; ● Red = exit signal
-      </div>
+      <CandlestickChart bars={chartBars} />
     </div>
   )
 }

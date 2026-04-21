@@ -414,6 +414,9 @@ export function ScenariosTab({ strategy }: Props) {
   // ── Real-time job tracking ─────────────────────────────────────────────────
   const [activeJob, setActiveJob] = useState<{ scenarioId: string; jobId: string } | null>(null)
   const [jobProgress, setJobProgress] = useState<BacktestJobStatus | null>(null)
+  // Keeps the last Failed/Cancelled status per scenarioId so the error stays
+  // visible after activeJob is cleared. Wiped when a new job starts for that scenario.
+  const [lastFailedProgress, setLastFailedProgress] = useState<Record<string, BacktestJobStatus>>({})
 
   // Save metrics to DB and reset state when a job finishes
   async function handleJobCompleted(status: BacktestJobStatus) {
@@ -437,7 +440,8 @@ export function ScenariosTab({ strategy }: Props) {
           { status: 'Backtested', lastMetricsJson: JSON.stringify(metrics), lastRunAt: new Date().toISOString() }
         )
       } else {
-        // Failed or cancelled — reset to Draft
+        // Failed or cancelled — reset to Draft and preserve error for display
+        setLastFailedProgress(prev => ({ ...prev, [scenarioId]: status }))
         await apiClient.patch(
           `/strategy-definitions/${strategy.id}/scenarios/${scenarioId}`,
           { status: 'Draft' }
@@ -504,6 +508,7 @@ export function ScenariosTab({ strategy }: Props) {
       if (result.jobId) {
         setActiveJob({ scenarioId: sid, jobId: result.jobId })
         setJobProgress(null)
+        setLastFailedProgress(prev => { const { [sid]: _, ...rest } = prev; return rest })
         // Auto-open the visualization viewer so user can see live progress + chart
         setViewingScenarioId(sid)
       }
@@ -546,7 +551,7 @@ export function ScenariosTab({ strategy }: Props) {
     }
   }
 
-  const COLS = ['Name / Hypothesis', 'Capital', 'Range', 'Overrides', 'Return', 'DD', 'PF', 'Status', 'Actions']
+  const COLS = ['Scenario', 'Capital', 'Range', 'Overrides', 'Return', 'DD', 'PF', 'Status', 'Actions']
 
   // ── Viewer mode: full-width BacktestResultViewer instead of the scenario table ──
   const viewingScenario = viewingScenarioId
@@ -560,7 +565,7 @@ export function ScenariosTab({ strategy }: Props) {
           strategy={strategy}
           scenario={viewingScenario}
           liveChartBars={liveChartBars}
-          jobProgress={activeJob?.scenarioId === viewingScenario.id ? jobProgress : null}
+          jobProgress={activeJob?.scenarioId === viewingScenario.id ? jobProgress : (lastFailedProgress[viewingScenario.id] ?? null)}
           activeJobId={activeJob?.scenarioId === viewingScenario.id ? activeJob.jobId : null}
           signalRConnected={signalRConnected}
           onBack={() => setViewingScenarioId(null)}
@@ -608,14 +613,16 @@ export function ScenariosTab({ strategy }: Props) {
                 <ScenarioRow
                   key={s.id}
                   scenario={s}
+                  strategy={strategy}
                   onEdit={() => openEdit(s.id)}
                   onRun={() => runMut.mutate(s.id)}
                   onView={() => setViewingScenarioId(s.id)}
                   onDelete={() => deleteMut.mutate(s.id)}
                   onPromote={() => setPromotingScenario(s)}
+                  onDismissError={() => setLastFailedProgress(prev => { const { [s.id]: _, ...rest } = prev; return rest })}
                   loading={runMut.isPending || deleteMut.isPending}
                   colCount={COLS.length}
-                  jobProgress={activeJob?.scenarioId === s.id ? jobProgress : null}
+                  jobProgress={activeJob?.scenarioId === s.id ? jobProgress : (lastFailedProgress[s.id] ?? null)}
                   signalRConnected={signalRConnected}
                 />
               ))}
@@ -649,15 +656,17 @@ export function ScenariosTab({ strategy }: Props) {
                       <ScenarioRow
                         key={s.id}
                         scenario={s}
+                        strategy={strategy}
                         onEdit={() => openEdit(s.id)}
                         onRun={() => runMut.mutate(s.id)}
                         onView={() => setViewingScenarioId(s.id)}
                         onDelete={() => deleteMut.mutate(s.id)}
                         onPromote={() => setPromotingScenario(s)}
+                        onDismissError={() => setLastFailedProgress(prev => { const { [s.id]: _, ...rest } = prev; return rest })}
                         loading={runMut.isPending || deleteMut.isPending}
                         indented
                         colCount={COLS.length}
-                        jobProgress={activeJob?.scenarioId === s.id ? jobProgress : null}
+                        jobProgress={activeJob?.scenarioId === s.id ? jobProgress : (lastFailedProgress[s.id] ?? null)}
                         signalRConnected={signalRConnected}
                       />
                     ))}
@@ -708,23 +717,38 @@ export function ScenariosTab({ strategy }: Props) {
 
 // ── Scenario row ──────────────────────────────────────────────────────────────
 
-function ScenarioRow({ scenario: s, onEdit, onRun, onView, onDelete, onPromote, loading, indented, colCount, jobProgress, signalRConnected }: {
+function ScenarioRow({
+  scenario: s, strategy, onEdit, onRun, onView, onDelete, onPromote, onDismissError,
+  loading, indented, colCount, jobProgress, signalRConnected,
+}: {
   scenario: Scenario
+  strategy: Strategy
   onEdit: () => void
-  onRun: () => void
-  onView: () => void
+  onRun: () => void       // Backtest (historical only)
+  onView: () => void      // View Backtest / View Results
   onDelete: () => void
-  onPromote: () => void
+  onPromote: () => void   // Open promotion checklist → Fwd Test
+  onDismissError: () => void
   loading: boolean
   indented?: boolean
   colCount: number
   jobProgress: BacktestJobStatus | null
   signalRConnected: boolean
 }) {
-  const isRunning = s.status === ScenarioStatus.Running
+  const isRunning  = s.status === ScenarioStatus.Running
+  const isFwdTest  = s.status === ScenarioStatus.FwdTesting
+  const isLiveCand = s.status === ScenarioStatus.LiveCandidate
+  const isLive     = s.status === ScenarioStatus.Live
+
+  // Symbol + timeframe from the parent strategy definition
+  const symbol    = strategy.instruments[0] ?? '—'
+  const timeframe = strategy.primaryTimeframe
+
   return (
     <React.Fragment>
       <tr style={{ borderBottom: isRunning ? 'none' : `1px solid ${C.border2}` }}>
+
+        {/* ── Name / hypothesis / symbol+tf stacked ── */}
         <td style={{ ...tdStyle, paddingLeft: indented ? 24 : undefined }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {s.isBaseline && (
@@ -752,7 +776,12 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onView, onDelete, onPromote, 
               {s.hypothesisTag}
             </span>
           )}
+          {/* Instrument + timeframe inherited from strategy definition */}
+          <div style={{ fontSize: 10, color: C.textDim, marginTop: 3, fontFamily: F.mono }}>
+            {symbol} · {timeframe}
+          </div>
         </td>
+
         <td style={{ ...tdStyle, fontFamily: F.mono, textAlign: 'right' }}>
           ₹{(s.capital / 1000).toFixed(0)}K
         </td>
@@ -770,25 +799,109 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onView, onDelete, onPromote, 
         <td style={tdStyle}>
           <StatusChip status={s.status} promotionNotes={s.promotionNotes} />
         </td>
+
+        {/* ── Lifecycle-aware actions ── */}
         <td style={tdStyle}>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            <ActionBtn label="Run" onClick={onRun} loading={loading} disabled={isRunning} title={isRunning ? 'Backtest is already running' : undefined} />
-            {(isRunning || s.status === ScenarioStatus.Backtested) && (
-              <ActionBtn label={isRunning ? 'View Live' : 'View'} onClick={onView} />
+
+            {/* Backtest: visible for Draft / Backtested / Archived — not while running or in live modes */}
+            {!isRunning && !isFwdTest && !isLiveCand && !isLive && (
+              <ActionBtn
+                label="Backtest"
+                onClick={onRun}
+                loading={loading}
+                title="Run historical backtest — does not affect live trading"
+              />
             )}
-            <ActionBtn label="Edit" onClick={onEdit} disabled={isRunning} />
-            <ActionBtn label="→ Fwd" onClick={onPromote} disabled={s.status !== ScenarioStatus.Backtested} />
-            <ActionBtn label="Delete" danger onClick={onDelete} loading={loading} disabled={isRunning} />
+
+            {/* View Backtest: shown while running (live progress) or when backtested */}
+            {(isRunning || s.status === ScenarioStatus.Backtested) && (
+              <ActionBtn label="View Backtest" onClick={onView} />
+            )}
+
+            {/* Promote to Forward Test: only after a successful backtest */}
+            {s.status === ScenarioStatus.Backtested && (
+              <ActionBtn
+                label="→ Fwd Test"
+                onClick={onPromote}
+                title="Open promotion checklist — moves scenario to Forward Test"
+              />
+            )}
+
+            {/* Forward Test actions (engine integration pending) */}
+            {isFwdTest && (
+              <>
+                <ActionBtn label="View Results" onClick={onView} title="View forward-test results" />
+                <ActionBtn
+                  label="Stop Fwd Test"
+                  onClick={() => { /* stub — forward-test control not yet wired */ }}
+                  disabled
+                  title="Forward-test stop: coming soon"
+                />
+              </>
+            )}
+
+            {/* Live Candidate: deploy gate (requires approval gate) */}
+            {isLiveCand && (
+              <>
+                <ActionBtn
+                  label="Deploy Live"
+                  onClick={() => { /* stub — live deployment requires approval gate */ }}
+                  disabled
+                  title="Deploy Live: requires passing approval gate criteria"
+                />
+                <ActionBtn label="View Results" onClick={onView} />
+              </>
+            )}
+
+            {/* Live: view + stop */}
+            {isLive && (
+              <>
+                <ActionBtn label="View Live" onClick={onView} title="View live trading results" />
+                <ActionBtn
+                  label="Stop Live"
+                  onClick={() => { /* stub */ }}
+                  danger
+                  disabled
+                  title="Live stop: coming soon"
+                />
+              </>
+            )}
+
+            {/* Edit: disabled while running or in active forward/live modes */}
+            {!isLive && (
+              <ActionBtn
+                label="Edit"
+                onClick={onEdit}
+                disabled={isRunning || isFwdTest}
+                title={isFwdTest ? 'Stop forward test before editing' : undefined}
+              />
+            )}
+
+            {/* Delete: blocked while running, in fwd test, or live */}
+            <ActionBtn
+              label="Delete"
+              danger
+              onClick={onDelete}
+              loading={loading}
+              disabled={isRunning || isFwdTest || isLive}
+              title={
+                isLive      ? 'Stop live trading before deleting'
+                : isFwdTest ? 'Stop forward test before deleting'
+                : isRunning ? 'Backtest is running'
+                : undefined
+              }
+            />
           </div>
         </td>
       </tr>
 
-      {/* ── Real-time progress panel ── */}
+      {/* ── Real-time backtest progress panel ── */}
       {isRunning && (
         <tr style={{ borderBottom: `1px solid ${C.border2}` }}>
           <td colSpan={colCount} style={{ padding: '10px 14px', background: C.amber11 }}>
             {jobProgress && (jobProgress.status === 'Running' || jobProgress.status === 'Downloading') ? (
-              /* ── Live progress from SignalR / HTTP poll ── */
+              /* ── Active progress (SignalR / HTTP poll) ── */
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   <span style={{
@@ -797,11 +910,13 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onView, onDelete, onPromote, 
                     animation: 'pulse 1.2s ease-in-out infinite',
                   }} />
                   <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>
-                    {jobProgress.status === 'Downloading' ? 'Downloading data…' : 'Backtest running…'}
+                    {jobProgress.status === 'Downloading'
+                      ? `Preparing historical data for ${symbol} (${timeframe})…`
+                      : 'Backtest running…'}
                   </span>
-                  <span style={{ fontSize: 11, color: C.textMuted }}>
-                    {!signalRConnected && <span style={{ color: C.textDim, fontSize: 10 }}>(polling)</span>}
-                  </span>
+                  {!signalRConnected && (
+                    <span style={{ color: C.textDim, fontSize: 10 }}>(polling)</span>
+                  )}
                 </div>
 
                 {/* Progress bar */}
@@ -831,25 +946,39 @@ function ScenarioRow({ scenario: s, onEdit, onRun, onView, onDelete, onPromote, 
                 </div>
               </div>
             ) : jobProgress && (jobProgress.status === 'Failed' || jobProgress.status === 'Cancelled') ? (
-              /* ── Error state ── */
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 12, color: C.red, fontWeight: 600 }}>
-                  {jobProgress.status === 'Failed' ? '✗ Backtest failed' : '✗ Backtest cancelled'}
-                </span>
-                {jobProgress.error && (
-                  <span style={{ fontSize: 11, color: C.textMuted }}>{jobProgress.error}</span>
-                )}
+              /* ── Error / cancelled ── */
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                <div>
+                  <span style={{ fontSize: 12, color: C.red, fontWeight: 600 }}>
+                    {jobProgress.status === 'Failed' ? '✗ Backtest failed' : '✗ Backtest cancelled'}
+                  </span>
+                  {jobProgress.error && (
+                    <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+                      {jobProgress.error}
+                      {(jobProgress.error.includes('401') || jobProgress.error.toLowerCase().includes('session expired') || jobProgress.error.toLowerCase().includes('unauthorized')) && (
+                        <div style={{ marginTop: 6, color: C.amber, fontWeight: 600 }}>
+                          Tip: Re-authenticate with MStock via Settings → Broker Login, then retry.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={onDismissError}
+                  title="Dismiss"
+                  style={{ flexShrink: 0, background: 'none', border: 'none', color: C.textDim, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px' }}
+                >×</button>
               </div>
             ) : (
-              /* ── Waiting for first progress event ── */
+              /* ── Waiting for first status event from engine ── */
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{
                   display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
                   background: C.amber, animation: 'pulse 1.2s ease-in-out infinite',
                 }} />
-                <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>Starting backtest…</span>
+                <span style={{ fontSize: 12, color: C.amber, fontWeight: 600 }}>Initialising backtest engine…</span>
                 <span style={{ fontSize: 11, color: C.textMuted }}>
-                  {signalRConnected ? 'Connected via real-time stream' : 'Connecting to engine…'}
+                  {signalRConnected ? 'Connected to backtest engine' : 'Connecting to backtest engine…'}
                 </span>
               </div>
             )}

@@ -477,7 +477,7 @@ export interface TradeRecord {
   pnlR: number
   pnlAbsolute: number
   barsHeld: number
-  exitReason: 'StopHit' | 'TargetHit' | 'TrailingStop' | 'SessionEnd' | 'Manual'
+  exitReason: 'StopHit' | 'TargetHit' | 'TrailingStop' | 'SessionEnd' | 'Manual' | 'Strategy'
   regime?: string
 }
 

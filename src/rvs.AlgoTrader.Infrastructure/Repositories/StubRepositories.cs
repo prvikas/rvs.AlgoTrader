@@ -183,55 +183,101 @@ public class BacktestRunRepository(AlgoTraderDbContext db, rvs.AlgoTrader.Domain
 
     public async Task<Guid> SaveAsync(BacktestResultDto result, CancellationToken ct)
     {
-        // Idempotent on DataHash — return existing ID if already stored
-        if (result.DataHash != null)
-        {
-            var existing = await db.BacktestRuns.FirstOrDefaultAsync(r => r.DataHash == result.DataHash, ct);
-            if (existing != null) return existing.Id;
-        }
-
         var tradesJson = result.Trades != null
             ? System.Text.Json.JsonSerializer.Serialize(result.Trades)
             : "[]";
 
+        var extJson = System.Text.Json.JsonSerializer.Serialize(new {
+            result.SortinoRatio, result.DailySharpe, result.MonthlySharpe,
+            result.MonthlyWinRate, result.DrawdownRecoveryBars, result.MaxLots,
+            MonthlyBreakdown = result.MonthlyBreakdown ?? [],
+            YearlyBreakdown  = result.YearlyBreakdown  ?? [],
+            result.VaR95, result.CVaR95, result.OmegaRatio,
+            result.Skewness, result.Kurtosis,
+            result.DeploymentRating, result.DeploymentRationale,
+            result.CircuitBreakerHit, result.CircuitBreakerReason,
+            // Store chart sample here so it is available when loading a saved run.
+            // ChartSample is downsampled to ≤ 2000 bars — safe to persist as JSON.
+            ChartSample = result.ChartSample ?? []
+        });
+
+        // ── Upsert by ScenarioId (re-run overwrites previous result) ─────────
+        // If the run was triggered from the UI scenarios panel, overwrite the
+        // existing row so the user always sees the latest result for each scenario.
+        if (result.ScenarioId.HasValue)
+        {
+            var existing = await db.BacktestRuns
+                .FirstOrDefaultAsync(r => r.ScenarioId == result.ScenarioId.Value, ct);
+            if (existing != null)
+            {
+                // Overwrite metrics and data in-place; keep the original row ID.
+                existing.StrategyName         = result.StrategyName;
+                existing.InternalSymbol       = result.Symbol;
+                existing.Timeframe            = result.Timeframe;
+                existing.FromDate             = result.FromDate;
+                existing.ToDate               = result.ToDate;
+                existing.InitialCapital       = result.InitialCapital;
+                existing.FinalEquity          = result.FinalEquity;
+                existing.TotalPnl             = result.TotalPnl;
+                existing.TotalReturn          = result.TotalReturn;
+                existing.MaxDrawdown          = result.MaxDrawdown;
+                existing.SharpeRatio          = result.SharpeRatio;
+                existing.CalmarRatio          = result.CalmarRatio;
+                existing.ProfitFactor         = result.ProfitFactor;
+                existing.WinRate              = result.WinRate;
+                existing.TotalTrades          = result.TotalTrades;
+                existing.WinCount             = result.WinCount;
+                existing.LossCount            = result.LossCount;
+                existing.AvgWin               = result.AvgWin;
+                existing.AvgLoss              = result.AvgLoss;
+                existing.MaxConsecutiveLosses  = result.MaxConsecutiveLosses;
+                existing.ExpectancyPerTrade    = result.ExpectancyPerTrade;
+                existing.DataHash             = result.DataHash;
+                existing.TradesJson           = tradesJson;
+                existing.ExtendedStatsJson    = extJson;
+                existing.RanAt               = clock.NowInstant();
+                await db.SaveChangesAsync(ct);
+                return existing.Id;
+            }
+        }
+        else if (result.DataHash != null)
+        {
+            // No ScenarioId — fall back to DataHash idempotency for ad-hoc runs.
+            var existing = await db.BacktestRuns
+                .FirstOrDefaultAsync(r => r.DataHash == result.DataHash, ct);
+            if (existing != null) return existing.Id;
+        }
+
+        // ── Insert new row ────────────────────────────────────────────────────
         var run = new BacktestRun
         {
-            Id = Guid.NewGuid(),
-            ScenarioId = result.ScenarioId,
-            StrategyName = result.StrategyName,
-            InternalSymbol = result.Symbol,
-            Timeframe = result.Timeframe,
-            FromDate = result.FromDate,
-            ToDate = result.ToDate,
-            InitialCapital = result.InitialCapital,
-            FinalEquity = result.FinalEquity,
-            TotalPnl = result.TotalPnl,
-            TotalReturn = result.TotalReturn,
-            MaxDrawdown = result.MaxDrawdown,
-            SharpeRatio = result.SharpeRatio,
-            CalmarRatio = result.CalmarRatio,
-            ProfitFactor = result.ProfitFactor,
-            WinRate = result.WinRate,
-            TotalTrades = result.TotalTrades,
-            WinCount = result.WinCount,
-            LossCount = result.LossCount,
-            AvgWin = result.AvgWin,
-            AvgLoss = result.AvgLoss,
-            MaxConsecutiveLosses = result.MaxConsecutiveLosses,
-            ExpectancyPerTrade = result.ExpectancyPerTrade,
-            DataHash = result.DataHash,
-            TradesJson = tradesJson,
-            ExtendedStatsJson = System.Text.Json.JsonSerializer.Serialize(new {
-                result.SortinoRatio, result.DailySharpe, result.MonthlySharpe,
-                result.MonthlyWinRate, result.DrawdownRecoveryBars, result.MaxLots,
-                MonthlyBreakdown = result.MonthlyBreakdown ?? [],
-                YearlyBreakdown  = result.YearlyBreakdown  ?? [],
-                result.VaR95, result.CVaR95, result.OmegaRatio,
-                result.Skewness, result.Kurtosis,
-                result.DeploymentRating, result.DeploymentRationale,
-                result.CircuitBreakerHit, result.CircuitBreakerReason
-            }),
-            RanAt = clock.NowInstant()
+            Id                   = Guid.NewGuid(),
+            ScenarioId           = result.ScenarioId,
+            StrategyName         = result.StrategyName,
+            InternalSymbol       = result.Symbol,
+            Timeframe            = result.Timeframe,
+            FromDate             = result.FromDate,
+            ToDate               = result.ToDate,
+            InitialCapital       = result.InitialCapital,
+            FinalEquity          = result.FinalEquity,
+            TotalPnl             = result.TotalPnl,
+            TotalReturn          = result.TotalReturn,
+            MaxDrawdown          = result.MaxDrawdown,
+            SharpeRatio          = result.SharpeRatio,
+            CalmarRatio          = result.CalmarRatio,
+            ProfitFactor         = result.ProfitFactor,
+            WinRate              = result.WinRate,
+            TotalTrades          = result.TotalTrades,
+            WinCount             = result.WinCount,
+            LossCount            = result.LossCount,
+            AvgWin               = result.AvgWin,
+            AvgLoss              = result.AvgLoss,
+            MaxConsecutiveLosses  = result.MaxConsecutiveLosses,
+            ExpectancyPerTrade    = result.ExpectancyPerTrade,
+            DataHash             = result.DataHash,
+            TradesJson           = tradesJson,
+            ExtendedStatsJson    = extJson,
+            RanAt                = clock.NowInstant()
         };
 
         await db.BacktestRuns.AddAsync(run, ct);
@@ -256,6 +302,7 @@ public class BacktestRunRepository(AlgoTraderDbContext db, rvs.AlgoTrader.Domain
         string? circuitBreakerReason = null;
         IReadOnlyList<BacktestMonthlyBreakdownDto>? monthlyBreakdown = null;
         IReadOnlyList<BacktestYearlyBreakdownDto>? yearlyBreakdown = null;
+        IReadOnlyList<BacktestChartBarDto>? chartSample = null;
         if (!string.IsNullOrEmpty(r.ExtendedStatsJson))
         {
             try
@@ -280,6 +327,9 @@ public class BacktestRunRepository(AlgoTraderDbContext db, rvs.AlgoTrader.Domain
                 if (ext.TryGetProperty("DeploymentRationale", out var drat)) deploymentRationale = drat.GetString() ?? "";
                 if (ext.TryGetProperty("CircuitBreakerHit", out var cbh)) circuitBreakerHit = cbh.GetBoolean();
                 if (ext.TryGetProperty("CircuitBreakerReason", out var cbr)) circuitBreakerReason = cbr.GetString();
+                // ChartSample persisted since fix-3 — deserialise for full replay chart
+                if (ext.TryGetProperty("ChartSample", out var cs) && cs.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    chartSample = System.Text.Json.JsonSerializer.Deserialize<List<BacktestChartBarDto>>(cs.GetRawText());
             }
             catch { /* ignore */ }
         }
@@ -329,7 +379,8 @@ public class BacktestRunRepository(AlgoTraderDbContext db, rvs.AlgoTrader.Domain
             DeploymentRating: deploymentRating,
             DeploymentRationale: deploymentRationale,
             CircuitBreakerHit: circuitBreakerHit,
-            CircuitBreakerReason: circuitBreakerReason);
+            CircuitBreakerReason: circuitBreakerReason,
+            ChartSample: chartSample);
     }
 }
 

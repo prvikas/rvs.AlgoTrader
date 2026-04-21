@@ -43,11 +43,8 @@ public class BacktestRunConfiguration : IEntityTypeConfiguration<BacktestRun>
         // Add strategy_instance_id (nullable for historical runs) - Migration 021 #197
         b.Property(x => x.StrategyInstanceId).HasColumnName("strategy_instance_id");
 
-        // Foreign key relationships (Migration 021 #192, #197)
-        b.HasOne<StrategyScenario>()
-            .WithMany()
-            .HasForeignKey("ScenarioId")
-            .OnDelete(DeleteBehavior.SetNull);
+        // scenario_id references strategy_definition_scenarios (managed via raw SQL, not EF).
+        // FK enforced in DB via migration 042; no EF navigation — avoid shadow FK to StrategyScenario.
 
         b.HasOne<StrategyInstance>()
             .WithMany()
