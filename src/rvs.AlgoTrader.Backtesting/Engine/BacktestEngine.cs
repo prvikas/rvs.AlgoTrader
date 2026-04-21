@@ -63,7 +63,9 @@ public class BacktestEngine(
 
         var costProfile = DefaultCostProfile with
         {
-            BrokerageFlatPerSide = request.BrokerageFlatPerSide,
+            BrokerageFlatPerSide = request.BrokerageFlatPerSide > 0
+                ? request.BrokerageFlatPerSide
+                : DefaultCostProfile.BrokerageFlatPerSide,   // preserve ₹20 default
             BrokeragePct = request.BrokerageFlatPerSide > 0 ? 0m : DefaultCostProfile.BrokeragePct,
             SlippageBasisPoints = request.SlippageBasisPoints,
         };
@@ -207,6 +209,9 @@ public class BacktestEngine(
         }
         // ───────────────────────────────────────────────────────────────────
 
+        var highImpactEventDates = new HashSet<LocalDate>(
+    prefetchedEvents.Where(e => e.Impact == "High").Select(e => e.EventDate));
+
         for (int i = warmupBars; i < totalBars; i++)
         {
             // Cancellation checkpoint every 500 bars
@@ -239,8 +244,7 @@ public class BacktestEngine(
                     });
                     equity += seGross - seCosts.Total;
                     openTrade = null;
-                    pendingStrategyExit = false;
-
+                    
                     if (equity > peakEquity) peakEquity = equity;
                     var seDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
                     if (seDd > maxDrawdown) maxDrawdown = seDd;
@@ -259,9 +263,6 @@ public class BacktestEngine(
                         logger.LogWarning("[Backtest] Circuit breaker hit after strategy exit at bar {I}", i);
                         break;
                     }
-
-                    if (openTrade != null)
-                        continue; // still in a trade, no entry eval
                     // Fall through — evaluate for new entry on this bar (position is now flat).
 
                 }
@@ -278,11 +279,8 @@ public class BacktestEngine(
             // FIB-4: conservative 7-day event window; strategies with tighter windows
             // re-check internally — this pre-filter only prevents false negatives.
             const int BacktestEventWindow = 7;
-            var hasUpcomingEvent = prefetchedEvents.Any(e =>
-                e.Impact == "High" &&
-                e.EventDate >= barDate &&
-                e.EventDate <= barDate.PlusDays(BacktestEventWindow));
-
+            var hasUpcomingEvent = Enumerable.Range(0, BacktestEventWindow + 1)
+                .Any(d => highImpactEventDates.Contains(barDate.PlusDays(d)));
             // BT-OPT-1 / FIB-5: Build per-bar option chain.
             // Priority: real EOD snapshot (walk back ≤5 days) → synthetic fallback.
             OptionChainSnapshot? nearChain = null;
@@ -692,7 +690,7 @@ public class BacktestEngine(
             decimal eodPnl     = openSpread.NetCredit - eodValue; // unified formula — see TryCloseSpreadSim
             decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
             decimal netEodPnl = eodPnl - openSpread.EntryCommission - exitComm;
-            equity += netEodPnl;
+            equity += eodPnl - exitComm;
             if (equity > peakEquity) peakEquity = equity;
             var eodSpreadDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
             if (eodSpreadDd > maxDrawdown) maxDrawdown = eodSpreadDd;
@@ -1106,13 +1104,19 @@ public class BacktestEngine(
     /// </summary>
     internal static LocalDate NearestMonthlyExpiry(LocalDate from)
     {
-        // Last Thursday of the month after 'from'
-        var nextMonth = from.PlusMonths(1);
-        var firstOfFollowing = new LocalDate(nextMonth.Year, nextMonth.Month, 1).PlusMonths(1);
-        var lastDay = firstOfFollowing.PlusDays(-1);
-        while (lastDay.DayOfWeek != IsoDayOfWeek.Thursday)
-            lastDay = lastDay.PlusDays(-1);
-        return lastDay;
+        // Last Thursday of the current month (if still in future), else next month's
+        var candidate = LastThursdayOfMonth(from.Year, from.Month);
+        if (candidate > from) return candidate;
+        var next = from.PlusMonths(1);
+        return LastThursdayOfMonth(next.Year, next.Month);
+    }
+
+    private static LocalDate LastThursdayOfMonth(int year, int month)
+    {
+        var last = new LocalDate(year, month, 1).PlusMonths(1).PlusDays(-1);
+        while (last.DayOfWeek != IsoDayOfWeek.Thursday)
+            last = last.PlusDays(-1);
+        return last;
     }
 
     /// <summary>
