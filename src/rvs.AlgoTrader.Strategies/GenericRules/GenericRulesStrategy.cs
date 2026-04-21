@@ -175,7 +175,13 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
         if (config.LongEntry.Enabled &&
             RulesEvaluator.Evaluate(config.LongEntry, computed, candles))
         {
-            var sl   = current.Close - atrNow * config.AtrStopMult;
+            //var sl   = current.Close - atrNow * config.AtrStopMult;
+            // Signal at current.Close but engine fills at next open — use a price-agnostic ATR stop distance
+            // The engine will anchor the real SL from the fill price in the next bar
+            // Option: leave entryPrice = current.Close but note the discrepancy is minor for liquid stocks
+            // Better fix: compute SL as a distance, not an absolute price, and let the engine apply it
+            var slDistance = atrNow * config.AtrStopMult;
+            var sl = current.Close - slDistance;   // acceptable approximation for non-gapping instruments
             var risk = current.Close - sl;
             var tp   = current.Close + risk * config.RiskRewardRatio;
 

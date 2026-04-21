@@ -33,9 +33,18 @@ public class ComputedIndicator
     /// </summary>
     public decimal[] History { get; init; } = [];
 
+    //public decimal GetField(string? field)
+    //    => string.IsNullOrEmpty(field) ? Current
+    //       : Fields.TryGetValue(field, out var v) ? v : Current;
+
     public decimal GetField(string? field)
-        => string.IsNullOrEmpty(field) ? Current
-           : Fields.TryGetValue(field, out var v) ? v : Current;
+    {
+        if (string.IsNullOrEmpty(field)) return Current;
+        // Try exact match first, then strip everything after " —" (UI display suffix)
+        if (Fields.TryGetValue(field, out var v)) return v;
+        var baseKey = field.Split(" —")[0].Trim().ToLowerInvariant();
+        return Fields.TryGetValue(baseKey, out var v2) ? v2 : Current;
+    }
 
     public decimal GetPreviousField(string? field)
         => string.IsNullOrEmpty(field) ? Previous
