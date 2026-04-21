@@ -68,6 +68,9 @@ public class BacktestEngine(
                 : DefaultCostProfile.BrokerageFlatPerSide,   // preserve ₹20 default
             BrokeragePct = request.BrokerageFlatPerSide > 0 ? 0m : DefaultCostProfile.BrokeragePct,
             SlippageBasisPoints = request.SlippageBasisPoints,
+            SlippagePct = request.FillModel == FillModel.NextBarOpenPlusSlippage
+                ? 0m
+                : DefaultCostProfile.SlippagePct,
         };
 
         var fromInstant = request.FromDate.AtStartOfDayInZone(Ist).ToInstant();
@@ -237,7 +240,7 @@ public class BacktestEngine(
                         ExitPrice = seExitPrice,
                         ExitTime = current.OpenTime,
                         GrossPnl = seGross,
-                        NetPnl = seGross - openTrade.EntryCommission - seCosts.Total,
+                        NetPnl = seGross - seCosts.Total,
                         ExitReason = $"STRATEGY_EXIT:{pendingExitReason}",
                         ExitCommission = seCosts.Total,
                         HoldingBars = Math.Max(0, i - openTrade.EntryBarIndex),
@@ -396,7 +399,7 @@ public class BacktestEngine(
                     closed = closed with
                     {
                         ExitCommission = exitCosts.Total,
-                        NetPnl         = closed.GrossPnl - closed.EntryCommission - exitCosts.Total,
+                        NetPnl         = closed.GrossPnl - exitCosts.Total,
                         HoldingBars    = Math.Max(0, i - closed.EntryBarIndex),
                     };
                     equity += closed.GrossPnl - exitCosts.Total; // EntryCommission already deducted at open
@@ -665,7 +668,7 @@ public class BacktestEngine(
                 ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
             var exitCostsEod = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
-            var netPnlEod    = grossPnl - openTrade.EntryCommission - exitCostsEod.Total;
+            var netPnlEod    = grossPnl - exitCostsEod.Total;
             equity += grossPnl - exitCostsEod.Total;
             if (equity > peakEquity) peakEquity = equity;
             var eodDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
@@ -1258,7 +1261,7 @@ public class BacktestEngine(
                 exitPrice  = candle.Open;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
-            else if (hasTp && candle.Low <= trade.StopLoss && candle.High >= trade.TakeProfit)
+            else if (hasTp && candle.Low < trade.StopLoss && candle.High >= trade.TakeProfit)
             {
                 // Both SL and TP touched: use candle midpoint heuristic to decide which hit first.
                 // If mid >= TP, assume TP was hit from below early in the bar; otherwise SL.
@@ -1268,7 +1271,7 @@ public class BacktestEngine(
                 else
                 { exitPrice = trade.StopLoss; exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS"; }
             }
-            else if (candle.Low <= trade.StopLoss)
+            else if (candle.Low < trade.StopLoss)
             {
                 exitPrice  = trade.StopLoss;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
@@ -1290,7 +1293,7 @@ public class BacktestEngine(
                 exitPrice  = candle.Open;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
-            else if (hasTp && candle.High >= trade.StopLoss && candle.Low <= trade.TakeProfit)
+            else if (hasTp && candle.High > trade.StopLoss && candle.Low <= trade.TakeProfit)
             {
                 var mid = (candle.High + candle.Low) / 2m;
                 if (mid <= trade.TakeProfit)
@@ -1298,7 +1301,7 @@ public class BacktestEngine(
                 else
                 { exitPrice = trade.StopLoss; exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS"; }
             }
-            else if (candle.High >= trade.StopLoss)
+            else if (candle.High > trade.StopLoss)
             {
                 exitPrice  = trade.StopLoss;
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
