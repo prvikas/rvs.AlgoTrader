@@ -217,46 +217,54 @@ public class BacktestEngine(
             // ── Strategy-driven exit: execute deferred close at this bar's open ──────────
             // Set by the exit-signal evaluation block below (previous bar returned ExitLong/ExitShort).
             // PineScript semantics: signal fires on bar close, fill executes at next bar's open.
-            if (pendingStrategyExit && openTrade != null)
+            if (pendingStrategyExit)
             {
-                var seExitPrice = current.Open;
-                var seGross     = openTrade.Direction == "BUY"
-                    ? (seExitPrice - openTrade.EntryPrice) * openTrade.Quantity
-                    : (openTrade.EntryPrice - seExitPrice) * openTrade.Quantity;
-                var seCosts     = costCalc.Calculate(seExitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
-                trades.Add(openTrade with
-                {
-                    ExitPrice      = seExitPrice,
-                    ExitTime       = current.OpenTime,
-                    GrossPnl       = seGross,
-                    NetPnl         = seGross - openTrade.EntryCommission - seCosts.Total,
-                    ExitReason     = $"STRATEGY_EXIT:{pendingExitReason}",
-                    ExitCommission = seCosts.Total,
-                    HoldingBars    = Math.Max(0, i - openTrade.EntryBarIndex),
-                });
-                equity    += seGross - seCosts.Total;
-                openTrade          = null;
                 pendingStrategyExit = false;
-
-                if (equity > peakEquity) peakEquity = equity;
-                var seDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
-                if (seDd > maxDrawdown) maxDrawdown = seDd;
-
-                if (equity <= 0)
+                if (openTrade != null)
                 {
-                    circuitBreakerHit    = true;
-                    circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt (strategy exit). Backtest stopped.";
-                    logger.LogWarning("[Backtest] Bankruptcy after strategy exit at bar {I}", i);
-                    break;
+                    var seExitPrice = current.Open;
+                    var seGross = openTrade.Direction == "BUY"
+                        ? (seExitPrice - openTrade.EntryPrice) * openTrade.Quantity
+                        : (openTrade.EntryPrice - seExitPrice) * openTrade.Quantity;
+                    var seCosts = costCalc.Calculate(seExitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
+                    trades.Add(openTrade with
+                    {
+                        ExitPrice = seExitPrice,
+                        ExitTime = current.OpenTime,
+                        GrossPnl = seGross,
+                        NetPnl = seGross - openTrade.EntryCommission - seCosts.Total,
+                        ExitReason = $"STRATEGY_EXIT:{pendingExitReason}",
+                        ExitCommission = seCosts.Total,
+                        HoldingBars = Math.Max(0, i - openTrade.EntryBarIndex),
+                    });
+                    equity += seGross - seCosts.Total;
+                    openTrade = null;
+                    pendingStrategyExit = false;
+
+                    if (equity > peakEquity) peakEquity = equity;
+                    var seDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                    if (seDd > maxDrawdown) maxDrawdown = seDd;
+
+                    if (equity <= 0)
+                    {
+                        circuitBreakerHit = true;
+                        circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt (strategy exit). Backtest stopped.";
+                        logger.LogWarning("[Backtest] Bankruptcy after strategy exit at bar {I}", i);
+                        break;
+                    }
+                    if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
+                    {
+                        circuitBreakerHit = true;
+                        circuitBreakerReason = $"Equity ₹{equity:F0} fell below circuit breaker floor after strategy exit.";
+                        logger.LogWarning("[Backtest] Circuit breaker hit after strategy exit at bar {I}", i);
+                        break;
+                    }
+
+                    if (openTrade != null)
+                        continue; // still in a trade, no entry eval
+                    // Fall through — evaluate for new entry on this bar (position is now flat).
+
                 }
-                if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
-                {
-                    circuitBreakerHit    = true;
-                    circuitBreakerReason = $"Equity ₹{equity:F0} fell below circuit breaker floor after strategy exit.";
-                    logger.LogWarning("[Backtest] Circuit breaker hit after strategy exit at bar {I}", i);
-                    break;
-                }
-                // Fall through — evaluate for new entry on this bar (position is now flat).
             }
 
             // ── Per-bar market context ────────────────────────────────────────────────────
@@ -317,8 +325,8 @@ public class BacktestEngine(
                 if (spreadClosed)
                 {
                     decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
-                    decimal netSpreadPnl = spreadPnl - exitComm;
-                    equity += netSpreadPnl; // EntryCommission already deducted at entry
+                    decimal netSpreadPnl = spreadPnl - openSpread.EntryCommission - exitComm;
+                    equity += spreadPnl - exitComm;  // entry comm already gone from equity; keep equity update as-is
 
                     var spreadTrade = new BacktestTrade(
                         Id:              Guid.NewGuid(),
@@ -592,7 +600,7 @@ public class BacktestEngine(
             }
             else
             {
-                if (i + 1 >= totalBars) break;
+                if (i + 1 >= totalBars) continue;
                 var nextBar = allCandles[i + 1];
                 entryPrice    = nextBar.Open;
                 entryTime     = nextBar.OpenTime;
@@ -660,7 +668,10 @@ public class BacktestEngine(
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
             var exitCostsEod = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
             var netPnlEod    = grossPnl - openTrade.EntryCommission - exitCostsEod.Total;
-            equity += grossPnl - exitCostsEod.Total; // EntryCommission already deducted at open
+            equity += grossPnl - exitCostsEod.Total;
+            if (equity > peakEquity) peakEquity = equity;
+            var eodDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+            if (eodDd > maxDrawdown) maxDrawdown = eodDd;
             trades.Add(openTrade with
             {
                 ExitPrice      = exitPrice,
@@ -680,8 +691,12 @@ public class BacktestEngine(
             decimal eodValue   = PriceSpreadSim(openSpread, lastBar.Close, lastBar.OpenTime.Date, bsEngine);
             decimal eodPnl     = openSpread.NetCredit - eodValue; // unified formula — see TryCloseSpreadSim
             decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
-            decimal netEodPnl  = eodPnl - exitComm;
+            decimal netEodPnl = eodPnl - openSpread.EntryCommission - exitComm;
             equity += netEodPnl;
+            if (equity > peakEquity) peakEquity = equity;
+            var eodSpreadDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+            if (eodSpreadDd > maxDrawdown) maxDrawdown = eodSpreadDd;
+
             trades.Add(new BacktestTrade(
                 Id:              Guid.NewGuid(),
                 Symbol:          request.InternalSymbol,
@@ -1212,7 +1227,8 @@ public class BacktestEngine(
                 : Math.Min(newSl, trailSl);
         }
 
-        return trade with { ExitTime = candle.OpenTime, BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive, WorstPrice = worstPrice };
+        // Don't update ExitTime in ApplyTrailingStop — it's only set at actual close
+        return trade with { BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive, WorstPrice = worstPrice };
     }
 
     private static BacktestTrade? TryClosePosition(BacktestTrade trade, ClosedCandle candle, BacktestRequest request)
@@ -1250,7 +1266,10 @@ public class BacktestEngine(
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
             else if (hasTp && candle.High >= trade.TakeProfit)
-            { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
+            {  // Gap-up open above TP: fill at open (realistic), not at TP (optimistic)
+                exitPrice = candle.Open >= trade.TakeProfit ? candle.Open : trade.TakeProfit;
+                exitReason = "TAKE_PROFIT";
+            }
         }
         else // SELL / short
         {
@@ -1277,7 +1296,10 @@ public class BacktestEngine(
                 exitReason = trade.TrailActive ? "TRAIL_STOP" : "STOP_LOSS";
             }
             else if (hasTp && candle.Low <= trade.TakeProfit)
-            { exitPrice = trade.TakeProfit; exitReason = "TAKE_PROFIT"; }
+            {
+                exitPrice = candle.Open <= trade.TakeProfit ? candle.Open : trade.TakeProfit;
+                exitReason = "TAKE_PROFIT";
+            }
         }
 
         if (exitReason == null) return null;
@@ -1310,18 +1332,22 @@ public class BacktestEngine(
         var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
         if (stopDistance == 0) return 0;
 
-        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
+        var sizeByRisk = (int)(riskAmount / stopDistance);
+        if (sizeByRisk <= 0)
+        {
+            return 0;
+        }
 
         // Cap position to configured capital usage (default 95%) — matches Pine's
         // strategy.default_qty_type = strategy.percent_of_equity (100%).
         // The old 25% cap made every trade 4× smaller than Pine, causing fee drag to dominate.
         var capitalUsageFraction = request.MaxCapitalUsagePct > 0 ? request.MaxCapitalUsagePct : 0.95m;
         
-        // Cap position to 25% of equity to prevent over-leverage on tight stops
+        // Cap position to 95% of equity to prevent over-leverage on tight stops
         var maxByCapital = (int)(equity * capitalUsageFraction / entryPrice);
         if (maxByCapital <= 0)
         {
-            // Equity too low to afford even 1 share at 25% cap — stop trading, not sizeByRisk issue
+            // Equity too low to afford even 1 share at 95% cap — stop trading, not sizeByRisk issue
             return 0;
         }
         return Math.Min(sizeByRisk, maxByCapital);
@@ -1375,14 +1401,15 @@ public class BacktestEngine(
 
         // Daily Sharpe: annualise by √252 (252 trading days per year)
         var dailySharpe  = ComputeGroupedSharpe(trades,
-            t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date.ToString(),
+            t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date.ToString(), 
+            request.InitialCapital,
             annualisationFactor: 252);
         // Monthly Sharpe: annualise by √12 (12 months per year, not √252)
         var monthlySharpe = ComputeGroupedSharpe(trades, t =>
         {
             var d = t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date;
             return $"{d.Year:D4}-{d.Month:D2}";
-        }, annualisationFactor: 12);
+        }, request.InitialCapital, annualisationFactor: 12);
 
         // Monthly breakdown
         var monthlyGroups = trades
@@ -1568,10 +1595,11 @@ public class BacktestEngine(
 
     private static decimal ComputeGroupedSharpe(
         List<BacktestTrade> trades, Func<BacktestTrade, string> keySelector,
+         decimal capital,
         double annualisationFactor = 252)
     {
         var groups = trades.GroupBy(keySelector)
-            .Select(g => (double)g.Sum(t => t.NetPnl))
+            .Select(g => (double)(g.Sum(t => t.NetPnl) / capital))
             .ToArray();
         if (groups.Length < 2) return 0m;
         var avg    = groups.Average();
