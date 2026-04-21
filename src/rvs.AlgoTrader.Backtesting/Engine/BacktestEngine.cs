@@ -470,7 +470,12 @@ public class BacktestEngine(
                     progress.Report(new BacktestProgress(jobId, i, totalBars, Math.Min(99m, pct),
                         trades.Count, equity, SnapshotRollingWindow()));
                 }
-                continue;
+                // If SL/TP fired this bar (openTrade is now null) AND the strategy just fired
+                // a fresh entry signal on this same bar, fall through to evaluate it.
+                // This matches Pine's reversal behaviour (close long → open short same bar).
+                if (openTrade != null)
+                    continue; // still in a trade, no entry eval
+                // else: fall through to entry section below
             }
 
             // zero-copy O(1) slice for entry evaluation — no List<T> allocation
@@ -563,8 +568,8 @@ public class BacktestEngine(
             if (positionSize <= 0)
             {
                 skippedSignals++;
-                // Distinguish capital floor (equity too low to afford 1 share) from stop-too-tight
-                var maxByCapital = signal.EntryPrice > 0 ? (int)(equity * 0.25m / signal.EntryPrice.Value) : 0;
+                var capitalUsageFraction = request.MaxCapitalUsagePct > 0 ? request.MaxCapitalUsagePct : 0.95m;
+                var maxByCapital = signal.EntryPrice > 0 ? (int)(equity * capitalUsageFraction / signal.EntryPrice.Value) : 0;
                 if (maxByCapital <= 0)
                     logger.LogDebug("[Backtest] Signal skipped: capital floor reached (equity={Equity} entry={Entry})",
                         equity, signal.EntryPrice);
@@ -611,6 +616,11 @@ public class BacktestEngine(
 
             // Deduct entry commission immediately so equity is accurate for subsequent sizing
             var entryCostsOnOpen = costCalc.Calculate(entryPrice * positionSize, signal.Signal == SignalType.Buy, costProfile);
+
+            // Keep peakEquity in sync so entry commission doesn't inflate maxDrawdown artificially
+            if (equity > peakEquity) peakEquity = equity; // only needed if equity somehow rose (edge case)
+                                                          // More importantly: don't let a commission-only dip register as a new drawdown trough.
+                                                          // peakEquity intentionally NOT updated downward here — it's only updated upward after closes.
             equity -= entryCostsOnOpen.Total;
 
             openTrade = new BacktestTrade(
@@ -1202,7 +1212,7 @@ public class BacktestEngine(
                 : Math.Min(newSl, trailSl);
         }
 
-        return trade with { BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive, WorstPrice = worstPrice };
+        return trade with { ExitTime = candle.OpenTime, BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive, WorstPrice = worstPrice };
     }
 
     private static BacktestTrade? TryClosePosition(BacktestTrade trade, ClosedCandle candle, BacktestRequest request)
@@ -1300,10 +1310,15 @@ public class BacktestEngine(
         var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
         if (stopDistance == 0) return 0;
 
-        var sizeByRisk = (int)(riskAmount / stopDistance);
+        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
 
+        // Cap position to configured capital usage (default 95%) — matches Pine's
+        // strategy.default_qty_type = strategy.percent_of_equity (100%).
+        // The old 25% cap made every trade 4× smaller than Pine, causing fee drag to dominate.
+        var capitalUsageFraction = request.MaxCapitalUsagePct > 0 ? request.MaxCapitalUsagePct : 0.95m;
+        
         // Cap position to 25% of equity to prevent over-leverage on tight stops
-        var maxByCapital = (int)(equity * 0.25m / entryPrice);
+        var maxByCapital = (int)(equity * capitalUsageFraction / entryPrice);
         if (maxByCapital <= 0)
         {
             // Equity too low to afford even 1 share at 25% cap — stop trading, not sizeByRisk issue
@@ -1322,7 +1337,9 @@ public class BacktestEngine(
             return BacktestResult.Failed("No trades generated");
 
         var winTrades  = trades.Where(t => t.NetPnl > 0).ToList();
-        var lossTrades = trades.Where(t => t.NetPnl <= 0).ToList();
+        // breakevens excluded from loss bucket
+        // Note: breakeven trades still count in TotalTrades but not in win/loss ratio — matches Pine behavior
+        var lossTrades = trades.Where(t => t.NetPnl < 0).ToList();
         var totalPnl     = trades.Sum(t => t.NetPnl);
         var grossProfit  = winTrades.Sum(t => t.NetPnl);
         var grossLoss    = Math.Abs(lossTrades.Sum(t => t.NetPnl));
@@ -1338,7 +1355,7 @@ public class BacktestEngine(
         var curConsecLosses = 0;
         foreach (var t in trades)
         {
-            if (t.NetPnl <= 0) { curConsecLosses++; if (curConsecLosses > maxConsecLosses) maxConsecLosses = curConsecLosses; }
+            if (t.NetPnl < 0) { curConsecLosses++; if (curConsecLosses > maxConsecLosses) maxConsecLosses = curConsecLosses; }
             else curConsecLosses = 0;
         }
 
@@ -1393,24 +1410,46 @@ public class BacktestEngine(
             : 0m;
 
         // Yearly breakdown
+        // Build a running equity-at-start-of-year lookup so each year's return
+        // is measured against the equity it started with, not the fixed initial capital.
+        var equityByYear = new Dictionary<int, decimal>();
+        {
+            var runningEq = request.InitialCapital;
+            int? lastYear = null;
+            foreach (var t in trades.OrderBy(t => t.ExitTime.ToInstant().ToUnixTimeTicks()))
+            {
+                var yr = t.ExitTime.ToInstant()
+                    .InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Year;
+                if (lastYear == null || yr != lastYear)
+                {
+                    if (!equityByYear.ContainsKey(yr))
+                        equityByYear[yr] = runningEq;   // equity at start of this year
+                    lastYear = yr;
+                }
+                runningEq += t.NetPnl;
+            }
+        }
+
         var yearlyGroups = trades
             .GroupBy(t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Year)
             .OrderBy(g => g.Key)
             .Select(g =>
             {
                 var yWins = g.Count(t => t.NetPnl > 0);
-                var yPnl  = g.Sum(t => t.NetPnl);
+                var yPnl = g.Sum(t => t.NetPnl);
+                var startEq = equityByYear.TryGetValue(g.Key, out var se) && se > 0
+                    ? se : request.InitialCapital;
                 return new BacktestYearlyBreakdown(
                     Year: g.Key,
                     Pnl: yPnl,
-                    Return: request.InitialCapital > 0 ? yPnl / request.InitialCapital : 0m,
+                    Return: yPnl / startEq,   // per-year return on start-of-year equity
                     Trades: g.Count(),
                     WinRate: g.Count() > 0 ? (decimal)yWins / g.Count() : 0m);
             })
             .ToList();
 
         // Drawdown recovery bars: number of bars from trough of max drawdown to next peak
-        var ddRecoveryBars = ComputeDrawdownRecovery(trades, request.InitialCapital);
+        var ddRecoveryBars = ComputeDrawdownRecovery(trades, request.InitialCapital, maxDrawdown);
 
         // ── Advanced risk analytics (#89) ───────────────────────────────────────
         var sortedReturns = returns.OrderBy(r => r).ToArray();
@@ -1541,13 +1580,14 @@ public class BacktestEngine(
         return (decimal)(avg / stdDev * Math.Sqrt(annualisationFactor));
     }
 
-    private static int ComputeDrawdownRecovery(List<BacktestTrade> trades, decimal initialCapital)
+    private static int ComputeDrawdownRecovery(List<BacktestTrade> trades, decimal initialCapital, decimal knownMaxDrawdown)
     {
-        if (trades.Count == 0) return 0;
+        if (trades.Count == 0 || knownMaxDrawdown == 0) return 0;
         var equity = initialCapital;
         var peak   = equity;
-        var maxDd  = 0m;
+        //var maxDd  = 0m;
         var troughIdx = 0;
+        var closestDd = 0m;
 
         for (int i = 0; i < trades.Count; i++)
         {
@@ -1557,10 +1597,10 @@ public class BacktestEngine(
                 peak = equity;
             }
             var dd = peak > 0 ? (peak - equity) / peak : 0m;
-            if (dd > maxDd) { maxDd = dd; troughIdx = i; }
+            if (dd > closestDd) { closestDd = dd; troughIdx = i; }
         }
 
-        if (maxDd == 0) return 0;
+        //if (maxDd == 0) return 0;
 
         // Count trades from trough back to new high
         var troughEquity = initialCapital;

@@ -81,6 +81,12 @@ public record BacktestRequest(
     decimal SlippageBasisPoints = 5m,
     decimal BrokerageFlatPerSide = 20m,
     string? JobId = null,
+
+    // ── Position sizing cap ───────────────────────────────────────────────────
+    // Maximum fraction of equity to deploy per trade (0 = use default 0.95).
+    // Pine's default is effectively 1.0 (full equity); set to 0.95 to leave headroom for commissions.
+    // The old hardcoded 0.25 cap was 4× too conservative and the primary cause of under-sized returns.
+    decimal MaxCapitalUsagePct = 0.95m,
     // ── Trailing stop parameters ──────────────────────────────────────────
     decimal TrailActivationR = 0m,
     decimal TrailOffsetR = 0.5m,
@@ -88,7 +94,7 @@ public record BacktestRequest(
     // ── Circuit breaker ───────────────────────────────────────────────────
     // Stop the backtest early if equity falls below this fraction of InitialCapital.
     // Default 0.5 = 50%.  Set to 0 to disable.
-    decimal CircuitBreakerPct = 0.5m,
+    decimal CircuitBreakerPct = 0,
     // ── Warmup period ─────────────────────────────────────────────────────
     // Bars skipped at the start so indicators have enough history before trading.
     // Default 50. Strategy should set this to its longest lookback period.
