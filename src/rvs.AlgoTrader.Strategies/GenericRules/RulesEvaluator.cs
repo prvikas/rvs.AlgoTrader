@@ -53,7 +53,7 @@ public static class RulesEvaluator
         Dictionary<string, ComputedIndicator> indicators,
         IReadOnlyList<ClosedCandle> candles)
     {
-        if (group.Conditions.Length == 0) return true; // empty group = no filter
+        if (group.Conditions.Length == 0) return false;
 
         var isOr = group.LogicalOperator.Equals("OR", StringComparison.OrdinalIgnoreCase);
         foreach (var condition in group.Conditions)
@@ -114,7 +114,7 @@ public static class RulesEvaluator
             "crossesAbove" => EvaluateCrossover(condition, indicators, candles, isAbove: true),
             "crossesBelow" => EvaluateCrossover(condition, indicators, candles, isAbove: false),
 
-            _ => false   // unknown operator
+            _ => throw new InvalidOperationException($"Unknown operator: '{op}'")  // or log a warning and return false
         };
     }
 

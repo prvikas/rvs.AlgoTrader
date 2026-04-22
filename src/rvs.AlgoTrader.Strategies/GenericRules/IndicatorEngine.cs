@@ -46,10 +46,18 @@ public class ComputedIndicator
         return Fields.TryGetValue(baseKey, out var v2) ? v2 : Current;
     }
 
+    //public decimal GetPreviousField(string? field)
+    //    => string.IsNullOrEmpty(field) ? Previous
+    //       : string.IsNullOrEmpty(field) ? Previous
+    //       : Current;   // fallback — crossover on primary only
+    
     public decimal GetPreviousField(string? field)
-        => string.IsNullOrEmpty(field) ? Previous
-           : string.IsNullOrEmpty(field) ? Previous
-           : Current;   // fallback — crossover on primary only
+    {
+        if (string.IsNullOrEmpty(field)) return Previous;
+        var baseKey = field.Split(" —")[0].Trim().ToLowerInvariant();
+        if (Fields.TryGetValue("prev_" + baseKey, out var v)) return v;
+        return Previous;  // graceful fallback to primary previous value
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -631,8 +639,13 @@ public static class IndicatorEngine
             var rawLower = hl2 - multiplier * atr[i];
             upperBand = i == 0 ? rawUpper : (rawUpper < upperBand || candles[candleIdx - 1].Close > upperBand ? rawUpper : upperBand);
             lowerBand = i == 0 ? rawLower : (rawLower > lowerBand || candles[candleIdx - 1].Close < lowerBand ? rawLower : lowerBand);
-            bullish = candles[candleIdx].Close > upperBand || (!bullish == false && candles[candleIdx].Close > lowerBand) ? true
-                    : candles[candleIdx].Close < lowerBand ? false : bullish;
+            //bullish = candles[candleIdx].Close > upperBand || (!bullish == false && candles[candleIdx].Close > lowerBand) ? true
+            //        : candles[candleIdx].Close < lowerBand ? false : bullish;
+
+            bullish = (candles[candleIdx].Close > upperBand || (bullish && candles[candleIdx].Close > lowerBand))
+                ? true
+                : (candles[candleIdx].Close < lowerBand ? false : bullish);
+
             result[i]    = bullish ? lowerBand : upperBand;
             direction[i] = bullish ? 1m : -1m;
         }
@@ -642,10 +655,12 @@ public static class IndicatorEngine
             Current  = result[^1],
             Previous = result[^2],
             History  = result,
-            Fields   = new Dictionary<string, decimal>
+            Fields = new Dictionary<string, decimal>
             {
-                ["value"]     = result[^1],
+                ["value"] = result[^1],
                 ["direction"] = direction[^1],
+                ["prev_value"] = result[^2],
+                ["prev_direction"] = direction[^2],   // required by GetPreviousField for crossover
             },
         };
     }

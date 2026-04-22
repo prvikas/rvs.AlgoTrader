@@ -61,7 +61,7 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
                     "BOLLINGERBANDS"  => ind.GetInt("period", 20),
                     "MACD"            => ind.GetInt("slowPeriod", 26) + ind.GetInt("signalPeriod", 9),
                     "CCI"             => ind.GetInt("period", 20),
-                    "ADX"             => ind.GetInt("period", 14) * 2,
+                    "ADX"             => ind.GetInt("period", 14) * 3,
                     "STOCHASTICS"     => ind.GetInt("kPeriod", 14) + ind.GetInt("dPeriod", 3),
                     "DONCHIANCHANNEL" => ind.GetInt("period", 20),
                     "SUPERTREND"      => ind.GetInt("period", 10),

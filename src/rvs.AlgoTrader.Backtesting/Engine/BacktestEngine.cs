@@ -240,7 +240,8 @@ public class BacktestEngine(
                         ExitPrice = seExitPrice,
                         ExitTime = current.OpenTime,
                         GrossPnl = seGross,
-                        NetPnl = seGross - seCosts.Total,
+                        //NetPnl = seGross - seCosts.Total,
+                        NetPnl = seGross - openTrade.EntryCommission - seCosts.Total,
                         ExitReason = $"STRATEGY_EXIT:{pendingExitReason}",
                         ExitCommission = seCosts.Total,
                         HoldingBars = Math.Max(0, i - openTrade.EntryBarIndex),
@@ -399,7 +400,8 @@ public class BacktestEngine(
                     closed = closed with
                     {
                         ExitCommission = exitCosts.Total,
-                        NetPnl         = closed.GrossPnl - exitCosts.Total,
+                        //NetPnl         = closed.GrossPnl - exitCosts.Total,
+                        NetPnl = closed.GrossPnl - closed.EntryCommission - exitCosts.Total,
                         HoldingBars    = Math.Max(0, i - closed.EntryBarIndex),
                     };
                     equity += closed.GrossPnl - exitCosts.Total; // EntryCommission already deducted at open
@@ -668,7 +670,8 @@ public class BacktestEngine(
                 ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
                 : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
             var exitCostsEod = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
-            var netPnlEod    = grossPnl - exitCostsEod.Total;
+            var netPnlEod    = grossPnl - openTrade.EntryCommission - exitCostsEod.Total;
+
             equity += grossPnl - exitCostsEod.Total;
             if (equity > peakEquity) peakEquity = equity;
             var eodDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
@@ -1340,10 +1343,11 @@ public class BacktestEngine(
         if (entryPrice <= 0) return 0;
 
         var riskAmount   = equity * request.RiskPerTradePercent / 100m;
-        var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
+        //var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
+        var stopDistance = Math.Abs(entryPrice - (signal.StopLoss ?? entryPrice * 0.99m));
+        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
         if (stopDistance == 0) return 0;
 
-        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
         // sizeByRisk is now at least 1; maxByCapital below will still enforce affordability
 
         // Cap position to configured capital usage (default 95%) — matches Pine's
@@ -1617,7 +1621,8 @@ public class BacktestEngine(
         double annualisationFactor = 252)
     {
         var groups = trades.GroupBy(keySelector)
-            .Select(g => (double)(g.Sum(t => t.NetPnl) / capital))
+            //.Select(g => (double)(g.Sum(t => t.NetPnl) / capital))
+            .Select(g => (double)(g.Sum(t => t.NetPnl) / Math.Max(1m, capital)))
             .ToArray();
         if (groups.Length < 2) return 0m;
         var avg    = groups.Average();
