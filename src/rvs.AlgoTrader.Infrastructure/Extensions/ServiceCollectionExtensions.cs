@@ -150,7 +150,6 @@ public static class ServiceCollectionExtensions
         // Startup orchestrator
         services.AddScoped<IStartupOrchestrator, StartupOrchestrator>();
 
-        // Backtest service stubs (replace with real implementations later)
         services.AddScoped<IBacktestService, BacktestService>();
         // #137: Pre-market readiness check — IConnectionMultiplexer is optional; use factory
         // so DI resolves it via GetService<> (returns null) rather than failing validation

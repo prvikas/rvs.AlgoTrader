@@ -30,7 +30,15 @@ public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwar
             RiskPerTradePercent: dto.RiskPerTradePercent,
             InSampleDays:        cfg.InSampleDays,
             OosDays:             cfg.OutOfSampleDays,
-            CompoundEquity:      false);
+            StepDays:            cfg.StepDays,
+            CompoundEquity:      false,
+            FillModel:           (FillModel)dto.FillModel,
+            SlippageBasisPoints: dto.SlippageBasisPoints,
+            BrokerageFlatPerSide:dto.BrokerageFlatPerSide,
+            TrailActivationR:    dto.TrailActivationR,
+            TrailOffsetR:        dto.TrailOffsetR,
+            BreakEvenAt1R:       dto.BreakEvenAt1R,
+            CircuitBreakerPct:   dto.CircuitBreakerPct);
 
         var result = await RunAsync(request, ct);
 
@@ -76,7 +84,14 @@ public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwar
                 request.StrategyName, request.ParametersJson,
                 request.InternalSymbol, request.Timeframe,
                 window.InSampleFrom, window.InSampleTo,
-                currentCapital, request.RiskPerTradePercent), ct);
+                currentCapital, request.RiskPerTradePercent,
+                FillModel:            request.FillModel,
+                SlippageBasisPoints:  request.SlippageBasisPoints,
+                BrokerageFlatPerSide: request.BrokerageFlatPerSide,
+                TrailActivationR:     request.TrailActivationR,
+                TrailOffsetR:         request.TrailOffsetR,
+                BreakEvenAt1R:        request.BreakEvenAt1R,
+                CircuitBreakerPct:    request.CircuitBreakerPct), ct);
 
             // OOS starts where IS ended when compounding, otherwise at currentCapital.
             var oosCapital = request.CompoundEquity && isResult.Success && isResult.FinalEquity > 0
@@ -87,7 +102,14 @@ public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwar
                 request.StrategyName, request.ParametersJson,
                 request.InternalSymbol, request.Timeframe,
                 window.OoSFrom, window.OoSTo,
-                oosCapital, request.RiskPerTradePercent), ct);
+                oosCapital, request.RiskPerTradePercent,
+                FillModel:            request.FillModel,
+                SlippageBasisPoints:  request.SlippageBasisPoints,
+                BrokerageFlatPerSide: request.BrokerageFlatPerSide,
+                TrailActivationR:     request.TrailActivationR,
+                TrailOffsetR:         request.TrailOffsetR,
+                BreakEvenAt1R:        request.BreakEvenAt1R,
+                CircuitBreakerPct:    request.CircuitBreakerPct), ct);
 
             windowResults.Add(new WalkForwardWindowResult(window, isResult, oosResult));
             if (oosResult.Success)
@@ -115,6 +137,8 @@ public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwar
         var current = request.FromDate;
         var inSampleDays = request.InSampleDays;
         var oosDays = request.OosDays;
+        // StepDays=0 means "use OosDays" (non-overlapping anchored walk-forward)
+        var stepDays = request.StepDays > 0 ? request.StepDays : oosDays;
 
         while (current.PlusDays(inSampleDays + oosDays) <= request.ToDate)
         {
@@ -123,7 +147,7 @@ public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwar
                 current.PlusDays(inSampleDays - 1),
                 current.PlusDays(inSampleDays),
                 current.PlusDays(inSampleDays + oosDays - 1)));
-            current = current.PlusDays(oosDays); // anchored walk-forward
+            current = current.PlusDays(stepDays);
         }
         return windows;
     }
@@ -135,9 +159,20 @@ public record WalkForwardRequest(
     LocalDate FromDate, LocalDate ToDate,
     decimal InitialCapital, decimal RiskPerTradePercent,
     int InSampleDays = 180, int OosDays = 60,
+    // StepDays controls how far the window start advances after each iteration.
+    // Default = OosDays (non-overlapping). Set smaller for overlapping OOS windows.
+    int StepDays = 0,
     // When true, each window's IS starting capital = previous OOS FinalEquity (compounding mode).
     // When false (default), every window starts at InitialCapital (independent-window mode).
-    bool CompoundEquity = false);
+    bool CompoundEquity = false,
+    // Cost / fill / stop parameters forwarded to every BacktestRequest in the walk-forward run.
+    FillModel FillModel = FillModel.NextBarOpen,
+    decimal SlippageBasisPoints = 5m,
+    decimal BrokerageFlatPerSide = 20m,
+    decimal TrailActivationR = 0m,
+    decimal TrailOffsetR = 0.5m,
+    bool BreakEvenAt1R = false,
+    decimal CircuitBreakerPct = 0m);
 
 public record WalkForwardWindow(
     LocalDate InSampleFrom, LocalDate InSampleTo,

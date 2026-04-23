@@ -71,10 +71,10 @@ public class UpstoxAuth(HttpClient http, ILogger<UpstoxAuth> logger, rvs.AlgoTra
         var data = doc.RootElement.GetProperty("data");
         var accessToken = data.GetProperty("access_token").GetString()!;
 
-        var istNow = TimeZoneInfo.ConvertTime(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"));
-        var expiry = new DateTime(istNow.Year, istNow.Month, istNow.Day, 3, 30, 0).AddDays(1);
-        var expiresAt = new DateTimeOffset(TimeZoneInfo.ConvertTime(expiry,
-            TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"), TimeZoneInfo.Utc));
+        // Token expires at 3:30 AM IST next day
+        var istDate = clock.NowInstant().InZone(Ist).Date;
+        var expiry330Ist = new LocalDateTime(istDate.Year, istDate.Month, istDate.Day, 3, 30, 0).PlusDays(1);
+        var expiresAt = Ist.AtLeniently(expiry330Ist).ToInstant().ToDateTimeOffset();
 
         return new LoginResult(true, accessToken, refreshToken, expiresAt, null, null, null);
     }
