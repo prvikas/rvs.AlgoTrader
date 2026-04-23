@@ -29,26 +29,14 @@ Users can now define any options spread (Iron Condor, Short Straddle, Bull Call 
 
 ## 2026-04-09
 
-### Audit gaps found in StrategyEvaluationQueue (SEQ-1, SEQ-2)
+### StrategyEvaluationQueue (SEQ-1, SEQ-2) — DONE (2026-04-23)
 
-**SEQ-1** `StrategyEvaluationQueue` sets `OptionChain: null` in the StrategyContext it builds.
-IOptionChainService is not injected into the queue. Architecture comment in OptionChainService says
-it must be called by the queue before building context (Rule #18) — this is not implemented.
-All 6 option strategies (IronCondor, ShortStraddleStrangle, CalendarSpread, FibOptionSpread,
-IntradayPcrOptions, VerticalSpread) immediately return Skip in both Live and Forward modes.
+**SEQ-1** IOptionChainService injected; NeedsOptionChain() detects named option strategies and
+GenericRules with optionsConfig.enabled or PCR/ATMIV/MAXPAIN indicators; near+far chains
+pre-fetched before StrategyContext is built. Option strategies receive populated chains.
 
-**Required change:** Inject optional IOptionChainService into StrategyEvaluationQueue. For each
-strategy instance, detect whether it is an option strategy (check StrategyInstance.StrategyType or
-presence of SpreadEntry signal on context preview) and fetch near+far chains before building context.
-
-**SEQ-2** `StrategyEvaluationQueue.EvaluateInstanceAsync` gates the call to
-`forwardTestEngine.ProcessCandleAsync` on `isActionable` (BUY/SELL from queue's own evaluation).
-ForwardTestEngine fetches its own option chains and re-evaluates independently, but it is never
-called because the queue's evaluation (without OptionChain) returns Skip/Hold first.
-
-**Required change:** For Forward mode instances, always call ProcessCandleAsync regardless of the
-queue's own signal result. The queue's evaluation is useful only for signal journaling and live
-execution routing; ForwardTestEngine manages its own state machine.
+**SEQ-2** ForwardTestEngine.ProcessCandleAsync always called for Forward-mode instances,
+regardless of queue's own signal result. Queue evaluation used only for signal journaling.
 
 ### Bugs fixed this session (2026-04-09)
 
@@ -63,9 +51,10 @@ execution routing; ForwardTestEngine manages its own state machine.
 - ForwardTestEngine uses linear DTE decay (not B-S) for per-bar spread value — far leg vega not captured.
 - StrikeInterval hardcoded to 50 (NIFTY default) in ForwardTestEngine. BANKNIFTY needs 100.
   Override by adding `"StrikeInterval": 100` to strategy ParametersJson.
-- BacktestEngine.NearestMonthlyExpiry (last Thursday of next month from bar date) differs from
-  OptionChainService.GetNearestMonthlyExpiry (last Thursday of current month if not yet passed).
-  No correctness impact for backtesting; divergence acknowledged.
+- BacktestEngine.NearestMonthlyExpiry now consistently returns last Thursday of next month
+  (fixed 2026-04-23 — was returning current month when candidate > from). OptionChainService
+  still uses current-month fallback for live chain fetches (intentional: far leg should be
+  closest available expiry, not necessarily next month's).
 
 ## 2026-03-30
 

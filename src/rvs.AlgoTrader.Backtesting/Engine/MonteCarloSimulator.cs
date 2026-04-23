@@ -66,20 +66,27 @@ public class MonteCarloSimulator(ILogger<MonteCarloSimulator> logger) : IMonteCa
             ProbabilityOfRuin: ruin);
     }
 
-    // Domain-object overload: used internally by tooling that has BacktestTrade instances
+    // Domain-object overload: used internally by tooling that has BacktestTrade instances.
+    // Runs a single combined simulation pass so MaxDrawdowns and FinalEquities are the real
+    // per-simulation values (not stubs), and Sharpe uses the same N-1 sample variance as
+    // BacktestEngine.ComputeGroupedSharpe.
     public MonteCarloResult RunFromTrades(IReadOnlyList<BacktestTrade> trades, decimal initialCapital, int simulations = 1000, int? seed = null)
     {
         if (trades.Count == 0)
             return new MonteCarloResult([], [], [], 0, 0, 0);
 
-        var result = Run(trades.Select(t => t.NetPnl).ToList(), initialCapital, simulations, seed);
+        logger.LogInformation("[MonteCarlo] Running {N} simulations on {T} trades (RunFromTrades)", simulations, trades.Count);
+
         var rng    = seed.HasValue ? new Random(seed.Value) : new Random();
         var pnlArr = trades.Select(t => t.NetPnl).ToArray();
 
-        // Compute Sharpe distribution for legacy result type
-        var sharpeRatios = new List<decimal>(simulations);
+        var maxDrawdowns  = new List<decimal>(simulations);
+        var finalEquities = new List<decimal>(simulations);
+        var sharpeRatios  = new List<decimal>(simulations);
+
         for (int sim = 0; sim < simulations; sim++)
         {
+            // Fisher-Yates shuffle
             var shuffled = pnlArr.ToArray();
             for (int i = shuffled.Length - 1; i > 0; i--)
             {
@@ -88,24 +95,43 @@ public class MonteCarloSimulator(ILogger<MonteCarloSimulator> logger) : IMonteCa
             }
 
             var equity  = initialCapital;
-            var returns = new List<double>(shuffled.Length);
-            foreach (var pnl in shuffled)
+            var peak    = equity;
+            var maxDd   = 0m;
+            var returns = new double[shuffled.Length];
+
+            for (int i = 0; i < shuffled.Length; i++)
             {
-                returns.Add((double)(pnl / (equity > 0 ? equity : 1)));
-                equity += pnl;
+                returns[i] = (double)(shuffled[i] / Math.Max(1m, equity));
+                equity += shuffled[i];
+                if (equity > peak) peak = equity;
+                var dd = peak > 0 ? (peak - equity) / peak : 0m;
+                if (dd > maxDd) maxDd = dd;
             }
-            var avg    = returns.Average();
-            var std    = Math.Sqrt(returns.Select(r => Math.Pow(r - avg, 2)).Average());
-            sharpeRatios.Add(std == 0 ? 0 : (decimal)(avg / std * Math.Sqrt(252)));
+            maxDrawdowns.Add(maxDd);
+            finalEquities.Add(equity);
+
+            if (returns.Length > 1)
+            {
+                var avg = returns.Average();
+                // N-1 sample variance — consistent with ComputeGroupedSharpe
+                var std = Math.Sqrt(returns.Select(r => Math.Pow(r - avg, 2)).Sum() / (returns.Length - 1));
+                sharpeRatios.Add(std == 0 ? 0m : (decimal)(avg / std * Math.Sqrt(252)));
+            }
+            else
+            {
+                sharpeRatios.Add(0m);
+            }
         }
 
+        maxDrawdowns.Sort();
+        finalEquities.Sort();
         sharpeRatios.Sort();
 
-        // Reconstruct sorted lists for the legacy record type
-        var maxDds    = Enumerable.Range(0, simulations).Select(_ => result.DrawdownP50).ToList(); // approximate
-        var equities  = Enumerable.Range(0, simulations).Select(_ => result.EquityP50).ToList();   // approximate
-        return new MonteCarloResult(maxDds, equities, sharpeRatios,
-            result.DrawdownP5, result.DrawdownP50, result.DrawdownP95);
+        return new MonteCarloResult(
+            maxDrawdowns, finalEquities, sharpeRatios,
+            Percentile(maxDrawdowns, 5),
+            Percentile(maxDrawdowns, 50),
+            Percentile(maxDrawdowns, 95));
     }
 
     private static decimal Percentile(List<decimal> sorted, int p)

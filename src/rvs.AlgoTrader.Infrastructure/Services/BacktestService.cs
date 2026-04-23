@@ -85,7 +85,11 @@ public class BacktestService(
         RiskPerTradePercent: dto.RiskPerTradePercent,
         FillModel: (FillModel)dto.FillModel,
         SlippageBasisPoints: dto.SlippageBasisPoints,
-        BrokerageFlatPerSide: dto.BrokerageFlatPerSide);
+        BrokerageFlatPerSide: dto.BrokerageFlatPerSide,
+        TrailActivationR: dto.TrailActivationR,
+        TrailOffsetR: dto.TrailOffsetR,
+        BreakEvenAt1R: dto.BreakEvenAt1R,
+        CircuitBreakerPct: dto.CircuitBreakerPct);
 
     private static BacktestResultDto MapToDto(BacktestResult r, DateTimeOffset startedAt) => new(
         Id: null,

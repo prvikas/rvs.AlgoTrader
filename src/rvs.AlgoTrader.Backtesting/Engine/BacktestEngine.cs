@@ -119,7 +119,8 @@ public class BacktestEngine(
         var progressStep = Math.Max(1, totalBars / 100);
 
         // ── FIB-3: Pre-fetch IV history for rolling per-bar IV rank ────────────
-        // Loaded once before the loop; sorted ascending by date for binary-search lookups.
+        // Loaded once before the loop; sorted descending by date (newest first) per
+        // EfOptionIvHistoryRepository.GetRangeAsync — ComputeIvRankAsOf relies on this order.
         // Empty list when IOptionIvRankService is not available or has no data.
         IReadOnlyList<(NodaTime.LocalDate Date, decimal AtmIv)> ivHistory =
             Array.Empty<(NodaTime.LocalDate, decimal)>();
@@ -321,8 +322,13 @@ public class BacktestEngine(
             // ── ALL-SPREADS-1: monitor open spread position ───────────────────
             if (openSpread != null)
             {
+                // Use current-bar IV so post-entry vol changes are reflected in the spread valuation.
+                // Falls back to entry IV when no IV history is available for this bar.
+                double spreadIvFrac = barIvRank != null
+                    ? Math.Max(0.05, (double)(barIvRank.CurrentIv / 100m))
+                    : openSpread.EntryIvFraction;
                 var (spreadClosed, closeReason, spreadPnl, exitValue) =
-                    TryCloseSpreadSim(openSpread, current, bsEngine!);
+                    TryCloseSpreadSim(openSpread, current, bsEngine!, spreadIvFrac);
 
                 if (spreadClosed)
                 {
@@ -692,7 +698,11 @@ public class BacktestEngine(
         if (openSpread != null && bsEngine != null && allCandles.Count > 0)
         {
             var lastBar = allCandles[^1];
-            decimal eodValue   = PriceSpreadSim(openSpread, lastBar.Close, lastBar.OpenTime.Date, bsEngine);
+            var lastIvRank = ComputeIvRankAsOf(lastBar.OpenTime.Date, ivHistory);
+            double eodIvFrac = lastIvRank != null
+                ? Math.Max(0.05, (double)(lastIvRank.CurrentIv / 100m))
+                : openSpread.EntryIvFraction;
+            decimal eodValue   = PriceSpreadSim(openSpread, lastBar.Close, lastBar.OpenTime.Date, bsEngine, eodIvFrac);
             decimal eodPnl     = openSpread.NetCredit - eodValue; // unified formula — see TryCloseSpreadSim
             decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
             decimal netEodPnl = eodPnl - openSpread.EntryCommission - exitComm;
@@ -884,16 +894,16 @@ public class BacktestEngine(
     /// Returns (closed, closeReason, grossPnl, currentSpreadValue).
     /// </summary>
     private static (bool Closed, string Reason, decimal GrossPnl, decimal CurrentValue)
-        TryCloseSpreadSim(OpenSpreadSim pos, ClosedCandle current, IBlackScholesEngine bs)
+        TryCloseSpreadSim(OpenSpreadSim pos, ClosedCandle current, IBlackScholesEngine bs, double currentIvFrac)
     {
         var barDate = current.OpenTime.Date;
         decimal spot = current.Close;
 
-        // Expiry: price all legs at T→0 (intrinsic only).
-        // P&L = NetCredit − costToClose for all spread types (credit and debit).
+        // Expiry: price all legs at T→0 (intrinsic only). IV does not affect intrinsic value,
+        // but we still pass currentIvFrac for any residual theta in long legs near expiry.
         if (barDate >= pos.ExpiryDate)
         {
-            decimal expiryValue = PriceSpreadSim(pos, spot, pos.ExpiryDate, bs);
+            decimal expiryValue = PriceSpreadSim(pos, spot, pos.ExpiryDate, bs, currentIvFrac);
             decimal pnl = pos.NetCredit - expiryValue;
             return (true, "EXPIRY", pnl, expiryValue);
         }
@@ -907,13 +917,13 @@ public class BacktestEngine(
                 : spot > pos.UnderlyingStop.Value;  // call spread: stop above swing resistance
             if (breached)
             {
-                decimal val = PriceSpreadSim(pos, spot, barDate, bs);
+                decimal val = PriceSpreadSim(pos, spot, barDate, bs, currentIvFrac);
                 decimal pnl = pos.NetCredit - val;
                 return (true, "UNDERLYING_STOP", pnl, val);
             }
         }
 
-        decimal currentValue = PriceSpreadSim(pos, spot, barDate, bs);
+        decimal currentValue = PriceSpreadSim(pos, spot, barDate, bs, currentIvFrac);
         // Unified P&L formula: NetCredit − cost-to-close.
         // Proof: credit spread: receive C, pay C' to close → PnL = C − C'.
         //        debit spread:  pay D, receive V when closing → V − D = −D − (−V) = NetCredit − costToClose.
@@ -1024,7 +1034,7 @@ public class BacktestEngine(
     /// P&amp;L = NetCredit − PriceSpreadSim(…) for all spread types (credit and debit).
     /// </summary>
     private static decimal PriceSpreadSim(
-        OpenSpreadSim pos, decimal spot, LocalDate barDate, IBlackScholesEngine bs)
+        OpenSpreadSim pos, decimal spot, LocalDate barDate, IBlackScholesEngine bs, double ivFrac)
     {
         const double RFR = 0.065;
         decimal spreadValue = 0m;
@@ -1032,7 +1042,7 @@ public class BacktestEngine(
         {
             // Use each leg's own expiry — critical for CalendarSpread (near ≠ far expiry).
             double tte = Math.Max(0.0, (legExpiry - barDate).Days / 365.0);
-            var g = bs.Compute(spot, strike, tte, pos.EntryIvFraction, RFR,
+            var g = bs.Compute(spot, strike, tte, ivFrac, RFR,
                 leg.OptionType == OptionType.Call);
             decimal legVal = Math.Max(0m, g.TheoreticalPrice);
             // To close: pay to buy back short legs, receive for selling long legs
@@ -1114,9 +1124,7 @@ public class BacktestEngine(
     /// </summary>
     internal static LocalDate NearestMonthlyExpiry(LocalDate from)
     {
-        // Last Thursday of the current month (if still in future), else next month's
-        var candidate = LastThursdayOfMonth(from.Year, from.Month);
-        if (candidate > from) return candidate;
+        // Always the last Thursday of the month following 'from' (far-leg expiry for calendar spreads)
         var next = from.PlusMonths(1);
         return LastThursdayOfMonth(next.Year, next.Month);
     }
@@ -1343,10 +1351,9 @@ public class BacktestEngine(
         if (entryPrice <= 0) return 0;
 
         var riskAmount   = equity * request.RiskPerTradePercent / 100m;
-        //var stopDistance = Math.Abs(entryPrice - signal.StopLoss.Value);
         var stopDistance = Math.Abs(entryPrice - (signal.StopLoss ?? entryPrice * 0.99m));
-        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
         if (stopDistance == 0) return 0;
+        var sizeByRisk = Math.Max(1, (int)(riskAmount / stopDistance));
 
         // sizeByRisk is now at least 1; maxByCapital below will still enforce affordability
 
@@ -1407,16 +1414,17 @@ public class BacktestEngine(
                 runEq += trades[idx].NetPnl;
             }
         }
-        var returns = trades.Select((t, idx) => (double)(t.NetPnl / equityAtEntry[idx])).ToArray();
+        var returns   = trades.Select((t, idx) => (double)(t.NetPnl / equityAtEntry[idx])).ToArray();
         var avgReturn = returns.Average();
-        var stdDev    = Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Average());
+        // N-1 sample variance (Bessel correction) — consistent with ComputeGroupedSharpe.
+        var stdDev    = returns.Length > 1
+            ? Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Sum() / (returns.Length - 1))
+            : 0.0;
 
-        // Sortino: downside deviation (negative returns only)
-        var negReturns  = returns.Where(r => r < 0).ToArray();
-        var downDev     = negReturns.Length > 0
-            ? Math.Sqrt(negReturns.Select(r => r * r).Average())
-            : stdDev;
-        var sortino     = downDev == 0 ? 0m : (decimal)(avgReturn / downDev);
+        // Sortino: downside deviation computed over ALL returns with MAR=0 (÷N_total, not ÷N_negative),
+        // then annualised by √252 to match the DailySharpe scale.
+        var downDev = Math.Sqrt(returns.Average(r => r < 0 ? r * r : 0.0));
+        var sortino = downDev == 0 ? 0m : (decimal)(avgReturn / downDev * Math.Sqrt(252));
 
         var totalReturn = (finalEquity - request.InitialCapital) / request.InitialCapital;
         var calmar      = maxDrawdown == 0 ? 0 : totalReturn / maxDrawdown;
@@ -1617,16 +1625,45 @@ public class BacktestEngine(
 
     private static decimal ComputeGroupedSharpe(
         List<BacktestTrade> trades, Func<BacktestTrade, string> keySelector,
-         decimal capital,
+        decimal initialCapital,
         double annualisationFactor = 252)
     {
-        var groups = trades.GroupBy(keySelector)
-            //.Select(g => (double)(g.Sum(t => t.NetPnl) / capital))
-            .Select(g => (double)(g.Sum(t => t.NetPnl) / Math.Max(1m, capital)))
-            .ToArray();
-        if (groups.Length < 2) return 0m;
-        var avg    = groups.Average();
-        var stdDev = Math.Sqrt(groups.Select(r => Math.Pow(r - avg, 2)).Average());
+        if (trades.Count < 2) return 0m;
+
+        // Sort by exit time so running equity accumulates in chronological order.
+        var sorted = trades.OrderBy(t => t.ExitTime.ToInstant().ToUnixTimeTicks()).ToList();
+
+        // Per-period return = period P&L ÷ equity at the START of that period.
+        // This matches standard Sharpe computation where each observation is a percentage return.
+        var periodReturns    = new List<double>();
+        var runningEquity    = initialCapital;
+        string? currentKey   = null;
+        decimal periodPnl    = 0m;
+        decimal periodStart  = initialCapital;
+
+        foreach (var t in sorted)
+        {
+            var key = keySelector(t);
+            if (key != currentKey)
+            {
+                if (currentKey != null && periodStart > 0)
+                    periodReturns.Add((double)(periodPnl / periodStart));
+                currentKey   = key;
+                periodStart  = Math.Max(1m, runningEquity);
+                periodPnl    = 0m;
+            }
+            periodPnl     += t.NetPnl;
+            runningEquity += t.NetPnl;
+        }
+        // Flush final period
+        if (currentKey != null && periodStart > 0)
+            periodReturns.Add((double)(periodPnl / periodStart));
+
+        if (periodReturns.Count < 2) return 0m;
+
+        var avg    = periodReturns.Average();
+        // N-1 sample variance (Bessel correction)
+        var stdDev = Math.Sqrt(periodReturns.Select(r => Math.Pow(r - avg, 2)).Sum() / (periodReturns.Count - 1));
         if (stdDev == 0) return 0m;
         return (decimal)(avg / stdDev * Math.Sqrt(annualisationFactor));
     }
@@ -1634,36 +1671,50 @@ public class BacktestEngine(
     private static int ComputeDrawdownRecovery(List<BacktestTrade> trades, decimal initialCapital, decimal knownMaxDrawdown)
     {
         if (trades.Count == 0 || knownMaxDrawdown == 0) return 0;
-        var equity = initialCapital;
-        var peak   = equity;
-        //var maxDd  = 0m;
-        var troughIdx = 0;
-        var closestDd = 0m;
+
+        // Pass 1: locate the trough of the max drawdown and capture the peak before it.
+        var equity       = initialCapital;
+        var peak         = equity;
+        var maxDd        = 0m;
+        int troughIdx    = -1;
+        decimal peakAtTrough = equity;
 
         for (int i = 0; i < trades.Count; i++)
         {
             equity += trades[i].NetPnl;
-            if (equity > peak)
-            {
-                peak = equity;
-            }
+            if (equity > peak) peak = equity;
             var dd = peak > 0 ? (peak - equity) / peak : 0m;
-            if (dd > closestDd) { closestDd = dd; troughIdx = i; }
+            if (dd > maxDd) { maxDd = dd; troughIdx = i; peakAtTrough = peak; }
         }
 
-        //if (maxDd == 0) return 0;
+        if (troughIdx < 0) return 0;
 
-        // Count trades from trough back to new high
+        // Recompute equity at the trough.
         var troughEquity = initialCapital;
         for (int i = 0; i <= troughIdx; i++) troughEquity += trades[i].NetPnl;
 
-        var peak2 = troughEquity;
+        // Exit-bar index of the trough trade: EntryBarIndex + HoldingBars.
+        // Falls back to trade sequence index when EntryBarIndex was not populated (test helpers).
+        var t0 = trades[troughIdx];
+        int troughExitBar = t0.EntryBarIndex >= 0
+            ? t0.EntryBarIndex + t0.HoldingBars
+            : troughIdx;
+
+        // Pass 2: walk forward until equity recovers to the pre-trough peak.
+        var recoveryEquity = troughEquity;
         for (int i = troughIdx + 1; i < trades.Count; i++)
         {
-            peak2 += trades[i].NetPnl;
-            if (peak2 >= peak) return i - troughIdx;
+            recoveryEquity += trades[i].NetPnl;
+            if (recoveryEquity >= peakAtTrough)
+            {
+                var tr = trades[i];
+                int recovExitBar = tr.EntryBarIndex >= 0
+                    ? tr.EntryBarIndex + tr.HoldingBars
+                    : i;
+                return Math.Max(0, recovExitBar - troughExitBar);
+            }
         }
-        return -1; // Not yet recovered within the backtest period
+        return -1; // not yet recovered within the backtest period
     }
 
     /// <summary>

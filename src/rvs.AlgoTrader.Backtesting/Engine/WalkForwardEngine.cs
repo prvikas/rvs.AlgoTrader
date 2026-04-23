@@ -20,30 +20,46 @@ public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwar
             request.StrategyName, request.InternalSymbol, request.Timeframe);
 
         var windows = GenerateWindows(request);
-        var windowResults = new List<WalkForwardWindowResult>();
-        decimal totalOosPnl = 0;
+        var windowResults  = new List<WalkForwardWindowResult>();
+        decimal totalOosPnl   = 0;
+        // When CompoundEquity=true, each window's IS starts where the previous OOS ended.
+        // When false (default), every window starts at the same InitialCapital.
+        decimal windowCapital = request.InitialCapital;
 
         foreach (var window in windows)
         {
-            logger.LogDebug("[WalkForward] Window IS:{IsFrom}-{IsTo} OOS:{OosFrom}-{OosTo}",
-                window.InSampleFrom, window.InSampleTo, window.OoSFrom, window.OoSTo);
+            logger.LogDebug("[WalkForward] Window IS:{IsFrom}-{IsTo} OOS:{OosFrom}-{OosTo} Capital={Cap:F0}",
+                window.InSampleFrom, window.InSampleTo, window.OoSFrom, window.OoSTo, windowCapital);
 
-            // In-sample run
+            var currentCapital = request.CompoundEquity ? windowCapital : request.InitialCapital;
+
+            // In-sample run (used for optimization context; always starts at currentCapital)
             var isResult = await backtestEngine.RunAsync(new BacktestRequest(
                 request.StrategyName, request.ParametersJson,
                 request.InternalSymbol, request.Timeframe,
                 window.InSampleFrom, window.InSampleTo,
-                request.InitialCapital, request.RiskPerTradePercent), ct);
+                currentCapital, request.RiskPerTradePercent), ct);
 
-            // Out-of-sample validation
+            // OOS starts where IS ended when compounding, otherwise at currentCapital.
+            var oosCapital = request.CompoundEquity && isResult.Success && isResult.FinalEquity > 0
+                ? isResult.FinalEquity
+                : currentCapital;
+
             var oosResult = await backtestEngine.RunAsync(new BacktestRequest(
                 request.StrategyName, request.ParametersJson,
                 request.InternalSymbol, request.Timeframe,
                 window.OoSFrom, window.OoSTo,
-                request.InitialCapital, request.RiskPerTradePercent), ct);
+                oosCapital, request.RiskPerTradePercent), ct);
 
             windowResults.Add(new WalkForwardWindowResult(window, isResult, oosResult));
-            if (oosResult.Success) totalOosPnl += oosResult.TotalPnl;
+            if (oosResult.Success)
+            {
+                totalOosPnl += oosResult.TotalPnl;
+                // Carry OOS final equity forward so the next window's position sizing reflects
+                // actual compounded capital.
+                if (request.CompoundEquity && oosResult.FinalEquity > 0)
+                    windowCapital = oosResult.FinalEquity;
+            }
         }
 
         var efficiencyRatio = windowResults.Count > 0
@@ -80,7 +96,10 @@ public record WalkForwardRequest(
     string InternalSymbol, string Timeframe,
     LocalDate FromDate, LocalDate ToDate,
     decimal InitialCapital, decimal RiskPerTradePercent,
-    int InSampleDays = 180, int OosDays = 60);
+    int InSampleDays = 180, int OosDays = 60,
+    // When true, each window's IS starting capital = previous OOS FinalEquity (compounding mode).
+    // When false (default), every window starts at InitialCapital (independent-window mode).
+    bool CompoundEquity = false);
 
 public record WalkForwardWindow(
     LocalDate InSampleFrom, LocalDate InSampleTo,
