@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using NodaTime;
+using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Backtesting.Engine;
@@ -11,7 +13,43 @@ namespace rvs.AlgoTrader.Backtesting.Engine;
 /// Prevents overfitting by validating on unseen data.
 /// </summary>
 public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwardEngine> logger)
+    : IWalkForwardEngine
 {
+    /// <inheritdoc/>
+    public async Task<WalkForwardResultDto> RunAsync(BacktestRequestDto dto, CancellationToken ct)
+    {
+        var cfg = dto.WalkForward ?? new WalkForwardConfigDto(180, 60, 60);
+        var request = new WalkForwardRequest(
+            StrategyName:        dto.StrategyName,
+            ParametersJson:      dto.ParametersJson,
+            InternalSymbol:      dto.InternalSymbol,
+            Timeframe:           dto.Timeframe,
+            FromDate:            dto.FromDate,
+            ToDate:              dto.ToDate,
+            InitialCapital:      dto.InitialCapital,
+            RiskPerTradePercent: dto.RiskPerTradePercent,
+            InSampleDays:        cfg.InSampleDays,
+            OosDays:             cfg.OutOfSampleDays,
+            CompoundEquity:      false);
+
+        var result = await RunAsync(request, ct);
+
+        var windows = result.Windows.Select(w => new WalkForwardWindowResultDto(
+            InSampleFrom: w.Window.InSampleFrom,
+            InSampleTo:   w.Window.InSampleTo,
+            OoSFrom:      w.Window.OoSFrom,
+            OoSTo:        w.Window.OoSTo,
+            IsSuccess:    w.IsResult.Success,
+            IsTotalPnl:   w.IsResult.TotalPnl,
+            IsSharpe:     w.IsResult.SharpeRatio,
+            OosSuccess:   w.OosResult.Success,
+            OosTotalPnl:  w.OosResult.TotalPnl,
+            OosSharpe:    w.OosResult.SharpeRatio)).ToList();
+
+        return new WalkForwardResultDto(
+            result.StrategyName, result.Symbol, windows,
+            result.TotalOosPnl, result.EfficiencyRatio);
+    }
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
     public async Task<WalkForwardResult> RunAsync(WalkForwardRequest request, CancellationToken ct)

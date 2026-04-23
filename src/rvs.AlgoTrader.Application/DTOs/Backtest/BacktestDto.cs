@@ -35,6 +35,17 @@ public record BacktestRequestDto(
 
 public record WalkForwardConfigDto(int InSampleDays, int OutOfSampleDays, int StepDays);
 
+public record WalkForwardWindowResultDto(
+    LocalDate InSampleFrom, LocalDate InSampleTo,
+    LocalDate OoSFrom, LocalDate OoSTo,
+    bool IsSuccess, decimal IsTotalPnl, decimal IsSharpe,
+    bool OosSuccess, decimal OosTotalPnl, decimal OosSharpe);
+
+public record WalkForwardResultDto(
+    string StrategyName, string Symbol,
+    IReadOnlyList<WalkForwardWindowResultDto> Windows,
+    decimal TotalOosPnl, decimal EfficiencyRatio);
+
 /// <summary>
 /// Full backtest result DTO — all metrics surfaced to the frontend.
 /// Maps 1:1 from BacktestResult produced by BacktestEngine.

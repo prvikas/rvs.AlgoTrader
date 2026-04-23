@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using rvs.AlgoTrader.Brokers.Abstractions;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Brokers.Upstox.Auth;
 
@@ -8,8 +10,9 @@ namespace rvs.AlgoTrader.Brokers.Upstox.Auth;
 /// Upstox OAuth2 auth. Token expires at 3:30 AM IST the following day (NOT 6h from issuance).
 /// Full re-auth required on expiry — refresh_token is stored for this purpose.
 /// </summary>
-public class UpstoxAuth(HttpClient http, ILogger<UpstoxAuth> logger)
+public class UpstoxAuth(HttpClient http, ILogger<UpstoxAuth> logger, rvs.AlgoTrader.Domain.Interfaces.IClock clock)
 {
+    private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
     private const string TokenUrl = "https://api.upstox.com/v2/login/authorization/token";
 
     public string GetLoginUrl(string apiKey, string redirectUri)
@@ -41,10 +44,9 @@ public class UpstoxAuth(HttpClient http, ILogger<UpstoxAuth> logger)
         var refreshToken = data.TryGetProperty("extended_token", out var et) ? et.GetString() : null;
 
         // Token expires at 3:30 AM IST next day
-        var istNow = TimeZoneInfo.ConvertTime(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"));
-        var expiry = new DateTime(istNow.Year, istNow.Month, istNow.Day, 3, 30, 0).AddDays(1);
-        var expiresAt = new DateTimeOffset(TimeZoneInfo.ConvertTime(expiry,
-            TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"), TimeZoneInfo.Utc));
+        var istDate = clock.NowInstant().InZone(Ist).Date;
+        var expiry330Ist = new LocalDateTime(istDate.Year, istDate.Month, istDate.Day, 3, 30, 0).PlusDays(1);
+        var expiresAt = Ist.AtLeniently(expiry330Ist).ToInstant().ToDateTimeOffset();
 
         return new LoginResult(true, accessToken, refreshToken, expiresAt, null, null, null);
     }

@@ -8,7 +8,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Strategy abstraction | DONE | StrategyFactory+GetSchema(); 11 strategies; ExitLong/ExitShort; BacktestEngine re-evaluates while position open |
 | Strategies (6) | DONE | STRAT-001 VCP (breadth≥40%); STRAT-002 Fib (1.618/0.786, IVP, events); STRAT-003 PCR intraday; +fib1618 fix; DTE filter; VWAP TF; AtmIv guard |
 | Vertical Spreads | DONE | All 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs; SpreadEntry→ISpreadOrderManager |
-| Backtest engine | DONE | async/SignalR; SharpeRatio daily; WarmupBars; spread B-S sim; synthetic option chain (BT-OPT-1/2); real EOD snapshots (FIB-5); SS-1/CS-1; 10-bug audit fixed (Sortino/Sharpe/DrawdownBars/IV/MonteCarlo/CircuitBreaker/WalkForward) |
+| Backtest engine | DONE | async/SignalR; SharpeRatio daily; WarmupBars; spread B-S sim; synthetic option chain (BT-OPT-1/2); real EOD snapshots (FIB-5); SS-1/CS-1; 10-bug audit fixed (Sortino/Sharpe/DrawdownBars/IV/MonteCarlo/CircuitBreaker/WalkForward); RunWalkForwardAsync wired via IWalkForwardEngine |
 | Scenarios | DONE | StrategyScenario, partial override, parallel run, promotion gate, comparison grid; Version auto-inc |
 | DB migrations | DONE | 001–042; 027 TimescaleDB; 034 iv_history; 038 option snapshots; 039 market_news; 040 app_config+symbol_data_prefs; 042 FK backtest_runs→definition_scenarios |
 | Trade Journal | DONE | TradeJournalEntry, P&L attribution, TaxLotReportService (ITR-3); TradeJournalPage+PortfolioAnalysisPage |

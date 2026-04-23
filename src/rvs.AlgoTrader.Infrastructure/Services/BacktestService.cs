@@ -14,6 +14,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 
 public class BacktestService(
     IBacktestEngine engine,
+    IWalkForwardEngine walkForwardEngine,
     IHistoricalDownloadService downloader,
     IBacktestRunRepository runRepo,
     IClock clock,
@@ -71,8 +72,12 @@ public class BacktestService(
         return MapToDto(result, startedAt);
     }
 
-    public Task<object> RunWalkForwardAsync(BacktestRequestDto dto, CancellationToken ct)
-        => Task.FromResult<object>(new { Error = "Walk-forward UI not yet wired" });
+    public async Task<object> RunWalkForwardAsync(BacktestRequestDto dto, CancellationToken ct)
+    {
+        logger.LogInformation("[BacktestService] Walk-forward for {Strategy}/{Symbol}/{Tf}",
+            dto.StrategyName, dto.InternalSymbol, dto.Timeframe);
+        return await walkForwardEngine.RunAsync(dto, ct);
+    }
 
     private static BacktestRequest BuildRequest(BacktestRequestDto dto) => new(
         StrategyName: dto.StrategyName,

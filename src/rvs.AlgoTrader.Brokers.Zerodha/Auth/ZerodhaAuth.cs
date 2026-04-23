@@ -3,12 +3,15 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using rvs.AlgoTrader.Brokers.Abstractions;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Brokers.Zerodha.Auth;
 
-public class ZerodhaAuth(HttpClient http, ILogger<ZerodhaAuth> logger)
+public class ZerodhaAuth(HttpClient http, ILogger<ZerodhaAuth> logger, rvs.AlgoTrader.Domain.Interfaces.IClock clock)
 {
+    private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
     private const string BaseUrl = "https://api.kite.trade";
 
     /// <summary>SHA-256(api_key + request_token + api_secret) — matches dotnetkiteconnect Utils.SHA256Hash</summary>
@@ -49,9 +52,9 @@ public class ZerodhaAuth(HttpClient http, ILogger<ZerodhaAuth> logger)
         var data = doc.RootElement.GetProperty("data");
         var accessToken = data.GetProperty("access_token").GetString()!;
 
-        // Zerodha tokens expire at midnight IST
-        var tomorrow = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
-        var expiresAt = new DateTimeOffset(tomorrow.ToDateTime(new TimeOnly(18, 30)), TimeSpan.Zero); // midnight IST = 18:30 UTC
+        // Zerodha tokens expire at midnight IST — midnight IST = 18:30 UTC of the expiry calendar day
+        var tomorrowIst = clock.NowInstant().InZone(Ist).Date.PlusDays(1);
+        var expiresAt = new DateTimeOffset(tomorrowIst.Year, tomorrowIst.Month, tomorrowIst.Day, 18, 30, 0, TimeSpan.Zero);
 
         return new LoginResult(true, accessToken, null, expiresAt, null, null, null);
     }

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using NodaTime;
 using rvs.AlgoTrader.Brokers.Abstractions;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Brokers.MStock.Auth;
 
@@ -21,8 +23,9 @@ namespace rvs.AlgoTrader.Brokers.MStock.Auth;
 /// Token expires at midnight IST (18:30 UTC) of the generated day.
 /// No OAuth2 — re-run full two-step flow on 401/403.
 /// </summary>
-public class MStockAuth(HttpClient http, ILogger<MStockAuth> logger)
+public class MStockAuth(HttpClient http, ILogger<MStockAuth> logger, rvs.AlgoTrader.Domain.Interfaces.IClock clock)
 {
+    private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
     private const string BaseUrl = "https://api.mstock.trade/openapi/typeb";
 
     public async Task<LoginResult> ExchangeSessionAsync(BrokerCredentials creds, CancellationToken ct)
@@ -143,12 +146,9 @@ public class MStockAuth(HttpClient http, ILogger<MStockAuth> logger)
             var feedToken  = data2.TryGetProperty("feedToken",    out var ft) ? ft.GetString() : null;
             var clientName = data2.TryGetProperty("ClientName",   out var cn) ? cn.GetString() : null;
 
-            // Token expires at midnight IST = 18:30 UTC of the generated day
-            var istNow = TimeZoneInfo.ConvertTime(DateTime.UtcNow,
-                TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"));
-            var midnightIst = new DateTime(istNow.Year, istNow.Month, istNow.Day, 0, 0, 0).AddDays(1);
-            var expiresAt = new DateTimeOffset(TimeZoneInfo.ConvertTime(midnightIst,
-                TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata"), TimeZoneInfo.Utc));
+            // Token expires at midnight IST = 18:30 UTC of the expiry calendar day
+            var tomorrowIst = clock.NowInstant().InZone(Ist).Date.PlusDays(1);
+            var expiresAt = new DateTimeOffset(tomorrowIst.Year, tomorrowIst.Month, tomorrowIst.Day, 18, 30, 0, TimeSpan.Zero);
 
             logger.LogInformation(
                 "[mStock] Authentication successful. ClientName={ClientName}, ExpiresAt={ExpiresAt} UTC",

@@ -91,6 +91,7 @@ public static class ServiceCollectionExtensions
         // Infrastructure defines IBacktestEngine (Application layer interface) but cannot reference
         // the Backtesting assembly directly (CLAUDE.md Rule #2 — no cross-context direct calls).
         services.AddScoped<IBacktestEngine, BacktestEngine>();
+        services.AddScoped<IWalkForwardEngine, WalkForwardEngine>();
         services.AddSingleton<IMonteCarloSimulator, MonteCarloSimulator>();
 
         // ICurrentUser — reads JWT identity from HTTP context; falls back to "System" outside request scope.

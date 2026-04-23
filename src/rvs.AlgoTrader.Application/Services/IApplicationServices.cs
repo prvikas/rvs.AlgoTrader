@@ -787,6 +787,15 @@ public interface IForwardTestEngine
 }
 
 /// <summary>
+/// Abstracts walk-forward execution. Implemented by WalkForwardEngine in rvs.AlgoTrader.Backtesting.
+/// Registered in the API composition root (only API references the Backtesting assembly).
+/// </summary>
+public interface IWalkForwardEngine
+{
+    Task<DTOs.Backtest.WalkForwardResultDto> RunAsync(DTOs.Backtest.BacktestRequestDto dto, CancellationToken ct);
+}
+
+/// <summary>
 /// Abstracts backtest execution so the Application layer has no direct dependency
 /// on the rvs.AlgoTrader.Backtesting project. Implemented in Infrastructure.
 /// </summary>

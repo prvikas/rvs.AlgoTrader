@@ -153,7 +153,7 @@ public class AuthController(
             issuer: null,
             audience: null,
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(24),
+            expires: clock.GetCurrentInstant().Plus(Duration.FromHours(24)).ToDateTimeUtc(),
             signingCredentials: credentials
         );
 
