@@ -271,11 +271,54 @@ export const backtestApi = {
     apiClient.get<ApiResponse<BacktestTradeResult[]>>(`/backtest/${id}/trades`),
   report: (id: string) =>
     apiClient.get(`/backtest/${id}/report`, { responseType: 'blob' }),
+  /** Walk-forward optimization — splits date range into IS/OOS windows, returns per-window metrics. */
+  walkForward: (req: BacktestRequest) =>
+    apiClient.post<ApiResponse<WalkForwardResult>>('/backtest/walk-forward', req),
+  /** Monte Carlo simulation on a saved backtest's trade sequence. */
+  monteCarlo: (id: string, req?: MonteCarloRequest) =>
+    apiClient.post<ApiResponse<MonteCarloSimulation>>(`/backtest/${id}/montecarlo`, req ?? {}),
   /** All backtest runs for all scenarios of a strategy definition (Previous Runs panel). */
   byDefinition: (definitionId: string, page = 1, pageSize = 100) =>
     apiClient.get<ApiResponse<BacktestResult[]>>(
       `/strategy-definitions/${definitionId}/backtests`,
       { params: { page, pageSize } }),
+}
+
+// --- Walk-forward & Monte Carlo types ---
+export interface WalkForwardWindowResult {
+  inSampleFrom: string
+  inSampleTo: string
+  ooSFrom: string
+  ooSTo: string
+  isSuccess: boolean
+  isTotalPnl: number
+  isSharpe: number
+  oosSuccess: boolean
+  oosTotalPnl: number
+  oosSharpe: number
+}
+
+export interface WalkForwardResult {
+  strategyName: string
+  symbol: string
+  windows: WalkForwardWindowResult[]
+  totalOosPnl: number
+  efficiencyRatio: number
+}
+
+export interface MonteCarloRequest {
+  simulations?: number
+  seed?: number
+}
+
+export interface MonteCarloSimulation {
+  drawdownP5: number
+  drawdownP50: number
+  drawdownP95: number
+  equityP5: number
+  equityP50: number
+  equityP95: number
+  probabilityOfRuin: number
 }
 
 // --- Type Definitions ---

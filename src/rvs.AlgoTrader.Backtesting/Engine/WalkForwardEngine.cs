@@ -12,7 +12,7 @@ namespace rvs.AlgoTrader.Backtesting.Engine;
 /// Splits data into in-sample (optimize) and out-of-sample (validate) windows.
 /// Prevents overfitting by validating on unseen data.
 /// </summary>
-public class WalkForwardEngine(BacktestEngine backtestEngine, ILogger<WalkForwardEngine> logger)
+public class WalkForwardEngine(IBacktestEngine backtestEngine, ILogger<WalkForwardEngine> logger)
     : IWalkForwardEngine
 {
     /// <inheritdoc/>
