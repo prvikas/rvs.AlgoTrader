@@ -46,19 +46,47 @@ public class BacktestService(
 
             if (!dl.Success || dl.BarCount == 0)
             {
-                return MapToDto(result, startedAt) with
+                // For broker auth failures (401) the download failed but the candles table may
+                // already contain data from a prior successful download — retry with cached data.
+                bool isBrokerAuthError = dl.Error != null &&
+                    (dl.Error.Contains("401") ||
+                     dl.Error.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase));
+
+                if (isBrokerAuthError)
                 {
-                    Error = $"No data available for {dto.InternalSymbol}/{dto.Timeframe} " +
-                            $"({dto.FromDate} – {dto.ToDate}). " +
-                            $"Download attempt: {dl.Error ?? "0 bars returned"}. " +
-                            "Ensure the instrument has a valid broker token and the date range is correct."
-                };
+                    logger.LogWarning(
+                        "[BacktestService] Broker session expired (401) for {Symbol}/{Tf}. Retrying with cached DB candles.",
+                        dto.InternalSymbol, dto.Timeframe);
+
+                    result = await engine.RunAsync(request, ct, progress: null);
+
+                    if (!result.Success)
+                        return MapToDto(result, startedAt) with
+                        {
+                            Error = $"Broker session expired (HTTP 401 — {dto.BrokerName}). " +
+                                    $"No cached data found for {dto.InternalSymbol}/{dto.Timeframe} " +
+                                    $"({dto.FromDate} – {dto.ToDate}). " +
+                                    "Re-authenticate via Settings → Broker Login, then retry."
+                        };
+                }
+                else
+                {
+                    return MapToDto(result, startedAt) with
+                    {
+                        Error = $"No data available for {dto.InternalSymbol}/{dto.Timeframe} " +
+                                $"({dto.FromDate} – {dto.ToDate}). " +
+                                $"Download attempt: {dl.Error ?? "0 bars returned"}. " +
+                                "Ensure the instrument has a valid broker token and the date range is correct."
+                    };
+                }
             }
+            else
+            {
+                logger.LogInformation("[BacktestService] Downloaded {Count} bars ({Tf}). Retrying backtest...",
+                    dl.BarCount, downloadTf);
 
-            logger.LogInformation("[BacktestService] Downloaded {Count} bars ({Tf}). Retrying backtest...",
-                dl.BarCount, downloadTf);
-
-            result = await engine.RunAsync(request, ct, progress: null);
+                result = await engine.RunAsync(request, ct, progress: null);
+            }
         }
 
         // Persist successful run to DB

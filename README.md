@@ -103,15 +103,18 @@ Strategy Definition
 
 `Draft → Running → Backtested → FwdTesting → LiveCandidate → Live → Archived`
 
-### Backtest pipeline detail
+### Backtest Pipeline
 
-1. `BacktestJobManager` receives a run request, saves job state to DB
-2. Checks candle cache (`ICandleCache`) — if insufficient, triggers `HistoricalDownloadService`
-3. **On 401 broker auth error**: retries the engine with existing cached DB candles; only fails if cache is also insufficient — surfaces actionable "Re-authenticate via Settings → Broker Login" message
-4. Engine runs `IStrategy.EvaluateAsync` per bar (no partial candles — AP-007)
-5. Progress pushed via SignalR (`BacktestProgressHub`) and polled via HTTP every 1500ms
-6. On completion: `backtest_runs` row updated, trades persisted, results available in Results tab
-
+1. `BacktestJobManager` receives a run request and persists job state to DB.
+2. **Data source resolution** (first sufficient source wins):
+   - **Broker** → connected & authenticated: download and run.
+   - **Broker 401** → surface `"Re-authenticate via Settings → Broker Login"`, fall through.
+   - **Candle cache** (`ICandleCache`) → if populated and sufficient: run.
+   - **Historical DB** → query for instrument + date range + timeframe: if usable, run.
+   - **Hard fail** → `"No data available for {instrument}. Connect your broker or import historical data."`
+3. Engine runs `IStrategy.EvaluateAsync` per bar. No partial candles (AP-007).
+4. Progress pushed via SignalR (`BacktestProgressHub`), polled via HTTP every 1,500ms.
+5. On completion: `backtest_runs` updated, trades persisted, results available in Results tab.
 ---
 
 ## Strategies UI

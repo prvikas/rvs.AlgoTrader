@@ -195,7 +195,14 @@
       "Bash(grep -v \"//.*PROMPT-\\\\|//.*AP-\")",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in ['scripts','devDependencies']}, indent=2\\)\\)\")",
       "Bash(npm test *)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(./run-tests.sh unit *)",
+      "Bash(./run-tests.sh arch *)",
+      "Bash(grep -v \"IClock\\\\.cs\\\\|comment\\\\|//.*DateTime\")",
+      "Bash(grep -v \"^$\")",
+      "Bash(grep -v \"IClock\\\\.cs\\\\|//.*DateTime\")",
+      "Bash(dir /b)",
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src -name \"*.cs\" -type f -exec grep -l \"class BacktestRequest\" {} \\\\;)"
     ]
   }
 }
