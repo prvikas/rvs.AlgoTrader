@@ -234,6 +234,25 @@ public class ArchitectureTests
     }
 
     /// <summary>
+    /// Backtesting assembly must not reference Infrastructure. All persistence goes through
+    /// Application-layer interfaces (ICandleRepository, IOptionIvHistoryRepository, etc.)
+    /// injected at the API composition root. A direct Infrastructure reference would allow
+    /// backtests to bypass the repository abstraction and import EF Core types.
+    /// </summary>
+    [Fact]
+    public void Backtesting_Must_Not_Depend_On_Infrastructure()
+    {
+        var result = Types.InAssembly(typeof(Backtesting.Engine.BacktestEngine).Assembly)
+            .ShouldNot()
+            .HaveDependencyOn(InfrastructureNs)
+            .GetResult();
+
+        result.IsSuccessful.Should().BeTrue(
+            because: $"Backtesting must not reference Infrastructure — use repository interfaces only. " +
+                     $"Failing: {string.Join(", ", result.FailingTypeNames ?? [])}");
+    }
+
+    /// <summary>
     /// CLAUDE.md Rule #4 — API controllers must not inject Infrastructure types directly.
     /// Controllers dispatch via MediatR; they must never have an Infrastructure assembly dependency.
     /// </summary>

@@ -65,6 +65,9 @@ public class BacktestService(
         if (result.Success)
         {
             var dto2 = MapToDto(result, startedAt);
+            // Forward ScenarioId so the run appears under the correct scenario in Previous Runs
+            if (dto.ScenarioId.HasValue)
+                dto2 = dto2 with { ScenarioId = dto.ScenarioId };
             await runRepo.SaveAsync(dto2, ct);
             return dto2;
         }
