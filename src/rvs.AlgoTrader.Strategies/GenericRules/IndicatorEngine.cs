@@ -424,8 +424,10 @@ public static class IndicatorEngine
     private static ComputedIndicator? ComputeVwapIndicator(IReadOnlyList<ClosedCandle> candles)
     {
         if (candles.Count < 2) return null;
-        bool isDaily = candles[0].OpenTime.ToInstant().InZone(Ist).Date !=
-                       candles[1].OpenTime.ToInstant().InZone(Ist).Date;
+        // Daily candles have no intraday time component (midnight UTC or 00:00 local).
+        // Comparing adjacent dates is fragile when the slice starts mid-session.
+        var firstTime = candles[0].OpenTime.ToInstant().InZone(Ist).TimeOfDay;
+        bool isDaily = firstTime == LocalTime.Midnight;
         var result = new decimal[candles.Count];
         decimal cumPV = 0, cumVol = 0;
         var sessionDate = candles[0].OpenTime.ToInstant().InZone(Ist).Date;
@@ -490,26 +492,29 @@ public static class IndicatorEngine
             minusDm[i - 1] = pl - l > h - ph && pl - l > 0 ? pl - l : 0m;
             tr[i - 1] = Math.Max(h - l, Math.Max(Math.Abs(h - pc), Math.Abs(l - pc)));
         }
-        // Wilder smooth
+        // Wilder smooth: collect all DX values first, then seed ADX from avg of first `period` DX values.
+        // Canonical Wilder: first ADX = avg(DX[0..period-1]), subsequent = (prev*(period-1)+DX[i])/period.
         decimal smTr = 0, smPlus = 0, smMinus = 0;
         for (int i = 0; i < period; i++) { smTr += tr[i]; smPlus += plusDm[i]; smMinus += minusDm[i]; }
-        var adxCount = n - 2 * period;
-        if (adxCount < 1) return null;
-        var adxArr = new decimal[adxCount];
+        var dxCount = n - 1 - period; // one DX per Wilder-smoothed step (i=period..n-2)
+        if (dxCount < period) return null;
+        var dxArr = new decimal[dxCount];
         for (int i = period; i < n - 1; i++)
         {
-            smTr = smTr - smTr / period + tr[i];
+            smTr    = smTr    - smTr    / period + tr[i];
             smPlus  = smPlus  - smPlus  / period + plusDm[i];
             smMinus = smMinus - smMinus / period + minusDm[i];
             var plusDi  = smTr > 0 ? 100m * smPlus  / smTr : 0m;
             var minusDi = smTr > 0 ? 100m * smMinus / smTr : 0m;
             var dxDenom = plusDi + minusDi;
-            var dx = dxDenom > 0 ? 100m * Math.Abs(plusDi - minusDi) / dxDenom : 0m;
-            var idx = i - period;
-            if (idx == 0) { adxArr[0] = dx; }
-            else if (idx < adxCount) { adxArr[idx] = (adxArr[idx - 1] * (period - 1) + dx) / period; }
+            dxArr[i - period] = dxDenom > 0 ? 100m * Math.Abs(plusDi - minusDi) / dxDenom : 0m;
         }
-        if (adxArr.Length < 2) return null;
+        var adxCount = dxCount - period + 1;
+        if (adxCount < 2) return null;
+        var adxArr = new decimal[adxCount];
+        adxArr[0] = dxArr[..period].Average(); // canonical seed
+        for (int i = 1; i < adxCount; i++)
+            adxArr[i] = (adxArr[i - 1] * (period - 1) + dxArr[i + period - 1]) / period;
         return new ComputedIndicator { Current = adxArr[^1], Previous = adxArr[^2], History = adxArr };
     }
 
