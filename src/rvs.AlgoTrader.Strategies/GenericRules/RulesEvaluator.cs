@@ -9,15 +9,24 @@ namespace rvs.AlgoTrader.Strategies.GenericRules;
 //
 // Operator support:
 //   ">" | "<" | ">=" | "<=" | "==" | "!=" | "crossesAbove" | "crossesBelow"
+//   "touchedAndBounced"  — price pulled back to indicator this bar or last bar,
+//                          and the current close is back ABOVE it (long) or
+//                          BELOW it (short). Eliminates late crossover entries.
 //
 // Operand kind support:
-//   "indicator"   — computed indicator value (by id + optional field)
-//   "value"       — static decimal
-//   "window"      — aggregated over N bars (avg/max/min/highest/lowest)
-//   "percentile"  — % rank of indicator over lookback bars
-//   "slope"       — positive (1) if indicator rose over lookback bars, -1 if fell, 0 flat
+//   "indicator"     — computed indicator value (by id + optional field)
+//   "value"         — static decimal
+//   "window"        — aggregated over N bars (avg/max/min/highest/lowest)
+//   "percentile"    — % rank of indicator over lookback bars
+//   "slope"         — positive (1) if indicator rose over lookback bars, -1 if fell, 0 flat
 //   "close"|"open"|"high"|"low"|"volume" — current bar OHLCV
-//   "sessionState" — boolean session properties (treated as 1 or 0)
+//   "prevClose"|"prevHigh"|"prevLow"|"prevOpen" — previous bar OHLCV
+//   "isBullishBar"  — 1 if current close > current open, else 0
+//   "isBearishBar"  — 1 if current close < current open, else 0
+//   "htfBias"       — 1 if higher-timeframe indicator is bullish (value > 0),
+//                     useful for EMA/SuperTrend HTF filters without a separate
+//                     HTF candle feed: reads the indicator tagged role="htfBias"
+//   "sessionState"  — boolean session properties (treated as 1 or 0)
 // ─────────────────────────────────────────────────────────────────────────────
 
 public static class RulesEvaluator
@@ -97,6 +106,26 @@ public static class RulesEvaluator
             return op is ">" or ">=" ? slope > 0 : slope < 0;
         }
 
+        // isBullishBar / isBearishBar: candle body check — no right operand needed
+        if (condition.Left.Kind.Equals("isBullishBar", StringComparison.OrdinalIgnoreCase))
+            return candles.Count > 0 && candles[^1].Close > candles[^1].Open;
+
+        if (condition.Left.Kind.Equals("isBearishBar", StringComparison.OrdinalIgnoreCase))
+            return candles.Count > 0 && candles[^1].Close < candles[^1].Open;
+
+        // touchedAndBounced: pullback entry operator.
+        //   Long version:  Low of current OR previous bar <= indicator value,
+        //                  AND current Close > indicator value.
+        //   Short version: High of current OR previous bar >= indicator value,
+        //                  AND current Close < indicator value.
+        //   Operator is "touchedAndBounced" for longs, "touchedAndFailed" for shorts.
+        if (op.Equals("touchedAndBounced", StringComparison.OrdinalIgnoreCase) ||
+            op.Equals("touchedAndFailed",  StringComparison.OrdinalIgnoreCase))
+        {
+            return EvaluateTouchedAndBounced(condition, indicators, candles,
+                isBullish: op.Equals("touchedAndBounced", StringComparison.OrdinalIgnoreCase));
+        }
+
         // Normal numeric comparison
         var leftVal  = ResolveOperand(condition.Left,  indicators, candles, useCurrentValue: true);
         var rightVal = condition.Right != null
@@ -115,7 +144,7 @@ public static class RulesEvaluator
             "crossesAbove" => EvaluateCrossover(condition, indicators, candles, isAbove: true),
             "crossesBelow" => EvaluateCrossover(condition, indicators, candles, isAbove: false),
 
-            _ => throw new InvalidOperationException($"Unknown operator: '{op}'")  // or log a warning and return false
+            _ => throw new InvalidOperationException($"Unknown operator: '{op}'")
         };
     }
 
@@ -139,6 +168,51 @@ public static class RulesEvaluator
         return isAbove
             ? leftCurr > rightCurr && leftPrev <= rightPrev   // crossed above
             : leftCurr < rightCurr && leftPrev >= rightPrev;  // crossed below
+    }
+
+    // ── TouchedAndBounced — pullback entry operator ───────────────────────────
+    // Long (touchedAndBounced): price wicked into the indicator level on this bar
+    // OR the previous bar (candle low <= indicator), and the current close is back
+    // ABOVE the indicator. This confirms a pullback-to-support bounce entry.
+    //
+    // Short (touchedAndFailed): mirror — high >= indicator AND close < indicator.
+    //
+    // Why this beats crossesAbove for trend entries:
+    //   crossesAbove fires when EMA9 just crossed EMA21 — i.e., the trend just started.
+    //   By then, the impulsive bar is already 60-70% complete and entry is at the top.
+    //   touchedAndBounced fires AFTER the trend is established (EMA9 already > EMA21)
+    //   on a pullback reset — entering with the trend at a better price.
+    private static bool EvaluateTouchedAndBounced(
+        Condition condition,
+        Dictionary<string, ComputedIndicator> indicators,
+        IReadOnlyList<ClosedCandle> candles,
+        bool isBullish)
+    {
+        if (candles.Count < 2) return false;
+        if (condition.Right == null) return false;
+
+        var indicatorLevel = ResolveOperand(condition.Right, indicators, candles, useCurrentValue: true);
+        if (indicatorLevel == 0m) return false;
+
+        var current  = candles[^1];
+        var previous = candles[^2];
+
+        if (isBullish)
+        {
+            // Price touched (wicked into) indicator on current or previous bar
+            bool touched = current.Low <= indicatorLevel || previous.Low <= indicatorLevel;
+            // Current close is back above the indicator — the bounce has confirmed
+            bool bounced = current.Close > indicatorLevel;
+            return touched && bounced;
+        }
+        else
+        {
+            // Price touched (wicked into) indicator on current or previous bar
+            bool touched = current.High >= indicatorLevel || previous.High >= indicatorLevel;
+            // Current close is back below the indicator — the failure has confirmed
+            bool failed  = current.Close < indicatorLevel;
+            return touched && failed;
+        }
     }
 
     // ── Operand resolution ────────────────────────────────────────────────────
@@ -175,24 +249,54 @@ public static class RulesEvaluator
             }
 
             // "absence" — true (1) when indicator is NOT present or has been 0 for N bars.
-            // Used in conditions like "absence of indicator X over last N bars".
             case "absence":
             {
-                if (string.IsNullOrEmpty(operand.IndicatorId)) return 1m; // no indicator = absent
+                if (string.IsNullOrEmpty(operand.IndicatorId)) return 1m;
                 if (!indicators.TryGetValue(operand.IndicatorId, out var ind)) return 1m;
                 var n = Math.Min(operand.LookbackBars ?? 1, ind.History.Length);
                 if (n == 0) return 1m;
-                // Absent = all values in lookback window are 0
                 var allZero = ind.History[^n..].All(v => v == 0m);
                 return allZero ? 1m : 0m;
             }
 
-            // OHLCV shorthand operands
+            // ── HTF bias operand ─────────────────────────────────────────────
+            // Reads an indicator tagged with role="htfBias" (e.g. 1H EMA21 or 1H SuperTrend).
+            // Returns 1 if indicator value > 0 (bullish), 0 if <= 0 (bearish/flat).
+            // Usage in a condition: left.kind="htfBias" left.indicatorId="ema21_1h" operator=">" right.value=0
+            // HTF indicators must be registered in the indicators array with
+            // a timeframe field set to the desired higher timeframe (e.g. "60" for 1H).
+            // IndicatorEngine computes them from the same candle feed using
+            // the full candle history (not just the last bar) so they are
+            // always populated even on 15m strategy runs.
+            case "htfbias":
+            {
+                if (string.IsNullOrEmpty(operand.IndicatorId)) return 0m;
+                if (!indicators.TryGetValue(operand.IndicatorId, out var htfInd)) return 0m;
+                var htfVal = htfInd.GetField(operand.Field);
+                // For SuperTrend: positive value = bullish direction, negative = bearish.
+                // For EMA: value is the price level; bias is implicit (use slope condition separately).
+                return htfVal > 0 ? 1m : 0m;
+            }
+
+            // ── Candle body direction ────────────────────────────────────────
+            case "isbullishbar":
+                return candles.Count > 0 && candles[^1].Close > candles[^1].Open ? 1m : 0m;
+            case "isbearishbar":
+                return candles.Count > 0 && candles[^1].Close < candles[^1].Open ? 1m : 0m;
+
+            // ── Current bar OHLCV ────────────────────────────────────────────
             case "close":   return candles.Count > 0 ? candles[^1].Close  : 0m;
             case "open":    return candles.Count > 0 ? candles[^1].Open   : 0m;
             case "high":    return candles.Count > 0 ? candles[^1].High   : 0m;
             case "low":     return candles.Count > 0 ? candles[^1].Low    : 0m;
             case "volume":  return candles.Count > 0 ? candles[^1].Volume : 0m;
+
+            // ── Previous bar OHLCV ───────────────────────────────────────────
+            // Useful for: "previous high breakout", "previous bar close above EMA"
+            case "prevclose": return candles.Count > 1 ? candles[^2].Close  : 0m;
+            case "prevopen":  return candles.Count > 1 ? candles[^2].Open   : 0m;
+            case "prevhigh":  return candles.Count > 1 ? candles[^2].High   : 0m;
+            case "prevlow":   return candles.Count > 1 ? candles[^2].Low    : 0m;
 
             default: return 0m;
         }
