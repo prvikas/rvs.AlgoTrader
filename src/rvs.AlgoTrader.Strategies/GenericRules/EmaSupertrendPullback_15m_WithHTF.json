@@ -1,0 +1,224 @@
+{
+  "id": "ema-supertrend-pullback-15m-htf",
+  "name": "EMA-SuperTrend Pullback 15m (HTF Bias)",
+  "description": "Stronger version of the base EMA/SuperTrend strategy. Replaces crossover entry with pullback-to-EMA9 bounce entry. Adds 1H EMA bias filter to avoid counter-trend longs in downtrends. Uses ATR-based stop anchored to fill price and partial-exit profit management.",
+  "primaryTimeframe": "15",
+  "tradingStyle": "Intraday",
+  "indicators": [
+    {
+      "id": "ema9",
+      "type": "EMA",
+      "timeframe": "15",
+      "role": "entry",
+      "signalLayer": "EntryTrigger",
+      "layerOrder": 3,
+      "baseParams": { "period": 9 }
+    },
+    {
+      "id": "ema21",
+      "type": "EMA",
+      "timeframe": "15",
+      "role": "trend",
+      "signalLayer": "TrendState",
+      "layerOrder": 2,
+      "baseParams": { "period": 21 }
+    },
+    {
+      "id": "ema21_1h",
+      "type": "EMA",
+      "timeframe": "60",
+      "role": "htfBias",
+      "signalLayer": "HTFBias",
+      "layerOrder": 1,
+      "baseParams": { "period": 21 }
+    },
+    {
+      "id": "ema50_1h",
+      "type": "EMA",
+      "timeframe": "60",
+      "role": "htfBias",
+      "signalLayer": "HTFBias",
+      "layerOrder": 1,
+      "baseParams": { "period": 50 }
+    },
+    {
+      "id": "supertrend15",
+      "type": "SuperTrend",
+      "timeframe": "15",
+      "role": "trend",
+      "signalLayer": "TrendState",
+      "layerOrder": 2,
+      "baseParams": { "period": 10, "multiplier": 3 }
+    },
+    {
+      "id": "adx14",
+      "type": "ADX",
+      "timeframe": "15",
+      "role": "regime",
+      "signalLayer": "RegimeFilter",
+      "layerOrder": 1,
+      "baseParams": { "period": 14 }
+    },
+    {
+      "id": "atr14",
+      "type": "ATR",
+      "timeframe": "15",
+      "role": "risk",
+      "signalLayer": "RiskManagement",
+      "layerOrder": 4,
+      "baseParams": { "period": 14 }
+    },
+    {
+      "id": "vol20",
+      "type": "Volume",
+      "timeframe": "15",
+      "role": "confirmation",
+      "signalLayer": "Confirmation",
+      "layerOrder": 3,
+      "baseParams": { "maPeriod": 20 }
+    }
+  ],
+  "longEntry": {
+    "enabled": true,
+    "groupOperator": "AND",
+    "groups": [
+      {
+        "id": "g-htf-bias",
+        "label": "HTF Bias: 1H EMA21 > EMA50 (bullish higher timeframe)",
+        "logicalOperator": "AND",
+        "conditions": [
+          {
+            "id": "c-htf-ema21-above-ema50",
+            "left":  { "kind": "indicator", "indicatorId": "ema21_1h" },
+            "operator": ">",
+            "right": { "kind": "indicator", "indicatorId": "ema50_1h" }
+          }
+        ]
+      },
+      {
+        "id": "g-regime",
+        "label": "Regime: ADX > 20 and rising (trending market)",
+        "logicalOperator": "AND",
+        "conditions": [
+          {
+            "id": "c-adx-above-20",
+            "left":  { "kind": "indicator", "indicatorId": "adx14" },
+            "operator": ">",
+            "right": { "kind": "value", "value": 20 }
+          },
+          {
+            "id": "c-adx-rising",
+            "left":  { "kind": "slope", "indicatorId": "adx14", "lookbackBars": 3 },
+            "operator": ">",
+            "right": { "kind": "value", "value": 0 }
+          }
+        ]
+      },
+      {
+        "id": "g-trend-state",
+        "label": "Trend State: EMA9 > EMA21 (uptrend established), EMA21 sloping up, SuperTrend bullish",
+        "logicalOperator": "AND",
+        "conditions": [
+          {
+            "id": "c-ema9-above-ema21",
+            "left":  { "kind": "indicator", "indicatorId": "ema9" },
+            "operator": ">",
+            "right": { "kind": "indicator", "indicatorId": "ema21" }
+          },
+          {
+            "id": "c-ema21-slope-up",
+            "left":  { "kind": "slope", "indicatorId": "ema21", "lookbackBars": 3 },
+            "operator": ">",
+            "right": { "kind": "value", "value": 0 }
+          },
+          {
+            "id": "c-supertrend-bullish",
+            "left":  { "kind": "indicator", "indicatorId": "supertrend15" },
+            "operator": ">",
+            "right": { "kind": "value", "value": 0 }
+          }
+        ]
+      },
+      {
+        "id": "g-entry-trigger",
+        "label": "Entry Trigger: price pulled back to EMA9 and bounced above it (pullback continuation)",
+        "logicalOperator": "AND",
+        "conditions": [
+          {
+            "id": "c-pullback-bounce-ema9",
+            "left":  { "kind": "close" },
+            "operator": "touchedAndBounced",
+            "right": { "kind": "indicator", "indicatorId": "ema9" }
+          },
+          {
+            "id": "c-confirmation-candle-bullish",
+            "left":  { "kind": "isBullishBar" },
+            "operator": "==",
+            "right": { "kind": "value", "value": 1 }
+          }
+        ]
+      },
+      {
+        "id": "g-volume",
+        "label": "Volume: current volume above 20-bar average",
+        "logicalOperator": "AND",
+        "conditions": [
+          {
+            "id": "c-vol-above-avg",
+            "left":  { "kind": "volume" },
+            "operator": ">",
+            "right": { "kind": "window", "expr": { "sourceIndicatorId": "vol20", "lookbackBars": 20, "aggregationType": "avg" } }
+          }
+        ]
+      }
+    ]
+  },
+  "shortEntry": {
+    "enabled": false,
+    "groupOperator": "AND",
+    "groups": []
+  },
+  "longExit": {
+    "enabled": true,
+    "groupOperator": "OR",
+    "groups": [
+      {
+        "id": "g-exit-supertrend-flip",
+        "label": "Exit: SuperTrend flips bearish AND price closes below EMA21 (both conditions required)",
+        "logicalOperator": "AND",
+        "conditions": [
+          {
+            "id": "c-supertrend-bearish",
+            "left":  { "kind": "indicator", "indicatorId": "supertrend15" },
+            "operator": "<",
+            "right": { "kind": "value", "value": 0 }
+          },
+          {
+            "id": "c-close-below-ema21",
+            "left":  { "kind": "close" },
+            "operator": "<",
+            "right": { "kind": "indicator", "indicatorId": "ema21" }
+          }
+        ]
+      }
+    ]
+  },
+  "shortExit": {
+    "enabled": false,
+    "groupOperator": "AND",
+    "groups": []
+  },
+  "stopLoss": {
+    "type": "ATRMultiple",
+    "baseValue": 1.5
+  },
+  "profitTarget": {
+    "type": "RRDerived",
+    "baseValue": 2.0
+  },
+  "entryExecution": {
+    "orderType": "NextBarOpen",
+    "noTradeAfterHour": 14,
+    "noTradeAfterMinute": 45
+  }
+}
