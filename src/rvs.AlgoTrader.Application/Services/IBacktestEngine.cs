@@ -77,6 +77,11 @@ public record BacktestRequest(
     FillModel FillModel = FillModel.NextBarOpen,
     decimal SlippageBasisPoints = 5m,
     decimal BrokerageFlatPerSide = 20m,
+    decimal? BrokeragePct = null,
+    decimal? SttPct = null,
+    decimal? GstPct = null,
+    decimal? SebiChargesPct = null,
+    decimal? StampDutyPct = null,
     string? JobId = null,
 
     // ── Position sizing cap ───────────────────────────────────────────────────

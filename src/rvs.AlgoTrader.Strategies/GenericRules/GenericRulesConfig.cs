@@ -66,9 +66,12 @@ public class GenericRulesConfig
     // ── Convenience helpers ───────────────────────────────────────────────────
     public bool AllowShort => ShortEntry.Enabled;
 
-    /// <summary>ATR stop multiplier — from stopLoss config or default 3.0 (disaster stop).</summary>
+    /// <summary>ATR stop multiplier — from stopLoss config or default 10.0 (wide disaster stop).
+    /// Signal-exit strategies use EMA/ST crossovers as primary exits; 10× ATR ensures the
+    /// disaster stop doesn't interfere with normal 5m–1h fluctuations.
+    /// Users who want a tighter stop should configure stopLoss.type = "ATRMultiple" explicitly.</summary>
     public decimal AtrStopMult =>
-        StopLoss?.Type == "ATRMultiple" && StopLoss.Value > 0 ? StopLoss.Value : 3.0m;
+        StopLoss?.Type == "ATRMultiple" && StopLoss.Value > 0 ? StopLoss.Value : 10.0m;
 
     /// <summary>Risk:reward ratio — from profitTarget config or 99 (no fixed TP, exit by signal).</summary>
     public decimal RiskRewardRatio =>
@@ -288,8 +291,16 @@ public class StopTargetConfig
     [JsonPropertyName("type")]
     public string? Type { get; set; }
 
+    // Frontend serializes this as "baseValue" (StopTargetConfig.baseValue in TypeScript).
+    // The old "value" field is kept as a fallback alias for backward compatibility.
+    [JsonPropertyName("baseValue")]
+    public decimal BaseValue { get; set; }
+
     [JsonPropertyName("value")]
-    public decimal Value { get; set; }
+    public decimal ValueAlias { get; set; }
+
+    [JsonIgnore]
+    public decimal Value => BaseValue > 0 ? BaseValue : ValueAlias;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

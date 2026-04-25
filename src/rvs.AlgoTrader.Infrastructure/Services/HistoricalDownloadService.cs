@@ -86,8 +86,17 @@ public class HistoricalDownloadService(
             }
             catch (HttpRequestException ex)
             {
-                logger.LogError(ex, "[HistoricalDownload] Broker HTTP error for {Symbol}/{Tf} chunk {From}–{To}: {Message}",
-                    internalSymbol, timeframe, chunkFrom, chunkTo, ex.Message);
+                // 401 is an expected operational condition (expired token), not a bug — log as Warning.
+                bool is401 = ex.Message.Contains("401") ||
+                             ex.Message.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase);
+                if (is401)
+                    logger.LogWarning(
+                        "[HistoricalDownload] Broker session expired (401) for {Symbol}/{Tf} — authenticate via Settings → Broker Login.",
+                        internalSymbol, timeframe);
+                else
+                    logger.LogError(ex, "[HistoricalDownload] Broker HTTP error for {Symbol}/{Tf} chunk {From}–{To}: {Message}",
+                        internalSymbol, timeframe, chunkFrom, chunkTo, ex.Message);
+
                 return new DownloadResult(false, 0, null,
                     $"Broker request failed: {ex.Message}. " +
                     "Check that the broker session is authenticated (POST /api/broker/authenticate) " +

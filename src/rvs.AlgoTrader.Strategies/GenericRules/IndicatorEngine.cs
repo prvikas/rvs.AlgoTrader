@@ -147,6 +147,15 @@ public static class IndicatorEngine
                                     ind.GetInt("period", 10),
                                     ind.GetDecimal("multiplier", 3m)),
 
+            // ── Price-action / volatility / volume pattern indicators ─────────────
+            "VOLUMESPIKE"      => ComputeVolumeSpikeIndicator(candles, ind.GetInt("maPeriod", 20), ind.GetDecimal("threshold", 2m)),
+            "INSIDEBAR"        => ComputeInsideBarIndicator(candles),
+            "ENGULFING"        => ComputeEngulfingIndicator(candles),
+            "PREVHIGHLOWBREAK" => ComputePrevHighLowBreakIndicator(candles),
+            "SWINGHIGHLOW"     => ComputeSwingHighLowIndicator(candles, ind.GetInt("lookback", 5)),
+            "RANGEPERCENTILE"  => ComputeRangePercentileIndicator(candles, ind.GetInt("period", 50)),
+            "ATRPERCENTILE"    => ComputeAtrPercentileIndicator(candles, ind.GetInt("atrPeriod", 14), ind.GetInt("period", 50)),
+
             // ── Options / market-context indicators ────────────────────────────
             // Values read from StrategyContext (pre-fetched by StrategyEvaluationQueue)
             // rather than computed from candles. Return null when context unavailable.
@@ -338,9 +347,12 @@ public static class IndicatorEngine
             History  = mid,
             Fields   = new Dictionary<string, decimal>
             {
-                ["upper"]  = upper[^1],
-                ["middle"] = mid[^1],
-                ["lower"]  = lower[^1],
+                ["upper"]       = upper[^1],
+                ["middle"]      = mid[^1],
+                ["lower"]       = lower[^1],
+                ["prev_upper"]  = upper[^2],
+                ["prev_middle"] = mid[^2],
+                ["prev_lower"]  = lower[^2],
             },
         };
     }
@@ -397,9 +409,12 @@ public static class IndicatorEngine
             History  = macdLine,
             Fields   = new Dictionary<string, decimal>
             {
-                ["macd"]      = macdLine[^1],
-                ["signal"]    = signalLine[^1],
-                ["histogram"] = histogram[^1],
+                ["macd"]           = macdLine[^1],
+                ["signal"]         = signalLine[^1],
+                ["histogram"]      = histogram[^1],
+                ["prev_macd"]      = macdLine[^2],
+                ["prev_signal"]    = signalLine[^2],
+                ["prev_histogram"] = histogram[^2],
             },
         };
     }
@@ -543,8 +558,10 @@ public static class IndicatorEngine
             History  = kArr,
             Fields   = new Dictionary<string, decimal>
             {
-                ["k"] = kArr[^1],
-                ["d"] = dArr[^1],
+                ["k"]      = kArr[^1],
+                ["d"]      = dArr[^1],
+                ["prev_k"] = kArr[^2],
+                ["prev_d"] = dArr.Length >= 2 ? dArr[^2] : dArr[^1],
             },
         };
     }
@@ -611,9 +628,12 @@ public static class IndicatorEngine
             History  = mid,
             Fields   = new Dictionary<string, decimal>
             {
-                ["upper"]  = upper[^1],
-                ["middle"] = mid[^1],
-                ["lower"]  = lower[^1],
+                ["upper"]       = upper[^1],
+                ["middle"]      = mid[^1],
+                ["lower"]       = lower[^1],
+                ["prev_upper"]  = upper[^2],
+                ["prev_middle"] = mid[^2],
+                ["prev_lower"]  = lower[^2],
             },
         };
     }
@@ -663,6 +683,213 @@ public static class IndicatorEngine
                 ["prev_direction"] = direction[^2],   // required by GetPreviousField for crossover
             },
         };
+    }
+
+    // ── VolumeSpike ───────────────────────────────────────────────────────────
+    // Primary value = current volume / MA(volume, maPeriod). Fields: ratio, isSpike (1/0).
+
+    private static ComputedIndicator? ComputeVolumeSpikeIndicator(
+        IReadOnlyList<ClosedCandle> candles, int maPeriod, decimal threshold)
+    {
+        if (candles.Count < maPeriod + 1) return null;
+        var vols = new decimal[candles.Count];
+        for (int i = 0; i < candles.Count; i++) vols[i] = candles[i].Volume;
+        var ma = ComputeSma(vols, maPeriod);
+        if (ma.Length < 2) return null;
+
+        // Build ratio history aligned to ma
+        var ratioArr = new decimal[ma.Length];
+        var offset = vols.Length - ma.Length;
+        for (int i = 0; i < ma.Length; i++)
+            ratioArr[i] = ma[i] > 0 ? vols[i + offset] / ma[i] : 0m;
+
+        var curRatio  = ratioArr[^1];
+        var prevRatio = ratioArr[^2];
+        return new ComputedIndicator
+        {
+            Current  = curRatio,
+            Previous = prevRatio,
+            History  = ratioArr,
+            Fields   = new Dictionary<string, decimal>
+            {
+                ["ratio"]   = curRatio,
+                ["isSpike"] = curRatio >= threshold ? 1m : 0m,
+            },
+        };
+    }
+
+    // ── InsideBar ─────────────────────────────────────────────────────────────
+    // Returns 1 when current bar's range is entirely within the previous bar's range, else 0.
+
+    private static ComputedIndicator? ComputeInsideBarIndicator(IReadOnlyList<ClosedCandle> candles)
+    {
+        if (candles.Count < 2) return null;
+        var result = new decimal[candles.Count - 1];
+        for (int i = 1; i < candles.Count; i++)
+        {
+            var cur  = candles[i];
+            var prev = candles[i - 1];
+            result[i - 1] = cur.High <= prev.High && cur.Low >= prev.Low ? 1m : 0m;
+        }
+        if (result.Length < 2) return null;
+        return new ComputedIndicator { Current = result[^1], Previous = result[^2], History = result };
+    }
+
+    // ── Engulfing ─────────────────────────────────────────────────────────────
+    // Bullish engulfing: current bullish body completely covers previous bearish body → +1
+    // Bearish engulfing: current bearish body completely covers previous bullish body → -1
+    // Otherwise → 0. Fields: bullish (0/1), bearish (0/1).
+
+    private static ComputedIndicator? ComputeEngulfingIndicator(IReadOnlyList<ClosedCandle> candles)
+    {
+        if (candles.Count < 2) return null;
+        var result = new decimal[candles.Count - 1];
+        for (int i = 1; i < candles.Count; i++)
+        {
+            var cur  = candles[i];
+            var prev = candles[i - 1];
+            bool curBull  = cur.Close  > cur.Open;
+            bool prevBear = prev.Close < prev.Open;
+            bool curBear  = cur.Close  < cur.Open;
+            bool prevBull = prev.Close > prev.Open;
+            // Body engulfment: current body starts below prev body low and ends above prev body high
+            if (curBull && prevBear && cur.Open <= Math.Min(prev.Open, prev.Close) && cur.Close >= Math.Max(prev.Open, prev.Close))
+                result[i - 1] = 1m;   // bullish engulfing
+            else if (curBear && prevBull && cur.Open >= Math.Max(prev.Open, prev.Close) && cur.Close <= Math.Min(prev.Open, prev.Close))
+                result[i - 1] = -1m;  // bearish engulfing
+            else
+                result[i - 1] = 0m;
+        }
+        if (result.Length < 2) return null;
+        var cur1 = result[^1]; var prev1 = result[^2];
+        return new ComputedIndicator
+        {
+            Current  = cur1,
+            Previous = prev1,
+            History  = result,
+            Fields   = new Dictionary<string, decimal>
+            {
+                ["bullish"] = cur1 > 0 ? 1m : 0m,
+                ["bearish"] = cur1 < 0 ? 1m : 0m,
+            },
+        };
+    }
+
+    // ── PrevHighLowBreak ──────────────────────────────────────────────────────
+    // Returns +1 if close broke above previous bar's high, -1 if broke below previous bar's low, else 0.
+    // Fields: breakHigh (0/1), breakLow (0/1).
+
+    private static ComputedIndicator? ComputePrevHighLowBreakIndicator(IReadOnlyList<ClosedCandle> candles)
+    {
+        if (candles.Count < 2) return null;
+        var result = new decimal[candles.Count - 1];
+        for (int i = 1; i < candles.Count; i++)
+        {
+            var close    = candles[i].Close;
+            var prevHigh = candles[i - 1].High;
+            var prevLow  = candles[i - 1].Low;
+            if (close > prevHigh)       result[i - 1] =  1m;
+            else if (close < prevLow)   result[i - 1] = -1m;
+            else                        result[i - 1] =  0m;
+        }
+        if (result.Length < 2) return null;
+        var cur1 = result[^1]; var prev1 = result[^2];
+        return new ComputedIndicator
+        {
+            Current  = cur1,
+            Previous = prev1,
+            History  = result,
+            Fields   = new Dictionary<string, decimal>
+            {
+                ["breakHigh"] = cur1 > 0 ? 1m : 0m,
+                ["breakLow"]  = cur1 < 0 ? 1m : 0m,
+            },
+        };
+    }
+
+    // ── SwingHighLow ──────────────────────────────────────────────────────────
+    // Identifies the most recent swing high and low within the lookback window.
+    // Primary = most recent swing high (or high of lookback if no swing). Fields: swingHigh, swingLow.
+    // A swing high is a bar whose High is the highest in [bar-lookback, bar+lookback]; simplified here
+    // to use a one-sided lookback (most recent bar can be a swing if it's the highest N bars back).
+
+    private static ComputedIndicator? ComputeSwingHighLowIndicator(
+        IReadOnlyList<ClosedCandle> candles, int lookback)
+    {
+        if (candles.Count < lookback + 1) return null;
+
+        // Build rolling lookback-period high and low arrays (one-sided: highest/lowest over last N bars).
+        var n = candles.Count - lookback + 1;
+        var swingHighArr = new decimal[n];
+        var swingLowArr  = new decimal[n];
+        for (int i = 0; i < n; i++)
+        {
+            decimal hi = candles[i].High, lo = candles[i].Low;
+            for (int j = i + 1; j < i + lookback; j++)
+            { hi = Math.Max(hi, candles[j].High); lo = Math.Min(lo, candles[j].Low); }
+            swingHighArr[i] = hi;
+            swingLowArr[i]  = lo;
+        }
+
+        if (swingHighArr.Length < 2) return null;
+        return new ComputedIndicator
+        {
+            Current  = swingHighArr[^1],
+            Previous = swingHighArr[^2],
+            History  = swingHighArr,
+            Fields   = new Dictionary<string, decimal>
+            {
+                ["swingHigh"]      = swingHighArr[^1],
+                ["swingLow"]       = swingLowArr[^1],
+                ["prev_swingHigh"] = swingHighArr[^2],
+                ["prev_swingLow"]  = swingLowArr[^2],
+            },
+        };
+    }
+
+    // ── RangePercentile ───────────────────────────────────────────────────────
+    // Percentile rank (0–100) of the current bar's High-Low range over the lookback period.
+
+    private static ComputedIndicator? ComputeRangePercentileIndicator(
+        IReadOnlyList<ClosedCandle> candles, int period)
+    {
+        if (candles.Count < period + 1) return null;
+        var ranges = new decimal[candles.Count];
+        for (int i = 0; i < candles.Count; i++) ranges[i] = candles[i].High - candles[i].Low;
+
+        var count = candles.Count - period + 1;
+        var result = new decimal[count];
+        for (int i = 0; i < count; i++)
+        {
+            var curRange = ranges[i + period - 1];
+            var window   = ranges[i..(i + period)];
+            var below    = window.Count(r => r < curRange);
+            result[i] = (decimal)below / period * 100m;
+        }
+        if (result.Length < 2) return null;
+        return new ComputedIndicator { Current = result[^1], Previous = result[^2], History = result };
+    }
+
+    // ── ATRPercentile ─────────────────────────────────────────────────────────
+    // Percentile rank (0–100) of the current ATR value over the lookback period.
+
+    private static ComputedIndicator? ComputeAtrPercentileIndicator(
+        IReadOnlyList<ClosedCandle> candles, int atrPeriod, int period)
+    {
+        var atr = ComputeAtr(candles, atrPeriod);
+        if (atr.Length < period + 1) return null;
+
+        var count  = atr.Length - period + 1;
+        var result = new decimal[count];
+        for (int i = 0; i < count; i++)
+        {
+            var curAtr = atr[i + period - 1];
+            var window = atr[i..(i + period)];
+            var below  = window.Count(v => v < curAtr);
+            result[i]  = (decimal)below / period * 100m;
+        }
+        if (result.Length < 2) return null;
+        return new ComputedIndicator { Current = result[^1], Previous = result[^2], History = result };
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

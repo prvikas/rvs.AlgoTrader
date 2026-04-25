@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { strategyDomainApi, apiClient, backtestApi, BacktestJobStatus } from '../../api/client'
 import {
@@ -410,6 +410,7 @@ export function ScenariosTab({ strategy }: Props) {
   // ── Visualization viewer ──────────────────────────────────────────────────
   // When set, replaces the scenario table with BacktestResultViewer
   const [viewingScenarioId, setViewingScenarioId] = useState<string | null>(null)
+  const autoOpenedRunning = useRef(false)
 
   // ── Real-time job tracking ─────────────────────────────────────────────────
   const [activeJob, setActiveJob] = useState<{ scenarioId: string; jobId: string } | null>(null)
@@ -495,6 +496,18 @@ export function ScenariosTab({ strategy }: Props) {
       return list?.some(s => s.status === ScenarioStatus.Running) ? 5000 : false
     },
   })
+
+  // When navigating back to the page after it fully unmounted, auto-open the viewer
+  // for a Running scenario so the user doesn't have to manually click "View Backtest".
+  // Guard with a ref so we only auto-open once per component lifetime.
+  useEffect(() => {
+    if (autoOpenedRunning.current || !scenarios.length) return
+    const running = scenarios.find(s => s.status === ScenarioStatus.Running)
+    if (running && !viewingScenarioId && !activeJob) {
+      autoOpenedRunning.current = true
+      setViewingScenarioId(running.id)
+    }
+  }, [scenarios]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteMut = useMutation({
     mutationFn: (sid: string) => strategyDomainApi.deleteScenario(strategy.id, sid),

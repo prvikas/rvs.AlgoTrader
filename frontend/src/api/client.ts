@@ -438,6 +438,16 @@ export interface BacktestRequest {
   slippageBasisPoints?: number
   /** Flat brokerage per order leg in INR. Default = 20 (Zerodha/Upstox model). */
   brokerageFlatPerSide?: number
+  /** Brokerage as % of turnover (e.g. 0.03 = 0.03%). Overrides brokerageFlatPerSide when set. */
+  brokeragePct?: number
+  /** STT as % of turnover (e.g. 0.025). */
+  sttPct?: number
+  /** GST on brokerage as % (e.g. 18). */
+  gstPct?: number
+  /** SEBI charges as % (e.g. 0.0001). */
+  sebiChargesPct?: number
+  /** Stamp duty as % (e.g. 0.003). */
+  stampDutyPct?: number
   /** Trailing stop: R-multiple gain required before trail activates. 0 = disabled. */
   trailActivationR?: number
   /** Trailing stop: offset behind best price in R multiples. Default = 0.5. */
@@ -1284,7 +1294,16 @@ function strategyToUpsertRequest(s: Omit<Strategy, 'id' | 'createdAt' | 'updated
 function scenarioDtoToScenario(dto: DefinitionScenarioDto): Scenario {
   let overrides: import('../types/strategy').ParameterOverride[] = []
   let metrics: import('../types/strategy').RunMetrics | undefined
-  try { overrides = JSON.parse(dto.parameterOverridesJson) } catch { /* ignore */ }
+  let brokerageConfig: import('../types/strategy').BrokerageConfig | undefined
+  try {
+    const parsed = JSON.parse(dto.parameterOverridesJson)
+    if (Array.isArray(parsed)) {
+      overrides = parsed  // legacy format
+    } else {
+      overrides = parsed.overrides ?? []
+      brokerageConfig = parsed.brokerageConfig
+    }
+  } catch { /* ignore */ }
   try { if (dto.lastMetricsJson) metrics = JSON.parse(dto.lastMetricsJson) } catch { /* ignore */ }
   return {
     id:                 dto.id,
@@ -1295,6 +1314,7 @@ function scenarioDtoToScenario(dto: DefinitionScenarioDto): Scenario {
     brokerAccount:      dto.brokerAccount as Broker,
     backtestRange:      { from: dto.backtestFrom, to: dto.backtestTo },
     parameterOverrides: overrides,
+    brokerageConfig,
     status:             dto.status as ScenarioStatus,
     lastRunAt:          dto.lastRunAt,
     lastMetrics:        metrics,
@@ -1309,7 +1329,10 @@ function scenarioToUpsertRequest(s: Omit<Scenario, 'id' | 'strategyId'>): Upsert
     brokerAccount:          s.brokerAccount,
     backtestFrom:           s.backtestRange.from,
     backtestTo:             s.backtestRange.to,
-    parameterOverridesJson: JSON.stringify(s.parameterOverrides ?? []),
+    parameterOverridesJson: JSON.stringify({
+      overrides:       s.parameterOverrides ?? [],
+      brokerageConfig: s.brokerageConfig,
+    }),
     status:                 s.status,
   }
 }
@@ -1506,6 +1529,21 @@ export const strategyDomainApi = {
       `/strategy-definitions/${strategyId}/scenarios/${scenarioId}`,
       { status: ScenarioStatus.Running } satisfies PatchDefinitionScenarioRequest)
 
+    // Build brokerage fields from scenario.brokerageConfig (null = use engine defaults)
+    const bc = scenario.brokerageConfig
+    const brokerageFields: Partial<BacktestRequest> = bc ? (
+      bc.type === 'pct'
+        ? { brokeragePct: bc.pct, brokerageFlatPerSide: 0 }
+        : { brokerageFlatPerSide: bc.flatPerSide }
+    ) : {}
+    if (bc) {
+      brokerageFields.slippageBasisPoints = bc.slippageBps
+      brokerageFields.sttPct             = bc.sttPct
+      brokerageFields.gstPct             = bc.gstPct
+      brokerageFields.sebiChargesPct     = bc.sebiChargesPct
+      brokerageFields.stampDutyPct       = bc.stampDutyPct
+    }
+
     // Launch real async backtest — pass scenarioId so the backend auto-updates
     // scenario.Status → Backtested and saves lastMetrics on completion.
     const btResp = await backtestApi.start({
@@ -1517,6 +1555,7 @@ export const strategyDomainApi = {
       toDate:          scenario.backtestRange.to,
       initialCapital:  scenario.capital,
       scenarioId:      scenarioId,
+      ...brokerageFields,
     })
     const jobId: string = btResp.data?.data?.jobId ?? ''
 

@@ -63,8 +63,12 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
                     "CCI"             => ind.GetInt("period", 20),
                     "ADX"             => ind.GetInt("period", 14) * 3,
                     "STOCHASTICS"     => ind.GetInt("kPeriod", 14) + ind.GetInt("dPeriod", 3),
-                    "DONCHIANCHANNEL" => ind.GetInt("period", 20),
-                    "SUPERTREND"      => ind.GetInt("period", 10),
+                    "DONCHIANCHANNEL"  => ind.GetInt("period", 20),
+                    "SUPERTREND"       => ind.GetInt("period", 10),
+                    "VOLUMESPIKE"      => ind.GetInt("maPeriod", 20),
+                    "SWINGHIGHLOW"     => ind.GetInt("lookback", 5),
+                    "RANGEPERCENTILE"  => ind.GetInt("period", 50),
+                    "ATRPERCENTILE"    => ind.GetInt("atrPeriod", 14) + ind.GetInt("period", 50),
                     _ => 1
                 })
                 .DefaultIfEmpty(20)
@@ -187,7 +191,7 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
 
             return Task.FromResult(SignalResult.Buy(
                 entryPrice: current.Close,
-                stopLoss:   Math.Max(sl, current.Low * 0.99m),
+                stopLoss:   Math.Min(sl, current.Low * 0.99m),  // Min = wider/lower stop for LONG (disaster stop)
                 takeProfit: tp,
                 reason:     "Long entry conditions met",
                 indicatorValues: indicatorSnapshot));
@@ -203,7 +207,7 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
 
             return Task.FromResult(SignalResult.Sell(
                 entryPrice: current.Close,
-                stopLoss:   Math.Min(sl, current.High * 1.01m),
+                stopLoss:   Math.Max(sl, current.High * 1.01m),  // Max = wider/higher stop for SHORT (disaster stop)
                 takeProfit: tp,
                 reason:     "Short entry conditions met",
                 indicatorValues: indicatorSnapshot));

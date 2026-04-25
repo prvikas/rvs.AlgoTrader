@@ -202,7 +202,13 @@
       "Bash(grep -v \"^$\")",
       "Bash(grep -v \"IClock\\\\.cs\\\\|//.*DateTime\")",
       "Bash(dir /b)",
-      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src -name \"*.cs\" -type f -exec grep -l \"class BacktestRequest\" {} \\\\;)"
+      "Bash(find /c/Users/prvik/Downloads/algotrader-claude-kit/src -name \"*.cs\" -type f -exec grep -l \"class BacktestRequest\" {} \\\\;)",
+      "Bash(grep -v \"//.*DateTime\")",
+      "Bash(grep -v \"//.*TODO\")",
+      "Bash(grep -E \"\\\\.\\(cs\\)$\")",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\frontend\"; npm run dev -- --port 3001 2>&1 | Select-Object -First 5)",
+      "Bash(find \"C:/Users/prvik/Downloads/algotrader-claude-kit\" -name \"*.cs\" -exec grep -l \"record ClosedCandle\" {} \\\\;)"
     ]
   }
 }

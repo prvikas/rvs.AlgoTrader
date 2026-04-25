@@ -284,6 +284,9 @@ export interface IndicatorConfig {
   label?: string
   type: IndicatorType
   timeframe: Timeframe
+  /** When true, this indicator's timeframe tracks the strategy's primaryTimeframe.
+   *  Changing primaryTimeframe auto-updates all indicators that have this set. */
+  inheritTimeframe?: boolean
   role: IndicatorRole
   signalLayer: SignalLayer
   layerOrder: number
@@ -548,6 +551,29 @@ export interface ParameterOverride {
   overrideValue: number | boolean
 }
 
+export interface BrokerageConfig {
+  /** 'flat' = fixed ₹ per order side; 'pct' = % of turnover. */
+  type: 'flat' | 'pct'
+  flatPerSide: number      // ₹/side (e.g. 20). Used when type='flat'.
+  pct: number              // % of turnover (e.g. 0.03). Used when type='pct'.
+  slippageBps: number      // Slippage in basis points (e.g. 5).
+  sttPct: number           // STT % (e.g. 0.025 for intraday equity).
+  gstPct: number           // GST on brokerage % (e.g. 18).
+  sebiChargesPct: number   // SEBI + exchange charges % (e.g. 0.0001).
+  stampDutyPct: number     // Stamp duty % (e.g. 0.003, buy-side only).
+}
+
+export const DEFAULT_BROKERAGE_CONFIG: BrokerageConfig = {
+  type: 'flat',
+  flatPerSide: 20,
+  pct: 0.03,
+  slippageBps: 5,
+  sttPct: 0.025,
+  gstPct: 18,
+  sebiChargesPct: 0.0001,
+  stampDutyPct: 0.003,
+}
+
 export interface Scenario {
   id: string
   strategyId: string
@@ -557,6 +583,7 @@ export interface Scenario {
   brokerAccount: Broker
   backtestRange: { from: string; to: string }
   parameterOverrides: ParameterOverride[]
+  brokerageConfig?: BrokerageConfig
   status: ScenarioStatus
   lastRunAt?: string
   lastMetrics?: RunMetrics

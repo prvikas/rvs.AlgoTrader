@@ -89,7 +89,7 @@ export function IndicatorModal({
     existing?.timeframe ?? primaryTimeframe ?? Timeframe.D1
   )
   const [inheritTf, setInheritTf] = useState<boolean>(
-    !existing && !!primaryTimeframe
+    existing ? (existing.inheritTimeframe ?? false) : !!primaryTimeframe
   )
   const [baseParams, setBaseParams] = useState<Record<string, number | string | boolean>>(
     existing?.baseParams ?? (DEFAULT_PARAMS[type] ?? { period: 14 })
@@ -117,6 +117,7 @@ export function IndicatorModal({
       ...(label.trim() ? { label: label.trim() } : {}),
       type,
       timeframe,
+      inheritTimeframe: inheritTf || undefined,
       role: existing?.role ?? roleFromLayer(signalLayer),
       baseParams,
       allowedParamRanges: existing?.allowedParamRanges ?? {},

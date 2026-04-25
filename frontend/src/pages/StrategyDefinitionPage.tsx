@@ -516,7 +516,13 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
                 <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
               </Field>
               <Field label="Primary Timeframe *" help="The main candle resolution this strategy runs on. Indicators inherit this by default but can be overridden per indicator.">
-                <select value={primaryTf} onChange={e => setPrimaryTf(e.target.value as Timeframe)} style={inputStyle}>
+                <select value={primaryTf} onChange={e => {
+                  const tf = e.target.value as Timeframe
+                  setPrimaryTf(tf)
+                  setIndicators(prev => prev.map(ind =>
+                    ind.inheritTimeframe ? { ...ind, timeframe: tf } : ind
+                  ))
+                }} style={inputStyle}>
                   {tfOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </Field>

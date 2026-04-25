@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { strategyDomainApi } from '../../api/client'
 import {
-  Broker, OverrideSection, ParameterOverride, ParamRange,
+  Broker, BrokerageConfig, DEFAULT_BROKERAGE_CONFIG, OverrideSection, ParameterOverride, ParamRange,
   Scenario, ScenarioStatus, Strategy,
 } from '../../types/strategy'
 import { C, SP } from '../../styles/tokens'
@@ -36,6 +36,9 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
   const [fromDate, setFromDate] = useState(existing?.backtestRange.from ?? '2023-01-01')
   const [toDate, setToDate] = useState(existing?.backtestRange.to ?? '2025-12-31')
   const [overrides, setOverrides] = useState<ParameterOverride[]>(existing?.parameterOverrides ?? [])
+  const [brokerage, setBrokerage] = useState<BrokerageConfig>(
+    existing?.brokerageConfig ?? DEFAULT_BROKERAGE_CONFIG
+  )
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const createMut = useMutation({
@@ -75,6 +78,7 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
       brokerAccount: broker,
       backtestRange: { from: fromDate, to: toDate },
       parameterOverrides: overrides,
+      brokerageConfig: brokerage,
       status: ScenarioStatus.Draft,
     }
   }
@@ -193,7 +197,73 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
         </div>
       </section>
 
-      {/* ── 3. Inherited notice ── */}
+      {/* ── 3. Brokerage & Costs ── */}
+      <section>
+        <SectionLabel>BROKERAGE & COSTS</SectionLabel>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: SP.sm }}>
+
+          {/* Brokerage type toggle */}
+          <div style={{ display: 'flex', gap: SP.sm }}>
+            {(['flat', 'pct'] as const).map(t => (
+              <button key={t} onClick={() => setBrokerage(b => ({ ...b, type: t }))} style={{
+                flex: 1, padding: '5px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
+                background: brokerage.type === t ? '#1e3a5f' : C.surface3,
+                color:      brokerage.type === t ? '#93c5fd' : C.textMuted,
+                border: `1px solid ${brokerage.type === t ? '#2563eb44' : C.border}`,
+              }}>
+                {t === 'flat' ? 'Flat ₹/order' : '% of turnover'}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.sm }}>
+            {brokerage.type === 'flat' ? (
+              <Field label="Brokerage (₹/side)">
+                <input type="number" min={0} step={1} value={brokerage.flatPerSide}
+                  onChange={e => setBrokerage(b => ({ ...b, flatPerSide: Number(e.target.value) }))}
+                  style={inputStyle} />
+              </Field>
+            ) : (
+              <Field label="Brokerage (% of turnover)">
+                <input type="number" min={0} step={0.001} value={brokerage.pct}
+                  onChange={e => setBrokerage(b => ({ ...b, pct: Number(e.target.value) }))}
+                  style={inputStyle} />
+              </Field>
+            )}
+            <Field label="Slippage (basis pts)">
+              <input type="number" min={0} step={1} value={brokerage.slippageBps}
+                onChange={e => setBrokerage(b => ({ ...b, slippageBps: Number(e.target.value) }))}
+                style={inputStyle} />
+            </Field>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: SP.sm }}>
+            <Field label="STT (%)">
+              <input type="number" min={0} step={0.001} value={brokerage.sttPct}
+                onChange={e => setBrokerage(b => ({ ...b, sttPct: Number(e.target.value) }))}
+                style={inputStyle} />
+            </Field>
+            <Field label="GST on brokerage (%)">
+              <input type="number" min={0} step={0.1} value={brokerage.gstPct}
+                onChange={e => setBrokerage(b => ({ ...b, gstPct: Number(e.target.value) }))}
+                style={inputStyle} />
+            </Field>
+            <Field label="SEBI charges (%)">
+              <input type="number" min={0} step={0.00001} value={brokerage.sebiChargesPct}
+                onChange={e => setBrokerage(b => ({ ...b, sebiChargesPct: Number(e.target.value) }))}
+                style={inputStyle} />
+            </Field>
+            <Field label="Stamp duty (%)">
+              <input type="number" min={0} step={0.001} value={brokerage.stampDutyPct}
+                onChange={e => setBrokerage(b => ({ ...b, stampDutyPct: Number(e.target.value) }))}
+                style={inputStyle} />
+            </Field>
+          </div>
+
+        </div>
+      </section>
+
+      {/* ── 5. Inherited notice ── */}
       <div style={{
         fontSize: 10, color: C.textMuted, fontStyle: 'italic',
         padding: SP.sm, background: C.surface2, borderRadius: 4,
@@ -201,7 +271,7 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
         Strategy: <strong style={{ color: C.textSub }}>{strategy.name}</strong> — indicators, rules, and exit structure are inherited and fixed. Only parameter values may be overridden below.
       </div>
 
-      {/* ── 4. Inherited indicators read-only ── */}
+      {/* ── 6. Inherited indicators read-only ── */}
       {strategy.indicators.length > 0 && (
         <section>
           <SectionLabel>INHERITED INDICATORS</SectionLabel>
@@ -233,7 +303,7 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
         </section>
       )}
 
-      {/* ── 5. Parameter overrides ── */}
+      {/* ── 7. Parameter overrides ── */}
       <section>
         <SectionLabel>PARAMETER OVERRIDES</SectionLabel>
         {strategy.indicators.map(ind => {

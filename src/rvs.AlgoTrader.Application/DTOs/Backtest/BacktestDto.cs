@@ -20,6 +20,12 @@ public record BacktestRequestDto(
     int FillModel = 0,
     decimal SlippageBasisPoints = 5m,
     decimal BrokerageFlatPerSide = 20m,
+    // Optional overrides for cost model. null = use engine default.
+    decimal? BrokeragePct = null,
+    decimal? SttPct = null,
+    decimal? GstPct = null,
+    decimal? SebiChargesPct = null,
+    decimal? StampDutyPct = null,
     // Broker to use for auto-downloading missing history. Defaults to MStock.
     string BrokerName = "MStock",
     WalkForwardConfigDto? WalkForward = null,

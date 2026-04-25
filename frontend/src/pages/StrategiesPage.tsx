@@ -377,10 +377,13 @@ export function StrategiesPage() {
                   onCancel={() => {}}
                 />
               )}
-              {/* Each tab receives the selected strategy definition as context.
-                  Scenarios, Results, and Compare all scope their data to
-                  selectedStrategy.id — no instance/deployment concepts here. */}
-              {tab === 'scenarios' && <ScenariosTab strategy={selectedStrategy} />}
+              {/* ScenariosTab stays mounted while this strategy is selected so live
+                  backtest state (activeJob, SignalR, viewingScenarioId) is not lost
+                  when the user switches to another tab mid-run. display:none hides it
+                  without unmounting. key resets state when the selected strategy changes. */}
+              <div key={selectedStrategy.id} style={{ display: tab === 'scenarios' ? 'block' : 'none' }}>
+                <ScenariosTab strategy={selectedStrategy} />
+              </div>
               {tab === 'results'   && <ResultsTab strategyId={selectedStrategy.id} />}
               {tab === 'compare'   && <CompareTab strategyId={selectedStrategy.id} />}
             </div>

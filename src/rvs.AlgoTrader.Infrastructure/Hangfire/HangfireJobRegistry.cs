@@ -18,6 +18,13 @@ public static class HangfireJobRegistry
             "instrument-refresh", j => j.ExecuteAsync(CancellationToken.None),
             "30 2 * * 1-5"); // weekdays at 2:30 UTC
 
+        // Deactivate expired derivatives: runs after the refresh at 8:15 AM IST = 2:45 UTC.
+        // Marks options/futures with Expiry < today as IsActive=false so they stop appearing
+        // in instrument searches. Equities (null Expiry) are never touched.
+        RecurringJob.AddOrUpdate<DeactivateExpiredInstrumentsJob>(
+            "deactivate-expired-instruments", j => j.ExecuteAsync(CancellationToken.None),
+            "45 2 * * 1-5"); // 2:45 UTC = 8:15 AM IST, after instrument-refresh
+
         // Historical download: daily at 6:00 AM IST = 0:30 UTC
         RecurringJob.AddOrUpdate<HistoricalDownloadJob>(
             "historical-download", j => j.ExecuteAsync(CancellationToken.None),

@@ -65,8 +65,14 @@ public class BacktestEngine(
         {
             BrokerageFlatPerSide = request.BrokerageFlatPerSide > 0
                 ? request.BrokerageFlatPerSide
-                : DefaultCostProfile.BrokerageFlatPerSide,   // preserve ₹20 default
-            BrokeragePct = request.BrokerageFlatPerSide > 0 ? 0m : DefaultCostProfile.BrokeragePct,
+                : DefaultCostProfile.BrokerageFlatPerSide,
+            BrokeragePct = request.BrokerageFlatPerSide > 0
+                ? 0m
+                : request.BrokeragePct ?? DefaultCostProfile.BrokeragePct,
+            SttPct          = request.SttPct          ?? DefaultCostProfile.SttPct,
+            GstPct          = request.GstPct          ?? DefaultCostProfile.GstPct,
+            SebiChargesPct  = request.SebiChargesPct  ?? DefaultCostProfile.SebiChargesPct,
+            StampDutyPct    = request.StampDutyPct    ?? DefaultCostProfile.StampDutyPct,
             SlippageBasisPoints = request.SlippageBasisPoints,
             SlippagePct = request.FillModel == FillModel.NextBarOpenPlusSlippage
                 ? 0m
@@ -113,6 +119,11 @@ public class BacktestEngine(
         // The actual close is deferred to the OPEN of the next candle (matching PineScript next-bar fill).
         bool pendingStrategyExit = false;
         string  pendingExitReason = string.Empty;
+        // Prevent re-entry on the same bar an SL/TP fires.
+        // PineScript semantics: stop fills mid-bar, entry is only evaluated at bar CLOSE.
+        // State-based conditions (EMA9 > EMA21) would otherwise re-enter immediately while
+        // the trend is still intact, creating a rapid stop-out/re-entry cascade.
+        int lastSlTpExitBar = -1;
 
         // Progress reporting: every 1% of bars (minimum 1)
         var jobId        = request.JobId ?? "backtest";
@@ -413,6 +424,7 @@ public class BacktestEngine(
                     equity += closed.GrossPnl - exitCosts.Total; // EntryCommission already deducted at open
                     trades.Add(closed);
                     openTrade  = null;
+                    lastSlTpExitBar = i; // block same-bar re-entry after SL/TP
 
                     if (equity > peakEquity) peakEquity = equity;
                     var drawdown = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
@@ -487,6 +499,20 @@ public class BacktestEngine(
                     progress.Report(new BacktestProgress(jobId, i, totalBars, Math.Min(99m, pct),
                         trades.Count, equity, SnapshotRollingWindow()));
                 }
+                // MTM drawdown: update peak/drawdown using the bar's close-price unrealized P&L.
+                // Without this, a trade that falls 15% intrabar before recovering to TP shows
+                // zero drawdown contribution — the closed-equity-only peak/drawdown is misleading.
+                if (openTrade != null)
+                {
+                    var mtmUnrealized = openTrade.Direction == "BUY"
+                        ? (current.Close - openTrade.EntryPrice) * openTrade.Quantity
+                        : (openTrade.EntryPrice - current.Close) * openTrade.Quantity;
+                    var mtmEquity = equity + mtmUnrealized;
+                    if (mtmEquity > peakEquity) peakEquity = mtmEquity;
+                    var mtmDd = peakEquity > 0 ? (peakEquity - mtmEquity) / peakEquity : 0m;
+                    if (mtmDd > maxDrawdown) maxDrawdown = mtmDd;
+                }
+
                 // If SL/TP fired this bar (openTrade is now null) AND the strategy just fired
                 // a fresh entry signal on this same bar, fall through to evaluate it.
                 // This matches Pine's reversal behaviour (close long → open short same bar).
@@ -551,6 +577,11 @@ public class BacktestEngine(
                     CurrentEquity: equity,
                     ChartBatch: SnapshotRollingWindow()));
             }
+
+            // Skip entry on the same bar an SL/TP fired — prevents state-based operators (EMA9 > EMA21)
+            // from re-entering immediately while the stop hit is still mid-bar.
+            // Crossover operators are unaffected: they require a new crossover on a subsequent bar.
+            if (i == lastSlTpExitBar) continue;
 
             // ExitLong/ExitShort with no open position = ignore (already handled above when position was open).
             if (signal.Signal is not (SignalType.Buy or SignalType.Sell)) continue;
@@ -626,10 +657,41 @@ public class BacktestEngine(
                 }
             }
 
-            // When the strategy does not provide an explicit stop-loss signal.StopLoss is always
-            // non-null here (CalculatePositionSize returns 0 and skips when it's null), but keep
-            // the fallback so the compiler doesn't warn about nullable dereference.
-            var initialSl = signal.StopLoss ?? entryPrice * 0.99m;
+            // Re-check capital affordability at actual fill price (may differ from signal.EntryPrice
+            // due to overnight gap). Prevents deploying more than MaxCapitalUsagePct when gap is large.
+            if (entryPrice > 0)
+            {
+                var capFrac = request.MaxCapitalUsagePct > 0 ? request.MaxCapitalUsagePct : 0.95m;
+                var maxAtFill = (int)(equity * capFrac / entryPrice);
+                if (maxAtFill <= 0) { skippedSignals++; continue; }
+                positionSize = Math.Min(positionSize, maxAtFill);
+            }
+
+            // Re-anchor SL to actual fill price so the stop distance is preserved when the
+            // fill gaps from the signal bar close (NextBarOpen fill model).
+            // Without this: signal at close=100, SL=94 (6pts), fill at open=103 → effective risk=9pts
+            // (worse for gap-down fills: fill at 97 → SL only 3pts from fill, stops out immediately).
+            decimal initialSl;
+            if (signal.StopLoss.HasValue && signal.EntryPrice.HasValue && signal.EntryPrice.Value > 0)
+            {
+                var slDistance = signal.Signal == SignalType.Buy
+                    ? signal.EntryPrice.Value - signal.StopLoss.Value   // positive for longs
+                    : signal.StopLoss.Value - signal.EntryPrice.Value;  // positive for shorts
+                if (slDistance > 0)
+                {
+                    initialSl = signal.Signal == SignalType.Buy
+                        ? entryPrice - slDistance
+                        : entryPrice + slDistance;
+                }
+                else
+                {
+                    initialSl = signal.StopLoss.Value; // degenerate: SL already past entry — keep as-is
+                }
+            }
+            else
+            {
+                initialSl = signal.StopLoss ?? entryPrice * 0.99m;
+            }
 
             // Deduct entry commission immediately so equity is accurate for subsequent sizing
             var entryCostsOnOpen = costCalc.Calculate(entryPrice * positionSize, signal.Signal == SignalType.Buy, costProfile);
@@ -1392,7 +1454,9 @@ public class BacktestEngine(
         var winRate      = (decimal)winTrades.Count / trades.Count;
         var avgWin       = winTrades.Count  > 0 ? winTrades.Average(t => t.NetPnl)              : 0m;
         var avgLoss      = lossTrades.Count > 0 ? Math.Abs(lossTrades.Average(t => t.NetPnl))   : 0m;
-        var lossRate     = 1m - winRate;
+        // Use actual loss rate (not 1-winRate) to correctly handle breakeven trades.
+        // 1-winRate incorrectly assigns breakeven probability to losses, overstating expectancy downside.
+        var lossRate     = (decimal)lossTrades.Count / trades.Count;
         var expectancy   = winRate * avgWin - lossRate * avgLoss;
         var maxLots      = trades.Count > 0 ? trades.Max(t => t.Quantity) : 0;
 
@@ -1421,25 +1485,38 @@ public class BacktestEngine(
             ? Math.Sqrt(returns.Select(r => Math.Pow(r - avgReturn, 2)).Sum() / (returns.Length - 1))
             : 0.0;
 
+        // Per-trade Sharpe: annualised by √252 (trades per year proxy).
+        // Distinct from DailySharpe (which groups by calendar day). Stored in SharpeRatio field.
+        var perTradeSharpe = stdDev == 0 ? 0m : (decimal)(avgReturn / stdDev * Math.Sqrt(252));
+
         // Sortino: downside deviation computed over ALL returns with MAR=0 (÷N_total, not ÷N_negative),
         // then annualised by √252 to match the DailySharpe scale.
         var downDev = Math.Sqrt(returns.Average(r => r < 0 ? r * r : 0.0));
         var sortino = downDev == 0 ? 0m : (decimal)(avgReturn / downDev * Math.Sqrt(252));
 
         var totalReturn = (finalEquity - request.InitialCapital) / request.InitialCapital;
-        var calmar      = maxDrawdown == 0 ? 0 : totalReturn / maxDrawdown;
+        // Calmar = CAGR / MaxDrawdown. Use CAGR (not raw totalReturn) so a 3-year backtest
+        // with 90% return doesn't show Calmar=4.5 when the equivalent annual return is only 24%.
+        var years  = Math.Max(1.0 / 365, (request.ToDate - request.FromDate).Days / 365.25);
+        var cagr   = (decimal)(Math.Pow((double)(1m + totalReturn), 1.0 / years) - 1);
+        var calmar = maxDrawdown == 0 ? 0 : cagr / maxDrawdown;
 
-        // Daily Sharpe: annualise by √252 (252 trading days per year)
+        // Daily Sharpe: annualise by √252. Pass total trading-day count so flat days (no trades)
+        // are padded with 0-return observations — without this, the volatility is understated
+        // and Sharpe is inflated for infrequent-trading strategies.
+        var totalTradingDays = (int)Math.Round((request.ToDate - request.FromDate).Days * (252.0 / 365.25));
         var dailySharpe  = ComputeGroupedSharpe(trades,
-            t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date.ToString(), 
+            t => t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date.ToString(),
             request.InitialCapital,
-            annualisationFactor: 252);
+            annualisationFactor: 252,
+            totalPeriods: Math.Max(0, totalTradingDays));
         // Monthly Sharpe: annualise by √12 (12 months per year, not √252)
+        var totalMonths = (int)Math.Round(years * 12);
         var monthlySharpe = ComputeGroupedSharpe(trades, t =>
         {
             var d = t.ExitTime.ToInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"]).Date;
             return $"{d.Year:D4}-{d.Month:D2}";
-        }, request.InitialCapital, annualisationFactor: 12);
+        }, request.InitialCapital, annualisationFactor: 12, totalPeriods: Math.Max(0, totalMonths));
 
         // Monthly breakdown
         var monthlyGroups = trades
@@ -1550,7 +1627,7 @@ public class BacktestEngine(
             TotalPnl: totalPnl,
             TotalReturn: totalReturn,
             MaxDrawdown: maxDrawdown,
-            SharpeRatio: dailySharpe,
+            SharpeRatio: perTradeSharpe,
             CalmarRatio: calmar,
             ProfitFactor: profitFactor,
             WinRate: winRate,
@@ -1626,7 +1703,8 @@ public class BacktestEngine(
     private static decimal ComputeGroupedSharpe(
         List<BacktestTrade> trades, Func<BacktestTrade, string> keySelector,
         decimal initialCapital,
-        double annualisationFactor = 252)
+        double annualisationFactor = 252,
+        int totalPeriods = 0)   // when > 0, pad with zeros for flat periods (correct daily Sharpe)
     {
         if (trades.Count < 2) return 0m;
 
@@ -1658,6 +1736,15 @@ public class BacktestEngine(
         // Flush final period
         if (currentKey != null && periodStart > 0)
             periodReturns.Add((double)(periodPnl / periodStart));
+
+        // Pad with zeros for flat (no-trade) periods so Sharpe reflects the full holding period,
+        // not just days with activity. Without this, a strategy trading 50/252 days has its
+        // volatility computed on 50 observations, massively overstating Sharpe.
+        if (totalPeriods > periodReturns.Count)
+        {
+            var flatCount = totalPeriods - periodReturns.Count;
+            for (int k = 0; k < flatCount; k++) periodReturns.Add(0.0);
+        }
 
         if (periodReturns.Count < 2) return 0m;
 

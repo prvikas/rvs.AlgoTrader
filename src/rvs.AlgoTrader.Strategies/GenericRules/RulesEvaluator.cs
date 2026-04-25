@@ -1,3 +1,4 @@
+using NodaTime;
 using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Strategies.GenericRules;
@@ -173,6 +174,19 @@ public static class RulesEvaluator
                 return ComputePercentile(ind.History, operand.LookbackBars ?? 100, ind.Current);
             }
 
+            // "absence" — true (1) when indicator is NOT present or has been 0 for N bars.
+            // Used in conditions like "absence of indicator X over last N bars".
+            case "absence":
+            {
+                if (string.IsNullOrEmpty(operand.IndicatorId)) return 1m; // no indicator = absent
+                if (!indicators.TryGetValue(operand.IndicatorId, out var ind)) return 1m;
+                var n = Math.Min(operand.LookbackBars ?? 1, ind.History.Length);
+                if (n == 0) return 1m;
+                // Absent = all values in lookback window are 0
+                var allZero = ind.History[^n..].All(v => v == 0m);
+                return allZero ? 1m : 0m;
+            }
+
             // OHLCV shorthand operands
             case "close":   return candles.Count > 0 ? candles[^1].Close  : 0m;
             case "open":    return candles.Count > 0 ? candles[^1].Open   : 0m;
@@ -242,13 +256,53 @@ public static class RulesEvaluator
 
     // ── Session state ─────────────────────────────────────────────────────────
 
+    private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
+
     private static decimal ResolveSessionState(string? property, IReadOnlyList<ClosedCandle> candles)
     {
         if (candles.Count == 0) return 0m;
+        var current = candles[^1];
+
         return (property ?? "") switch
         {
-            // Additional session state properties can be added here
+            // 1 if the current bar is within the first 15 minutes after session open (9:15–9:30 IST)
+            "IsFirstSignalOfSession" => IsSessionOpenBar(current) ? 1m : 0m,
+
+            // Number of bars elapsed since 9:15 IST on the same date
+            "BarsSinceSessionOpen" => ComputeBarsSinceOpen(candles),
+
+            // Cannot track cross-trade state without external state — return 0 (not available in eval context)
+            "PreviousTradeWasLoss" => 0m,
+
+            // Cannot know open position count from candle history alone
+            "OpenPositionCount" => 0m,
+
             _ => 0m
         };
+    }
+
+    private static bool IsSessionOpenBar(ClosedCandle candle)
+    {
+        var zdt = candle.OpenTime;
+        var istTime = zdt.WithZone(Ist).TimeOfDay;
+        // Session open = 9:15 IST; treat first 15 minutes as "first signal of session"
+        return istTime >= LocalTime.FromHourMinuteSecondNanosecond(9, 15, 0, 0)
+            && istTime <  LocalTime.FromHourMinuteSecondNanosecond(9, 30, 0, 0);
+    }
+
+    private static decimal ComputeBarsSinceOpen(IReadOnlyList<ClosedCandle> candles)
+    {
+        var current = candles[^1];
+        var currentDate = current.OpenTime.WithZone(Ist).Date;
+        var sessionOpen = LocalTime.FromHourMinuteSecondNanosecond(9, 15, 0, 0);
+
+        int count = 0;
+        for (int i = candles.Count - 1; i >= 0; i--)
+        {
+            var zdt = candles[i].OpenTime.WithZone(Ist);
+            if (zdt.Date != currentDate) break;
+            if (zdt.TimeOfDay >= sessionOpen) count++;
+        }
+        return count;
     }
 }

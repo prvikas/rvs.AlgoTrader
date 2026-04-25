@@ -8,7 +8,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Strategy abstraction | DONE | StrategyFactory+GetSchema(); 11 strategies; ExitLong/ExitShort; BacktestEngine re-evaluates while position open |
 | Strategies (6) | DONE | STRAT-001 VCP (breadth≥40%); STRAT-002 Fib (1.618/0.786, IVP, events); STRAT-003 PCR intraday; +fib1618 fix; DTE filter; VWAP TF; AtmIv guard |
 | Vertical Spreads | DONE | All 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs; SpreadEntry→ISpreadOrderManager |
-| Backtest engine | DONE | async/SignalR; SharpeRatio daily; WarmupBars; spread B-S sim; synthetic option chain (BT-OPT-1/2); real EOD snapshots (FIB-5); SS-1/CS-1; 10-bug audit fixed (Sortino/Sharpe/DrawdownBars/IV/MonteCarlo/CircuitBreaker/WalkForward); RunWalkForwardAsync wired via IWalkForwardEngine |
+| Backtest engine | DONE | async/SignalR; SharpeRatio daily; WarmupBars; spread B-S sim; synthetic option chain (BT-OPT-1/2); real EOD snapshots (FIB-5); SS-1/CS-1; 10-bug audit fixed; 5 more bugs fixed: Calmar now CAGR-based, expectancy lossRate uses actual loss count, position size re-capped at fill price, daily/monthly Sharpe pads flat days with 0-returns, SharpeRatio field is now per-trade Sharpe (distinct from DailySharpe); brokerage+taxes configurable from UI; MTM drawdown tracking (per-bar unrealized P&L updates peakEquity+maxDrawdown, not just at trade close); SL re-anchored to actual fill price (was signal-bar close — caused tight/wide SL on gap days) |
 | Scenarios | DONE | StrategyScenario, partial override, parallel run, promotion gate, comparison grid; Version auto-inc |
 | DB migrations | DONE | 001–042; 027 TimescaleDB; 034 iv_history; 038 option snapshots; 039 market_news; 040 app_config+symbol_data_prefs; 042 FK backtest_runs→definition_scenarios |
 | Trade Journal | DONE | TradeJournalEntry, P&L attribution, TaxLotReportService (ITR-3); TradeJournalPage+PortfolioAnalysisPage |
@@ -26,12 +26,12 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Approval Gate | DONE | strategy_approvals table; IApprovalService (CAGR/DD/fwd checks); LiveExecutionEngine guard; ApprovalDrawer |
 | UI workflow | PARTIAL | 6-tier RBAC; GuidedDashboard; PayoffChart; StrategyLabPage wizard; Screener/News/Correlation/Risk pages; ByStrategy chart |
 | Strategy UI (PROMPT-001/002) | DONE | StrategiesPage 4-tab (Deployments removed); ScenariosTab: lifecycle actions (Backtest/View Backtest/→Fwd Test/Deploy Live stubs), instruments+timeframe stacked in row, backtest wording clarified; 401 cached-data fallback in BacktestJobManager |
-| Generic UI strategies | DONE | migrations 036-038; IStrategyDefinitionService; GenericRulesConfig; 6 option indicators; SpreadEntry 10 types |
+| Generic UI strategies | DONE | migrations 036-038; IStrategyDefinitionService; GenericRulesConfig; 6 option indicators; SpreadEntry 10 types; 15 bugs fixed: StopTargetConfig.baseValue JSON mismatch (ATR stop was always 10×), absence kind unhandled, sessionState always 0, SL anchoring at signal-close vs fill-open, MACD/BB/Stochastics/Donchian missing prev_* fields (crossover conditions used wrong previous values); 7 unimplemented indicators added: VolumeSpike, InsideBar, Engulfing, PrevHighLowBreak, SwingHighLow, RangePercentile, ATRPercentile (were silently returning null → conditions always 0) |
 | MCP/P8 | DONE | /mcp/strategy-status, /mcp/backtest-results/{id}, /mcp/kill-switch (RiskManager policy); JWT |
 | P9 Screener | DONE | ScreenerService SQL CTE; GET /api/screener; ScreenerJob 5PM IST; ScreenerPage |
 | P9 News | DONE | migration 039; NewsService CRUD; NewsController; NewsPage feed+create |
 | P9 Events/Analytics | DONE | FnoExpirySeedJob; PnlAttributionDto.ByStrategy; PortfolioAnalysisPage date filter |
-| Master data | PARTIAL | MStock parsing fixed; DB columns (003); instrument seeding |
+| Master data | DONE | MStock parsing fixed; DB columns (003); instrument seeding; DeactivateExpiredInstrumentsJob runs daily at 8:15 AM IST — marks options/futures with Expiry < today as IsActive=false |
 | Tests | DONE | 241 passing (117 unit + 88 legacy + 14 arch + 22 frontend Vitest). Integration+E2E test projects compile and are wired in run-tests.sh; need Docker/browser to execute |
 | listRuns wired | DONE | GET /api/strategy-definitions/{id}/backtests; GetByDefinitionAsync joins backtest_runs→strategy_definition_scenarios; backtestResultToRunResult mapper; MOCK_RUNS removed |
 | Trade charts fixed | DONE | ResultsTab.TradeAnalysisSection simplified to real-only path; chartTrades mapped from BacktestTradeResult (MAE/MFE/R/exitReason) so scatter/histogram/heatmap/streak charts render for real runs |
