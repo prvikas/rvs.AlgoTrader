@@ -13,6 +13,23 @@ import {
 import { Scenario, ScenarioStatus, Strategy } from '../../types/strategy'
 import { C, F, SP } from '../../styles/tokens'
 
+// NSE session: 9:15 AM – 3:30 PM = 375 minutes per day
+const TF_MINUTES: Record<string, number> = {
+  '1m': 1, '3m': 3, '5m': 5, '10m': 10, '15m': 15, '30m': 30,
+  '60m': 60, '4h': 240, '1d': 375,
+}
+
+function barsToApproxDays(bars: number, timeframe: string): number {
+  const minsPerBar = TF_MINUTES[timeframe?.toLowerCase()] ?? 375
+  return (bars * minsPerBar) / 375
+}
+
+function fmtHoldDuration(bars: number, timeframe: string): string {
+  const days = barsToApproxDays(bars, timeframe)
+  if (days < 1) return `${bars.toFixed(1)} bars (~${(days * 24).toFixed(0)}h)`
+  return `${bars.toFixed(1)} bars (~${days.toFixed(1)}d)`
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -63,6 +80,19 @@ const DEFAULT_VISIBLE = new Set<ColumnKey>(
   ALL_COLUMNS.filter(c => c.defaultVisible).map(c => c.key)
 )
 
+const COL_STORAGE_KEY = 'rvs_backtest_col_vis'
+
+function loadColPrefs(): Set<ColumnKey> {
+  try {
+    const raw = localStorage.getItem(COL_STORAGE_KEY)
+    if (raw) {
+      const arr = JSON.parse(raw) as ColumnKey[]
+      if (Array.isArray(arr) && arr.length > 0) return new Set(arr)
+    }
+  } catch { /* ignore */ }
+  return new Set(DEFAULT_VISIBLE)
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function BacktestResultViewer({
@@ -80,7 +110,10 @@ export function BacktestResultViewer({
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState('')
 
+  // Treat as running as soon as jobProgress arrives — DB status can lag by up to 5 s
   const isRunning = scenario.status === ScenarioStatus.Running
+    || jobProgress?.status === 'Running'
+    || jobProgress?.status === 'Downloading'
 
   const result: BacktestResult | null = jobProgress?.result ?? loadedResult
 
@@ -141,6 +174,11 @@ export function BacktestResultViewer({
   const hasResult = !!result
   const returnPct = result ? (result.totalReturn ?? 0) * 100 : null
   const ddPct     = result ? (result.maxDrawdown ?? 0) * 100 : null
+
+  const rTrades = trades.filter(t => t.rMultiple != null)
+  const avgRR   = rTrades.length > 0 ? rTrades.reduce((s, t) => s + t.rMultiple!, 0) / rTrades.length : null
+  const hTrades = trades.filter(t => t.holdingBars != null)
+  const avgBars = hTrades.length > 0 ? hTrades.reduce((s, t) => s + t.holdingBars!, 0) / hTrades.length : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -216,13 +254,15 @@ export function BacktestResultViewer({
             }}>
               <MetricBox
                 label="Return"
-                value={
-                  isRunning && jobProgress
-                    ? `${jobProgress.currentEquity >= scenario.capital ? '+' : ''}₹${Math.abs(Math.round(jobProgress.currentEquity - scenario.capital)).toLocaleString('en-IN')}`
-                    : returnPct !== null ? `${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%` : '—'
-                }
+                value={(() => {
+                  if (isRunning && jobProgress && jobProgress.currentEquity > 0) {
+                    const pct = (jobProgress.currentEquity - scenario.capital) / scenario.capital * 100
+                    return `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`
+                  }
+                  return returnPct !== null ? `${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%` : '—'
+                })()}
                 color={
-                  isRunning && jobProgress
+                  isRunning && jobProgress && jobProgress.currentEquity > 0
                     ? (jobProgress.currentEquity >= scenario.capital ? C.green : C.red)
                     : (returnPct ?? 0) >= 0 ? C.green : C.red
                 }
@@ -248,6 +288,12 @@ export function BacktestResultViewer({
               )}
               {result?.calmarRatio != null && (
                 <MetricBox label="Calmar" value={result.calmarRatio.toFixed(2)} />
+              )}
+              {avgRR !== null && (
+                <MetricBox label="Avg RR" value={avgRR.toFixed(2)} color={avgRR >= 1 ? C.green : C.textMuted} />
+              )}
+              {avgBars !== null && (
+                <MetricBox label="Avg Hold" value={fmtHoldDuration(avgBars, strategy.primaryTimeframe)} />
               )}
             </div>
           )}
@@ -279,7 +325,7 @@ export function BacktestResultViewer({
           </div>
 
           {/* ── Tab content ── */}
-          <div style={{ padding: '16px 14px' }}>
+          <div style={{ padding: '12px 14px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
             {tab === 'overview' && (
               <OverviewTab
                 result={result}
@@ -512,8 +558,8 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
   const dragStartVs   = useRef(0)
   const dragStartVe   = useRef(0)
 
-  const W = maximized ? 1400 : 900
-  const H = maximized ? 540  : 320
+  const W = 1200   // SVG coordinate space (viewBox units) — same regardless of screen size
+  const H = maximized ? 640 : 440
   const PL = 60, PR = 12, PT = 10, PB = 30
   const chartW = W - PL - PR
 
@@ -569,13 +615,17 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
 
   // ── Event handlers ──────────────────────────────────────────────────────────
 
+  // Scale CSS pixel offset → SVG coordinate unit (needed because SVG fills 100% width via viewBox)
+  function svgScaleX(el: SVGSVGElement) { return W / el.getBoundingClientRect().width }
+
   function handleWheel(e: React.WheelEvent<SVGSVGElement>) {
     e.preventDefault()
     const rangeLen = ve - vs + 1
     const factor   = e.deltaY > 0 ? 1.25 : 0.8
     const newLen   = Math.round(Math.min(totalLen, Math.max(10, rangeLen * factor)))
     const svgRect  = e.currentTarget.getBoundingClientRect()
-    const xFrac    = Math.max(0, Math.min(1, (e.clientX - svgRect.left - PL) / chartW))
+    const sx       = svgScaleX(e.currentTarget)
+    const xFrac    = Math.max(0, Math.min(1, ((e.clientX - svgRect.left) * sx - PL) / chartW))
     const anchor   = vs + Math.round(rangeLen * xFrac) // bar index under mouse
     let ns = Math.round(anchor - newLen * xFrac)
     let ne = ns + newLen - 1
@@ -597,7 +647,8 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
   function handleMouseMove(e: React.MouseEvent<SVGSVGElement>) {
     if (!isDragging.current) return
     const rangeLen   = dragStartVe.current - dragStartVs.current + 1
-    const barsPerPx  = rangeLen / chartW
+    const sx         = svgScaleX(e.currentTarget)
+    const barsPerPx  = rangeLen / (chartW / sx)   // CSS px per bar
     const shift      = Math.round(-(e.clientX - dragStartX.current) * barsPerPx)
     let ns = dragStartVs.current + shift
     let ne = dragStartVe.current + shift
@@ -682,9 +733,10 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
         Scroll · Drag · Arrow keys · +/− to zoom · R to reset
       </div>
 
-      <div style={{ overflowX: 'auto' }}>
+      <div>
         <svg
-          width={W} height={H}
+          viewBox={`0 0 ${W} ${H}`}
+          width="100%"
           style={{ display: 'block', userSelect: 'none', cursor: isDragging.current ? 'grabbing' : 'crosshair' }}
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
@@ -865,7 +917,7 @@ function TradesTab({ trades, initialCapital, isRunning, tradesSoFar }: {
   isRunning?: boolean
   tradesSoFar?: number
 }) {
-  const [visibleCols, setVisibleCols] = useState<Set<ColumnKey>>(DEFAULT_VISIBLE)
+  const [visibleCols, setVisibleCols] = useState<Set<ColumnKey>>(loadColPrefs)
   const [chooserOpen, setChooserOpen] = useState(false)
   const chooserRef = useRef<HTMLDivElement>(null)
 
@@ -883,6 +935,7 @@ function TradesTab({ trades, initialCapital, isRunning, tradesSoFar }: {
     setVisibleCols(prev => {
       const next = new Set(prev)
       show ? next.add(key) : next.delete(key)
+      localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(Array.from(next)))
       return next
     })
   }

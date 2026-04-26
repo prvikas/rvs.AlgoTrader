@@ -5,8 +5,21 @@ import { RunMode, TradeRecord } from '../../types/strategy'
 import { C, F, SP, TABLE_CELL } from '../../styles/tokens'
 import { useEnums } from '../../context/EnumsContext'
 
+const TF_MINUTES: Record<string, number> = {
+  '1m': 1, '3m': 3, '5m': 5, '10m': 10, '15m': 15, '30m': 30,
+  '60m': 60, '4h': 240, '1d': 375,
+}
+function barsToApproxDays(bars: number, tf: string): number {
+  return (bars * (TF_MINUTES[tf?.toLowerCase()] ?? 375)) / 375
+}
+function fmtHoldDuration(bars: number, tf: string): string {
+  const d = barsToApproxDays(bars, tf)
+  return d < 1 ? `${bars.toFixed(1)} bars (~${(d * 24).toFixed(0)}h)` : `${bars.toFixed(1)} bars (~${d.toFixed(1)}d)`
+}
+
 interface Props {
   strategyId: string
+  primaryTimeframe?: string
 }
 
 // ── MAE/MFE Scatter ───────────────────────────────────────────────────────────
@@ -533,8 +546,8 @@ const tradeTd: React.CSSProperties = { padding: '4px 8px', fontSize: 11, color: 
 
 // ── Trade Analysis section ────────────────────────────────────────────────────
 
-function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId }: {
-  strategyId: string; scenarioId: string; runId: string
+function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId, primaryTimeframe = '1d' }: {
+  strategyId: string; scenarioId: string; runId: string; primaryTimeframe?: string
 }) {
   // All runs from listRuns now have real UUID IDs; fetch trades from the saved-run endpoint.
   const { data: realTrades, isLoading, error } = useQuery({
@@ -605,7 +618,7 @@ function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId }: {
             <TradeStat label="Avg Brokerage" value={`₹${(btTrades.reduce((s, t) => s + (t.totalCost ?? 0), 0) / btTrades.length).toFixed(0)}`} />
             <TradeStat label="Total Slippage" value={`₹${btTrades.reduce((s, t) => s + (t.slippageAmount ?? 0), 0).toFixed(0)}`} />
             <TradeStat label="Total Cost" value={`₹${btTrades.reduce((s, t) => s + (t.totalCost ?? 0) + (t.slippageAmount ?? 0), 0).toFixed(0)}`} />
-            <TradeStat label="Avg Hold" value={`${(btTrades.reduce((s, t) => s + (t.holdingBars ?? 0), 0) / btTrades.length).toFixed(1)} bars`} />
+            <TradeStat label="Avg Hold" value={fmtHoldDuration(btTrades.reduce((s, t) => s + (t.holdingBars ?? 0), 0) / btTrades.length, primaryTimeframe)} />
           </div>
         )}
       </div>
@@ -648,7 +661,7 @@ function TradeStat({ label, value }: { label: string; value: string }) {
 
 // ── Main ResultsTab ───────────────────────────────────────────────────────────
 
-export function ResultsTab({ strategyId }: Props) {
+export function ResultsTab({ strategyId, primaryTimeframe = '1d' }: Props) {
   const { enums } = useEnums()
   const runModeOptions = enums.runMode ?? []
 
@@ -811,6 +824,7 @@ export function ResultsTab({ strategyId }: Props) {
                             strategyId={strategyId}
                             scenarioId={r.scenarioId}
                             runId={r.id}
+                            primaryTimeframe={primaryTimeframe}
                           />
                         </td>
                       </tr>

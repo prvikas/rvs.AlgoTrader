@@ -106,8 +106,11 @@ public class BacktestEngine(
         var equity    = request.InitialCapital;
         var peakEquity = equity;
         var maxDrawdown = 0m;
-        BacktestTrade?   openTrade  = null;
-        OpenSpreadSim?   openSpread = null;
+        // Multi-position: lists replace the single-slot openTrade / openSpread variables.
+        // BacktestEngine enforces strategy.MaxConcurrentPositions as the combined cap.
+        var openTrades  = new List<BacktestTrade>();
+        var openSpreads = new List<OpenSpreadSim>();
+        var maxConcurrent = Math.Max(1, strategy.MaxConcurrentPositions);
         var totalBars  = allCandles.Count;
         var skippedSignals = 0;
         var circuitBreakerHit = false;
@@ -119,11 +122,13 @@ public class BacktestEngine(
         // The actual close is deferred to the OPEN of the next candle (matching PineScript next-bar fill).
         bool pendingStrategyExit = false;
         string  pendingExitReason = string.Empty;
-        // Prevent re-entry on the same bar an SL/TP fires.
-        // PineScript semantics: stop fills mid-bar, entry is only evaluated at bar CLOSE.
-        // State-based conditions (EMA9 > EMA21) would otherwise re-enter immediately while
-        // the trend is still intact, creating a rapid stop-out/re-entry cascade.
+        // Prevent re-entry on the same bar an SL/TP fires (only when ALL positions were just closed).
         int lastSlTpExitBar = -1;
+        // Option premium VWAP: keyed by "CE_ATM", "PE_ATM", "STRADDLE_ATM", "CE_{strike}", "PE_{strike}".
+        // Accumulated each bar, reset at daily session open. Exposed via StrategyContext.
+        var optionVwapAcc     = new Dictionary<string, (decimal CumValue, int Count)>(StringComparer.OrdinalIgnoreCase);
+        var optionVwapResult  = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        LocalDate optionVwapDate = LocalDate.MinIsoValue;
 
         // Progress reporting: every 1% of bars (minimum 1)
         var jobId        = request.JobId ?? "backtest";
@@ -233,64 +238,70 @@ public class BacktestEngine(
             if (i % 500 == 0) ct.ThrowIfCancellationRequested();
 
             var current = allCandles[i];
+            var barDate   = current.OpenTime.Date;
+            var barIvRank = ComputeIvRankAsOf(barDate, ivHistory);
 
             // ── Strategy-driven exit: execute deferred close at this bar's open ──────────
             // Set by the exit-signal evaluation block below (previous bar returned ExitLong/ExitShort).
             // PineScript semantics: signal fires on bar close, fill executes at next bar's open.
+            // Closes ALL open positions (trades + spreads) — matching "exit all" semantics.
             if (pendingStrategyExit)
             {
                 pendingStrategyExit = false;
-                if (openTrade != null)
+                bool breakLoop = false;
+                foreach (var t in openTrades.ToList())
                 {
                     var seExitPrice = current.Open;
-                    var seGross = openTrade.Direction == "BUY"
-                        ? (seExitPrice - openTrade.EntryPrice) * openTrade.Quantity
-                        : (openTrade.EntryPrice - seExitPrice) * openTrade.Quantity;
-                    var seCosts = costCalc.Calculate(seExitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
-                    trades.Add(openTrade with
+                    var seGross = t.Direction == "BUY"
+                        ? (seExitPrice - t.EntryPrice) * t.Quantity
+                        : (t.EntryPrice - seExitPrice) * t.Quantity;
+                    var seCosts = costCalc.Calculate(seExitPrice * t.Quantity, t.Direction != "BUY", costProfile);
+                    trades.Add(t with
                     {
-                        ExitPrice = seExitPrice,
-                        ExitTime = current.OpenTime,
-                        GrossPnl = seGross,
-                        //NetPnl = seGross - seCosts.Total,
-                        NetPnl = seGross - openTrade.EntryCommission - seCosts.Total,
-                        ExitReason = $"STRATEGY_EXIT:{pendingExitReason}",
+                        ExitPrice      = seExitPrice,
+                        ExitTime       = current.OpenTime,
+                        GrossPnl      = seGross,
+                        NetPnl         = seGross - t.EntryCommission - seCosts.Total,
+                        ExitReason     = $"STRATEGY_EXIT:{pendingExitReason}",
                         ExitCommission = seCosts.Total,
-                        HoldingBars = Math.Max(0, i - openTrade.EntryBarIndex),
+                        HoldingBars    = Math.Max(0, i - t.EntryBarIndex),
                     });
                     equity += seGross - seCosts.Total;
-                    openTrade = null;
-                    
+                    openTrades.Remove(t);
                     if (equity > peakEquity) peakEquity = equity;
                     var seDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
                     if (seDd > maxDrawdown) maxDrawdown = seDd;
-
-                    if (equity <= 0)
-                    {
-                        circuitBreakerHit = true;
-                        circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt (strategy exit). Backtest stopped.";
-                        logger.LogWarning("[Backtest] Bankruptcy after strategy exit at bar {I}", i);
-                        break;
-                    }
-                    if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
-                    {
-                        circuitBreakerHit = true;
-                        circuitBreakerReason = $"Equity ₹{equity:F0} fell below circuit breaker floor after strategy exit.";
-                        logger.LogWarning("[Backtest] Circuit breaker hit after strategy exit at bar {I}", i);
-                        break;
-                    }
-                    // Fall through — evaluate for new entry on this bar (position is now flat).
-
+                    if (equity <= 0) { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F2} — bankrupt (strategy exit)."; breakLoop = true; }
+                    else if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor) { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F0} below circuit breaker (strategy exit)."; breakLoop = true; }
                 }
+                foreach (var sp in openSpreads.ToList())
+                {
+                    double ivFrac = barIvRank != null ? Math.Max(0.05, (double)(barIvRank.CurrentIv / 100m)) : sp.EntryIvFraction;
+                    decimal spVal = bsEngine != null ? PriceSpreadSim(sp, current.Open, barDate, bsEngine, ivFrac) : 0m;
+                    decimal spPnl = sp.NetCredit - spVal;
+                    decimal spExitComm = request.BrokerageFlatPerSide * sp.Legs.Count;
+                    equity += spPnl - spExitComm;
+                    trades.Add(new BacktestTrade(Guid.NewGuid(), request.InternalSymbol,
+                        sp.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD", sp.Legs.Count,
+                        Math.Abs(sp.NetCredit), spVal, sp.UnderlyingStop ?? 0m,
+                        Math.Abs(sp.NetCredit) * sp.ProfitTargetPct,
+                        sp.EntryTime, current.OpenTime, spPnl, spPnl - sp.EntryCommission - spExitComm,
+                        $"STRATEGY_EXIT:{pendingExitReason}", sp.EntryCommission, spExitComm,
+                        Math.Max(0, i - sp.EntryBarIndex)));
+                    openSpreads.Remove(sp);
+                    if (equity > peakEquity) peakEquity = equity;
+                    var spDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                    if (spDd > maxDrawdown) maxDrawdown = spDd;
+                    if (equity <= 0) { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F2} — bankrupt (strategy spread exit)."; breakLoop = true; }
+                    else if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor) { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F0} below circuit breaker (strategy spread exit)."; breakLoop = true; }
+                }
+                if (breakLoop) break;
+                // Fall through — evaluate for new entry on this bar (all positions now flat).
             }
 
             // ── Per-bar market context ────────────────────────────────────────────────────
-            // Computed once per bar so the exit-evaluation branch, spread-monitor branch,
-            // and entry-evaluation branch all share identical market context (PCR / IvRank /
-            // upcoming-event / option chain).  Previously these were declared only in the
-            // entry section, causing CS0103 when the exit branch referenced them.
-            var barDate   = current.OpenTime.Date;
-            var barIvRank = ComputeIvRankAsOf(barDate, ivHistory);
+            // barDate / barIvRank are declared at top of loop iteration (before pendingStrategyExit)
+            // so all branches (exit, spread-monitor, entry) share identical market context.
 
             // FIB-4: conservative 7-day event window; strategies with tighter windows
             // re-check internally — this pre-filter only prevents false negatives.
@@ -330,195 +341,192 @@ public class BacktestEngine(
             }
             // ─────────────────────────────────────────────────────────────────────────────
 
-            // ── ALL-SPREADS-1: monitor open spread position ───────────────────
-            if (openSpread != null)
+            // ── Option premium VWAP accumulation ─────────────────────────────────
+            // Reset daily at session open (9:15 IST). Sample ATM CE/PE from the option chain
+            // every bar so the strategy can compare current premiums against session VWAP.
+            if (nearChain != null)
             {
-                // Use current-bar IV so post-entry vol changes are reflected in the spread valuation.
-                // Falls back to entry IV when no IV history is available for this bar.
+                if (barDate != optionVwapDate) { optionVwapAcc.Clear(); optionVwapDate = barDate; }
+
+                var (_, _, si) = ExtractSpreadConfig(request.ParametersJson);
+                decimal atmK  = Math.Round(current.Close / si) * si;
+
+                void AccVwap(string key, decimal price)
+                {
+                    if (price <= 0) return;
+                    optionVwapAcc.TryGetValue(key, out var acc);
+                    optionVwapAcc[key] = (acc.CumValue + price, acc.Count + 1);
+                }
+
+                decimal cePrice = 0m, pePrice = 0m;
+                foreach (var leg in nearChain.Options)
+                {
+                    if (leg.StrikePrice != atmK) continue;
+                    if (leg.OptionType == "CE") { cePrice = leg.LastTradedPrice; AccVwap($"CE_{atmK}", cePrice); AccVwap("CE_ATM", cePrice); }
+                    else                        { pePrice = leg.LastTradedPrice; AccVwap($"PE_{atmK}", pePrice); AccVwap("PE_ATM", pePrice); }
+                }
+                if (cePrice > 0 || pePrice > 0) AccVwap("STRADDLE_ATM", cePrice + pePrice);
+
+                optionVwapResult.Clear();
+                foreach (var (k, (cumVal, cnt)) in optionVwapAcc)
+                    optionVwapResult[k] = cnt > 0 ? cumVal / cnt : 0m;
+            }
+
+            // ── ALL-SPREADS: monitor all open spread positions independently ────
+            bool spreadBreakLoop = false;
+            foreach (var sp in openSpreads.ToList())
+            {
                 double spreadIvFrac = barIvRank != null
                     ? Math.Max(0.05, (double)(barIvRank.CurrentIv / 100m))
-                    : openSpread.EntryIvFraction;
+                    : sp.EntryIvFraction;
                 var (spreadClosed, closeReason, spreadPnl, exitValue) =
-                    TryCloseSpreadSim(openSpread, current, bsEngine!, spreadIvFrac);
+                    TryCloseSpreadSim(sp, current, bsEngine!, spreadIvFrac);
 
                 if (spreadClosed)
                 {
-                    decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
-                    decimal netSpreadPnl = spreadPnl - openSpread.EntryCommission - exitComm;
-                    equity += spreadPnl - exitComm;  // entry comm already gone from equity; keep equity update as-is
+                    decimal exitComm     = request.BrokerageFlatPerSide * sp.Legs.Count;
+                    decimal netSpreadPnl = spreadPnl - sp.EntryCommission - exitComm;
+                    equity += spreadPnl - exitComm;
 
-                    var spreadTrade = new BacktestTrade(
+                    trades.Add(new BacktestTrade(
                         Id:              Guid.NewGuid(),
                         Symbol:          request.InternalSymbol,
-                        Direction:       openSpread.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
-                        Quantity:        openSpread.Legs.Count,
-                        EntryPrice:      Math.Abs(openSpread.NetCredit),
+                        Direction:       sp.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
+                        Quantity:        sp.Legs.Count,
+                        EntryPrice:      Math.Abs(sp.NetCredit),
                         ExitPrice:       exitValue,
-                        StopLoss:        openSpread.UnderlyingStop ?? 0m,
-                        TakeProfit:      Math.Abs(openSpread.NetCredit) * openSpread.ProfitTargetPct,
-                        EntryTime:       openSpread.EntryTime,
+                        StopLoss:        sp.UnderlyingStop ?? 0m,
+                        TakeProfit:      Math.Abs(sp.NetCredit) * sp.ProfitTargetPct,
+                        EntryTime:       sp.EntryTime,
                         ExitTime:        current.OpenTime,
                         GrossPnl:        spreadPnl,
                         NetPnl:          netSpreadPnl,
                         ExitReason:      closeReason,
-                        EntryCommission: openSpread.EntryCommission,
+                        EntryCommission: sp.EntryCommission,
                         ExitCommission:  exitComm,
-                        HoldingBars:     Math.Max(0, i - openSpread.EntryBarIndex),
-                        LegsJson:        BuildLegsJson(openSpread, request.BrokerageFlatPerSide));
-                    trades.Add(spreadTrade);
-                    openSpread = null;
+                        HoldingBars:     Math.Max(0, i - sp.EntryBarIndex),
+                        LegsJson:        BuildLegsJson(sp, request.BrokerageFlatPerSide)));
+                    openSpreads.Remove(sp);
 
                     if (equity > peakEquity) peakEquity = equity;
                     var spreadDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
                     if (spreadDd > maxDrawdown) maxDrawdown = spreadDd;
 
                     if (equity <= 0)
-                    {
-                        circuitBreakerHit    = true;
-                        circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt (spread). Backtest stopped.";
-                        logger.LogWarning("[Backtest] Bankruptcy after spread close at bar {I}", i);
-                        break;
-                    }
+                    { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F2} — bankrupt (spread). Backtest stopped."; logger.LogWarning("[Backtest] Bankruptcy after spread close at bar {I}", i); spreadBreakLoop = true; break; }
                     if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
-                    {
-                        circuitBreakerHit    = true;
-                        circuitBreakerReason = $"Equity ₹{equity:F0} fell below circuit breaker floor after spread close.";
-                        logger.LogWarning("[Backtest] Circuit breaker hit after spread close at bar {I}", i);
-                        break;
-                    }
+                    { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F0} below circuit breaker (spread)."; logger.LogWarning("[Backtest] Circuit breaker after spread close at bar {I}", i); spreadBreakLoop = true; break; }
                 }
-
-                AddChartBar(new BacktestChartBar(
-                    current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
-                    current.Open, current.High, current.Low, current.Close, current.Volume,
-                    null, null, null, null, null));
-
-                if (progress != null && i % progressStep == 0)
-                {
-                    var pct2 = (decimal)(i - warmupBars) / Math.Max(1, totalBars - warmupBars) * 100m;
-                    progress.Report(new BacktestProgress(jobId, i, totalBars, Math.Min(99m, pct2),
-                        trades.Count, equity, SnapshotRollingWindow()));
-                }
-                continue;
             }
+            if (spreadBreakLoop) break;
 
-            if (openTrade != null)
+            // ── ALL-TRADES: monitor all open equity/options positions independently ──
+            bool slTpFiredThisBar = false;
+            bool tradeBreakLoop   = false;
+            foreach (var openTrade in openTrades.ToList())
             {
-                // Apply trailing stop / break-even BEFORE checking SL/TP so the
-                // updated SL is used in this bar's exit check.
-                openTrade = ApplyTrailingStop(openTrade, current, request);
+                var updated = ApplyTrailingStop(openTrade, current, request);
+                // Replace with updated trailing-stop state
+                var idx = openTrades.IndexOf(openTrade);
+                if (idx >= 0) openTrades[idx] = updated;
 
-                var closed = TryClosePosition(openTrade, current, request);
+                var closed = TryClosePosition(updated, current, request);
                 if (closed != null)
                 {
-                    // EntryCommission was already deducted from equity at trade open.
-                    // Only deduct exit commission here; use stored EntryCommission for NetPnl.
                     var exitCosts = costCalc.Calculate(closed.ExitPrice * closed.Quantity, closed.Direction != "BUY", costProfile);
                     closed = closed with
                     {
                         ExitCommission = exitCosts.Total,
-                        //NetPnl         = closed.GrossPnl - exitCosts.Total,
-                        NetPnl = closed.GrossPnl - closed.EntryCommission - exitCosts.Total,
+                        NetPnl         = closed.GrossPnl - closed.EntryCommission - exitCosts.Total,
                         HoldingBars    = Math.Max(0, i - closed.EntryBarIndex),
                     };
-                    equity += closed.GrossPnl - exitCosts.Total; // EntryCommission already deducted at open
+                    equity += closed.GrossPnl - exitCosts.Total;
                     trades.Add(closed);
-                    openTrade  = null;
-                    lastSlTpExitBar = i; // block same-bar re-entry after SL/TP
+                    openTrades.Remove(updated);
+                    slTpFiredThisBar = true;
 
                     if (equity > peakEquity) peakEquity = equity;
                     var drawdown = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
                     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
 
-                    // ── Bankruptcy guard: stop if equity reaches zero or below ────
                     if (equity <= 0)
-                    {
-                        circuitBreakerHit    = true;
-                        circuitBreakerReason = $"Equity ₹{equity:F2} — account bankrupt. Backtest stopped.";
-                        logger.LogWarning("[Backtest] Bankruptcy at bar {I}: {Reason}", i, circuitBreakerReason);
-                        break;
-                    }
-
-                    // ── Circuit breaker: stop early if equity falls below the floor ──
+                    { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F2} — bankrupt. Backtest stopped."; logger.LogWarning("[Backtest] Bankruptcy at bar {I}", i); tradeBreakLoop = true; break; }
                     if (circuitBreakerFloor > 0 && equity < circuitBreakerFloor)
-                    {
-                        circuitBreakerHit    = true;
-                        circuitBreakerReason = $"Equity ₹{equity:F0} fell below {request.CircuitBreakerPct * 100:F0}% of initial capital ₹{request.InitialCapital:F0}. Loss-making strategy — backtest stopped early.";
-                        logger.LogWarning("[Backtest] Circuit breaker triggered at bar {I}: {Reason}", i, circuitBreakerReason);
-                        break;
-                    }
+                    { circuitBreakerHit = true; circuitBreakerReason = $"Equity ₹{equity:F0} below {request.CircuitBreakerPct * 100:F0}% of initial capital. Stopped."; logger.LogWarning("[Backtest] Circuit breaker at bar {I}", i); tradeBreakLoop = true; break; }
                 }
+            }
+            if (tradeBreakLoop) break;
+            // Block same-bar re-entry only when the last position just closed via SL/TP
+            if (slTpFiredThisBar && openTrades.Count == 0 && openSpreads.Count == 0)
+                lastSlTpExitBar = i;
 
-                // ── Strategy-driven exit evaluation ───────────────────────────────────
-                // Re-evaluate the strategy with CurrentPosition set so that strategies using
-                // indicator-based exits (e.g. SMA crossover) can return ExitLong / ExitShort.
-                // Backward-compatible: existing strategies return Buy/Sell/Hold and are unaffected.
-                // If an exit signal fires, set pendingStrategyExit = true; fill executes at the
-                // OPEN of the next candle (consistent with the PineScript next-bar fill model).
-                if (openTrade != null) // guard: may have been closed by SL/TP above
+            // ── MTM drawdown across all open trades ───────────────────────────
+            foreach (var t in openTrades)
+            {
+                var mtmUnrealized = t.Direction == "BUY"
+                    ? (current.Close - t.EntryPrice) * t.Quantity
+                    : (t.EntryPrice - current.Close) * t.Quantity;
+                var mtmEquity = equity + mtmUnrealized;
+                if (mtmEquity > peakEquity) peakEquity = mtmEquity;
+                var mtmDd = peakEquity > 0 ? (peakEquity - mtmEquity) / peakEquity : 0m;
+                if (mtmDd > maxDrawdown) maxDrawdown = mtmDd;
+            }
+
+            // ── Strategy-driven exit evaluation (when any position is open) ───
+            var totalOpen = openTrades.Count + openSpreads.Count;
+            if (totalOpen > 0)
+            {
+                var exitVisibleCandles = new ReadOnlyListSlice<ClosedCandle>(allCandles, i + 1);
+                var currentPosition = openTrades.Count > 0
+                    ? (openTrades[0].Direction == "BUY" ? "LONG" : "SHORT")
+                    : (openSpreads.Count > 0 ? "LONG" : null); // credit spreads treated as LONG for exit eval
+                var exitCtx = new StrategyContext(
+                    Guid.Empty, request.InternalSymbol, request.Timeframe,
+                    exitVisibleCandles, request.ParametersJson, "backtest",
+                    OptionChain:        nearChain,
+                    SymbolIvRank:       barIvRank,
+                    HasUpcomingEvent:   hasUpcomingEvent,
+                    CurrentPosition:    currentPosition,
+                    OpenPositionCount:  totalOpen,
+                    OptionPremiumVwap:  optionVwapResult.Count > 0 ? optionVwapResult : null);
+                try
                 {
-                    var exitVisibleCandles = new ReadOnlyListSlice<ClosedCandle>(allCandles, i + 1);
-                    // Carry the same market context as the entry-evaluation ctx so that
-                    // PCR/IV/breadth conditions work correctly in exit rule trees.
-                    var exitCtx = new StrategyContext(
-                        Guid.Empty, request.InternalSymbol, request.Timeframe,
-                        exitVisibleCandles, request.ParametersJson, "backtest",
-                        OptionChain:      nearChain,
-                        SymbolIvRank:     barIvRank,
-                        HasUpcomingEvent: hasUpcomingEvent,
-                        CurrentPosition: openTrade.Direction == "BUY" ? "LONG" : "SHORT");
-                    try
+                    var exitSignal = await strategy.EvaluateAsync(exitCtx, ct);
+                    if (exitSignal.Signal is SignalType.ExitLong or SignalType.ExitShort)
                     {
-                        var exitSignal = await strategy.EvaluateAsync(exitCtx, ct);
-                        if ((openTrade.Direction == "BUY"  && exitSignal.Signal == SignalType.ExitLong) ||
-                            (openTrade.Direction == "SELL" && exitSignal.Signal == SignalType.ExitShort))
-                        {
-                            pendingStrategyExit = true;
-                            pendingExitReason   = exitSignal.Reason ?? "strategy condition";
-                            logger.LogDebug("[Backtest] Strategy exit queued at bar {I}: {Reason}", i, pendingExitReason);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "[Backtest] Strategy exit evaluation failed at bar {I} — continuing with SL/TP only", i);
+                        pendingStrategyExit = true;
+                        pendingExitReason   = exitSignal.Reason ?? "strategy condition";
+                        logger.LogDebug("[Backtest] Strategy exit queued at bar {I}: {Reason}", i, pendingExitReason);
                     }
                 }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "[Backtest] Strategy exit evaluation failed at bar {I} — continuing with SL/TP only", i);
+                }
+            }
 
-                // Chart: add bar (strategy indicators available when exit check ran)
-                AddChartBar(new BacktestChartBar(
-                    TimeMs: current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
-                    Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
-                    Volume: current.Volume,
-                    Signal: pendingStrategyExit ? "EXIT" : null, SignalPrice: null,
-                    StopLoss: null, TakeProfit: null, Indicators: null));
-
-                // Progress reporting (for open-trade bars with no signal)
+            // Progress reporting (for open-position bars with no new signal)
+            if (totalOpen > 0)
+            {
                 if (progress != null && i % progressStep == 0)
                 {
                     var pct = (decimal)(i - warmupBars) / Math.Max(1, totalBars - warmupBars) * 100m;
                     progress.Report(new BacktestProgress(jobId, i, totalBars, Math.Min(99m, pct),
                         trades.Count, equity, SnapshotRollingWindow()));
                 }
-                // MTM drawdown: update peak/drawdown using the bar's close-price unrealized P&L.
-                // Without this, a trade that falls 15% intrabar before recovering to TP shows
-                // zero drawdown contribution — the closed-equity-only peak/drawdown is misleading.
-                if (openTrade != null)
-                {
-                    var mtmUnrealized = openTrade.Direction == "BUY"
-                        ? (current.Close - openTrade.EntryPrice) * openTrade.Quantity
-                        : (openTrade.EntryPrice - current.Close) * openTrade.Quantity;
-                    var mtmEquity = equity + mtmUnrealized;
-                    if (mtmEquity > peakEquity) peakEquity = mtmEquity;
-                    var mtmDd = peakEquity > 0 ? (peakEquity - mtmEquity) / peakEquity : 0m;
-                    if (mtmDd > maxDrawdown) maxDrawdown = mtmDd;
-                }
+            }
 
-                // If SL/TP fired this bar (openTrade is now null) AND the strategy just fired
-                // a fresh entry signal on this same bar, fall through to evaluate it.
-                // This matches Pine's reversal behaviour (close long → open short same bar).
-                if (openTrade != null)
-                    continue; // still in a trade, no entry eval
-                // else: fall through to entry section below
+            // At max capacity: add chart bar here (entry-eval path at line 565 is never reached).
+            // Mark EXIT when SL/TP fired this bar or strategy exit is queued.
+            if (openTrades.Count + openSpreads.Count >= maxConcurrent)
+            {
+                string? inPosSig = (slTpFiredThisBar || pendingStrategyExit) ? "EXIT" : null;
+                AddChartBar(new BacktestChartBar(
+                    TimeMs: current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
+                    Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
+                    Volume: current.Volume,
+                    Signal: inPosSig, SignalPrice: null, StopLoss: null, TakeProfit: null, Indicators: null));
+                continue;
             }
 
             // zero-copy O(1) slice for entry evaluation — no List<T> allocation
@@ -534,11 +542,13 @@ public class BacktestEngine(
                 visibleCandles,
                 request.ParametersJson,
                 "backtest",
-                OptionChain:      nearChain,
-                SymbolIvRank:     barIvRank,
-                HasUpcomingEvent: hasUpcomingEvent,
-                NearExpiryChain:  nearChain,
-                FarExpiryChain:   farChain ?? nearChain);
+                OptionChain:        nearChain,
+                SymbolIvRank:       barIvRank,
+                HasUpcomingEvent:   hasUpcomingEvent,
+                NearExpiryChain:    nearChain,
+                FarExpiryChain:     farChain ?? nearChain,
+                OpenPositionCount:  openTrades.Count + openSpreads.Count,
+                OptionPremiumVwap:  optionVwapResult.Count > 0 ? optionVwapResult : null);
 
             SignalResult signal;
             try { signal = await strategy.EvaluateAsync(ctx, ct); }
@@ -548,20 +558,24 @@ public class BacktestEngine(
                 AddChartBar(new BacktestChartBar(
                     current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
                     current.Open, current.High, current.Low, current.Close, current.Volume,
-                    null, null, null, null, null));
+                    slTpFiredThisBar ? "EXIT" : null, null, null, null, null));
                 continue;
             }
 
-            // Chart: bar with indicators and optional signal
-            string? chartSig = signal.Signal is SignalType.Buy or SignalType.Sell ? signal.Signal.ToString().ToUpperInvariant() : null;
+            // Chart: one bar per iteration. SL/TP exit takes priority over entry signal on the same bar
+            // (re-entry is blocked at line 592 anyway, so the BUY/SELL signal won't execute).
+            string? chartSig = slTpFiredThisBar                             ? "EXIT"
+                             : signal.Signal is SignalType.Buy or SignalType.Sell
+                               ? signal.Signal.ToString().ToUpperInvariant() : null;
+            bool isEntrySignal = chartSig is "BUY" or "SELL";
             AddChartBar(new BacktestChartBar(
                 TimeMs: current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
                 Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
                 Volume: current.Volume,
                 Signal: chartSig,
-                SignalPrice: chartSig != null ? signal.EntryPrice : null,
-                StopLoss:    chartSig != null ? signal.StopLoss   : null,
-                TakeProfit:  chartSig != null ? signal.TakeProfit : null,
+                SignalPrice: isEntrySignal ? signal.EntryPrice : null,
+                StopLoss:    isEntrySignal ? signal.StopLoss   : null,
+                TakeProfit:  isEntrySignal ? signal.TakeProfit : null,
                 Indicators: signal.IndicatorValues));
 
             // Progress reporting every ~1% (includes rolling window snapshot)
@@ -601,13 +615,14 @@ public class BacktestEngine(
                 }
 
                 var entryIvPct = barIvRank?.CurrentIv ?? 15m; // fallback 15% when no IV history
-                openSpread = EnterSpreadSim(signal.Spread, current, barDate, entryIvPct, request, bsEngine);
-                if (openSpread != null)
+                var newSpread = EnterSpreadSim(signal.Spread, current, barDate, entryIvPct, request, bsEngine);
+                if (newSpread != null)
                 {
-                    openSpread = openSpread with { EntryBarIndex = i }; // for HoldingBars at close
-                    equity -= openSpread.EntryCommission;
+                    newSpread = newSpread with { EntryBarIndex = i };
+                    equity -= newSpread.EntryCommission;
+                    openSpreads.Add(newSpread);
                     logger.LogDebug("[Backtest] Spread entered {Type} bar={Bar} credit={Credit:F2} legs={Legs}",
-                        signal.Spread.SpreadType, i, openSpread.NetCredit, openSpread.Legs.Count);
+                        signal.Spread.SpreadType, i, newSpread.NetCredit, newSpread.Legs.Count);
                 }
                 continue;
             }
@@ -669,10 +684,16 @@ public class BacktestEngine(
 
             // Re-anchor SL to actual fill price so the stop distance is preserved when the
             // fill gaps from the signal bar close (NextBarOpen fill model).
-            // Without this: signal at close=100, SL=94 (6pts), fill at open=103 → effective risk=9pts
-            // (worse for gap-down fills: fill at 97 → SL only 3pts from fill, stops out immediately).
+            // PremiumPct: SL = entryPrice ± pct% of entry (for option premium % stops).
             decimal initialSl;
-            if (signal.StopLoss.HasValue && signal.EntryPrice.HasValue && signal.EntryPrice.Value > 0)
+            if (signal.StopLossPct.HasValue && signal.StopLossPct.Value > 0)
+            {
+                // PremiumPct stop: fixed percentage of the fill price
+                initialSl = signal.Signal == SignalType.Buy
+                    ? entryPrice * (1m - signal.StopLossPct.Value / 100m)
+                    : entryPrice * (1m + signal.StopLossPct.Value / 100m);
+            }
+            else if (signal.StopLoss.HasValue && signal.EntryPrice.HasValue && signal.EntryPrice.Value > 0)
             {
                 var slDistance = signal.Signal == SignalType.Buy
                     ? signal.EntryPrice.Value - signal.StopLoss.Value   // positive for longs
@@ -702,7 +723,7 @@ public class BacktestEngine(
                                                           // peakEquity intentionally NOT updated downward here — it's only updated upward after closes.
             equity -= entryCostsOnOpen.Total;
 
-            openTrade = new BacktestTrade(
+            openTrades.Add(new BacktestTrade(
                 Id: Guid.NewGuid(),
                 Symbol: request.InternalSymbol,
                 Direction: signal.Signal.ToString().ToUpperInvariant(),
@@ -722,75 +743,80 @@ public class BacktestEngine(
                 NetPnl: 0,
                 ExitReason: "",
                 InitialStopLoss: initialSl,
-                BestPrice:       entryPrice,   // will track high (longs) or low (shorts) from entry
-                WorstPrice:      entryPrice,   // will track low (longs) or high (shorts) from entry
+                BestPrice:       entryPrice,
+                WorstPrice:      entryPrice,
                 TrailActive:     false,
                 EntryCommission: entryCostsOnOpen.Total,
                 SlippageAmount:  slipAmount,
-                EntryBarIndex:   entryBarIndex);
+                EntryBarIndex:   entryBarIndex));
         }
 
-        if (openTrade != null && allCandles.Count > 0)
+        // Close all remaining open equity/options trades at end of data
+        if (allCandles.Count > 0)
         {
-            var lastCandle    = allCandles[^1];
-            var exitPrice     = lastCandle.Close;
-            var grossPnl      = openTrade.Direction == "BUY"
-                ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
-                : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
-            var exitCostsEod = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
-            var netPnlEod    = grossPnl - openTrade.EntryCommission - exitCostsEod.Total;
-
-            equity += grossPnl - exitCostsEod.Total;
-            if (equity > peakEquity) peakEquity = equity;
-            var eodDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
-            if (eodDd > maxDrawdown) maxDrawdown = eodDd;
-            trades.Add(openTrade with
+            var lastCandle = allCandles[^1];
+            foreach (var openTrade in openTrades)
             {
-                ExitPrice      = exitPrice,
-                ExitTime       = lastCandle.CloseTime,
-                GrossPnl       = grossPnl,
-                NetPnl         = netPnlEod,
-                ExitReason     = "END_OF_DATA",
-                ExitCommission = exitCostsEod.Total,
-                HoldingBars    = Math.Max(0, totalBars - 1 - openTrade.EntryBarIndex),
-            });
+                var exitPrice    = lastCandle.Close;
+                var grossPnl     = openTrade.Direction == "BUY"
+                    ? (exitPrice - openTrade.EntryPrice) * openTrade.Quantity
+                    : (openTrade.EntryPrice - exitPrice) * openTrade.Quantity;
+                var exitCostsEod = costCalc.Calculate(exitPrice * openTrade.Quantity, openTrade.Direction != "BUY", costProfile);
+                var netPnlEod    = grossPnl - openTrade.EntryCommission - exitCostsEod.Total;
+                equity += grossPnl - exitCostsEod.Total;
+                if (equity > peakEquity) peakEquity = equity;
+                var eodDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                if (eodDd > maxDrawdown) maxDrawdown = eodDd;
+                trades.Add(openTrade with
+                {
+                    ExitPrice      = exitPrice,
+                    ExitTime       = lastCandle.CloseTime,
+                    GrossPnl       = grossPnl,
+                    NetPnl         = netPnlEod,
+                    ExitReason     = "END_OF_DATA",
+                    ExitCommission = exitCostsEod.Total,
+                    HoldingBars    = Math.Max(0, totalBars - 1 - openTrade.EntryBarIndex),
+                });
+            }
         }
 
-        // Close any open spread position at end of data
-        if (openSpread != null && bsEngine != null && allCandles.Count > 0)
+        // Close all remaining open spread positions at end of data
+        if (bsEngine != null && allCandles.Count > 0)
         {
-            var lastBar = allCandles[^1];
+            var lastBar    = allCandles[^1];
             var lastIvRank = ComputeIvRankAsOf(lastBar.OpenTime.Date, ivHistory);
-            double eodIvFrac = lastIvRank != null
-                ? Math.Max(0.05, (double)(lastIvRank.CurrentIv / 100m))
-                : openSpread.EntryIvFraction;
-            decimal eodValue   = PriceSpreadSim(openSpread, lastBar.Close, lastBar.OpenTime.Date, bsEngine, eodIvFrac);
-            decimal eodPnl     = openSpread.NetCredit - eodValue; // unified formula — see TryCloseSpreadSim
-            decimal exitComm   = request.BrokerageFlatPerSide * openSpread.Legs.Count;
-            decimal netEodPnl = eodPnl - openSpread.EntryCommission - exitComm;
-            equity += eodPnl - exitComm;
-            if (equity > peakEquity) peakEquity = equity;
-            var eodSpreadDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
-            if (eodSpreadDd > maxDrawdown) maxDrawdown = eodSpreadDd;
-
-            trades.Add(new BacktestTrade(
-                Id:              Guid.NewGuid(),
-                Symbol:          request.InternalSymbol,
-                Direction:       openSpread.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
-                Quantity:        openSpread.Legs.Count,
-                EntryPrice:      Math.Abs(openSpread.NetCredit),
-                ExitPrice:       eodValue,
-                StopLoss:        openSpread.UnderlyingStop ?? 0m,
-                TakeProfit:      Math.Abs(openSpread.NetCredit) * openSpread.ProfitTargetPct,
-                EntryTime:       openSpread.EntryTime,
-                ExitTime:        lastBar.CloseTime,
-                GrossPnl:        eodPnl,
-                NetPnl:          netEodPnl,
-                ExitReason:      "END_OF_DATA",
-                EntryCommission: openSpread.EntryCommission,
-                ExitCommission:  exitComm,
-                HoldingBars:     Math.Max(0, totalBars - 1 - openSpread.EntryBarIndex),
-                LegsJson:        BuildLegsJson(openSpread, request.BrokerageFlatPerSide)));
+            foreach (var openSpread in openSpreads)
+            {
+                double eodIvFrac = lastIvRank != null
+                    ? Math.Max(0.05, (double)(lastIvRank.CurrentIv / 100m))
+                    : openSpread.EntryIvFraction;
+                decimal eodValue  = PriceSpreadSim(openSpread, lastBar.Close, lastBar.OpenTime.Date, bsEngine, eodIvFrac);
+                decimal eodPnl    = openSpread.NetCredit - eodValue;
+                decimal exitComm  = request.BrokerageFlatPerSide * openSpread.Legs.Count;
+                decimal netEodPnl = eodPnl - openSpread.EntryCommission - exitComm;
+                equity += eodPnl - exitComm;
+                if (equity > peakEquity) peakEquity = equity;
+                var eodSpreadDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                if (eodSpreadDd > maxDrawdown) maxDrawdown = eodSpreadDd;
+                trades.Add(new BacktestTrade(
+                    Id:              Guid.NewGuid(),
+                    Symbol:          request.InternalSymbol,
+                    Direction:       openSpread.NetCredit >= 0 ? "CREDIT-SPREAD" : "DEBIT-SPREAD",
+                    Quantity:        openSpread.Legs.Count,
+                    EntryPrice:      Math.Abs(openSpread.NetCredit),
+                    ExitPrice:       eodValue,
+                    StopLoss:        openSpread.UnderlyingStop ?? 0m,
+                    TakeProfit:      Math.Abs(openSpread.NetCredit) * openSpread.ProfitTargetPct,
+                    EntryTime:       openSpread.EntryTime,
+                    ExitTime:        lastBar.CloseTime,
+                    GrossPnl:        eodPnl,
+                    NetPnl:          netEodPnl,
+                    ExitReason:      "END_OF_DATA",
+                    EntryCommission: openSpread.EntryCommission,
+                    ExitCommission:  exitComm,
+                    HoldingBars:     Math.Max(0, totalBars - 1 - openSpread.EntryBarIndex),
+                    LegsJson:        BuildLegsJson(openSpread, request.BrokerageFlatPerSide)));
+            }
         }
 
         // Final progress (100%)

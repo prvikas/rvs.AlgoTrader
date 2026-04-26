@@ -67,6 +67,7 @@ export function StrategiesPage() {
   const [creating, setCreating] = useState(false)
   const [editingDefinition, setEditingDefinition] = useState(false)
   const [creatingType, setCreatingType] = useState<'equity' | 'options' | null>(null)
+  const [statusDropOpen, setStatusDropOpen] = useState(false)
 
   const selectedId = searchParams.get('id') ?? undefined
 
@@ -88,6 +89,17 @@ export function StrategiesPage() {
     },
   })
 
+  const updateStatusMut = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: StrategyStatus }) =>
+      strategyDomainApi.updateStrategy(id, { status }),
+    onSuccess: updated => {
+      qc.setQueryData<Strategy[]>(['strategy-definitions'], old =>
+        old ? old.map(s => s.id === updated.id ? updated : s) : [updated]
+      )
+      setStatusDropOpen(false)
+    },
+  })
+
   const selectedStrategy = strategies.find(s => s.id === selectedId)
 
   const filtered = strategies.filter(s =>
@@ -99,6 +111,7 @@ export function StrategiesPage() {
     setCreating(false)
     setEditingDefinition(false)
     setTab('scenarios')
+    setStatusDropOpen(false)
   }
 
   const TABS: { key: Tab; label: string }[] = [
@@ -109,7 +122,10 @@ export function StrategiesPage() {
   ]
 
   return (
-    <div style={{ display: 'flex', height: '100vh', gap: 0, overflow: 'hidden' }}>
+    <div
+      style={{ display: 'flex', height: '100vh', gap: 0, overflow: 'hidden' }}
+      onClick={() => setStatusDropOpen(false)}
+    >
       {/* Left sidebar */}
       <div style={{
         width: 240, flexShrink: 0, borderRight: `1px solid ${C.border}`,
@@ -293,9 +309,10 @@ export function StrategiesPage() {
             <StrategyDefinitionPage
               strategyId={selectedStrategy.id}
               initialData={selectedStrategy}
-              onSaved={() => {
+              onSaved={(_s, goToScenarios) => {
                 qc.invalidateQueries({ queryKey: ['strategy-definitions'] })
                 setEditingDefinition(false)
+                if (goToScenarios) setTab('scenarios')
               }}
               onCancel={() => setEditingDefinition(false)}
             />
@@ -318,7 +335,47 @@ export function StrategiesPage() {
                     <span key={i} style={{ fontSize: 10, color: C.textDim, fontFamily: F.mono }}>{i}</span>
                   ))}
                   <StyleBadge style={selectedStrategy.tradingStyle} />
-                  <StatusBadge status={selectedStrategy.status} />
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      onClick={e => { e.stopPropagation(); setStatusDropOpen(o => !o) }}
+                      title="Change status"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      <StatusBadge status={selectedStrategy.status} />
+                      <span style={{ fontSize: 8, color: C.textDim, marginLeft: 2 }}>▼</span>
+                    </button>
+                    {statusDropOpen && (
+                      <div
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                          position: 'absolute', top: '120%', left: 0, zIndex: 300,
+                          background: C.surface, border: `1px solid ${C.border3}`,
+                          borderRadius: 6, minWidth: 130,
+                          boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+                          padding: '4px 0',
+                        }}
+                      >
+                        {Object.values(StrategyStatus).map(s => (
+                          <button
+                            key={s}
+                            disabled={s === selectedStrategy.status || updateStatusMut.isPending}
+                            onClick={() => updateStatusMut.mutate({ id: selectedStrategy.id, status: s })}
+                            style={{
+                              display: 'block', width: '100%', textAlign: 'left',
+                              padding: '6px 12px', background: s === selectedStrategy.status ? C.surface2 : 'none',
+                              border: 'none', cursor: s === selectedStrategy.status ? 'default' : 'pointer',
+                              fontSize: 11, color: s === selectedStrategy.status ? C.text : C.textSub,
+                              fontWeight: s === selectedStrategy.status ? 700 : 400,
+                            }}
+                            onMouseEnter={e => { if (s !== selectedStrategy.status) e.currentTarget.style.background = C.surface2 }}
+                            onMouseLeave={e => { if (s !== selectedStrategy.status) e.currentTarget.style.background = 'none' }}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
@@ -384,7 +441,7 @@ export function StrategiesPage() {
               <div key={selectedStrategy.id} style={{ display: tab === 'scenarios' ? 'block' : 'none' }}>
                 <ScenariosTab strategy={selectedStrategy} />
               </div>
-              {tab === 'results'   && <ResultsTab strategyId={selectedStrategy.id} />}
+              {tab === 'results'   && <ResultsTab strategyId={selectedStrategy.id} primaryTimeframe={selectedStrategy.primaryTimeframe} />}
               {tab === 'compare'   && <CompareTab strategyId={selectedStrategy.id} />}
             </div>
           </>

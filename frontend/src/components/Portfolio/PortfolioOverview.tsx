@@ -8,7 +8,8 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { portfolioApi, PortfolioSummary, StrategyPnlRow } from '../../api/client'
+import { portfolioApi, PortfolioSummary, StrategyPnlRow, strategyDomainApi } from '../../api/client'
+import { Strategy } from '../../types/strategy'
 import { formatInr } from '../../utils/datetime'
 import { C, CARD_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../../styles/tokens'
 
@@ -136,6 +137,13 @@ export function PortfolioOverview() {
     refetchInterval: 10_000,
   })
 
+  const { data: definitions = [] } = useQuery<Strategy[]>({
+    queryKey: ['strategy-definitions'],
+    queryFn: () => strategyDomainApi.listStrategies(),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  })
+
   if (isLoading || !summary) {
     return (
       <div>
@@ -217,6 +225,64 @@ export function PortfolioOverview() {
           : <StrategyTable rows={summary.byStrategy} />
         }
       </div>
+
+      {/* ── Strategy library (all definitions) ── */}
+      {definitions.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            marginBottom: 8, paddingBottom: 6,
+            borderBottom: `1px solid ${C.border}`,
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Strategy Library ({definitions.length})
+            </span>
+            <span style={{ fontSize: 10, color: C.textDim }}>All definitions · go to Strategies tab to manage</span>
+          </div>
+          <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.surface2, borderBottom: `1px solid ${C.border}` }}>
+                  {['Name', 'Timeframe', 'Style', 'Status'].map(h => (
+                    <th key={h} style={{ padding: TABLE_HEADER_CELL, textAlign: 'left', color: C.textMuted, fontWeight: 600, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {definitions.map(d => {
+                  const statusColor: Record<string, string> = {
+                    Draft: C.textDim, Backtested: C.blue, 'Fwd Testing': C.blue, Live: C.green, Archived: C.textDim,
+                  }
+                  const isDeployed = summary?.byStrategy.some(r => r.name === d.name)
+                  return (
+                    <tr key={d.id} style={{ borderBottom: `1px solid ${C.border2}` }}
+                      onMouseEnter={e => (e.currentTarget.style.background = C.surface)}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                      <td style={{ padding: TABLE_CELL, fontWeight: 600, color: C.text }}>
+                        {d.name}
+                        {isDeployed && (
+                          <span style={{ marginLeft: 6, fontSize: 9, color: C.green, background: C.greenBg, border: `1px solid ${C.green30}`, borderRadius: 2, padding: '1px 4px', fontWeight: 700 }}>
+                            DEPLOYED
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: TABLE_CELL, color: C.textSub, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{d.primaryTimeframe}</td>
+                      <td style={{ padding: TABLE_CELL, color: C.amber, fontSize: 11 }}>{d.tradingStyle}</td>
+                      <td style={{ padding: TABLE_CELL }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: statusColor[d.status] ?? C.textDim }}>
+                          {d.status}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── Pipeline guidance (when no live strategies) ── */}
       {summary.runningCount === 0 && summary.byStrategy.length === 0 && (

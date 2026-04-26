@@ -9,6 +9,7 @@ import { EquityCurveChart } from '../components/Backtest/EquityCurveChart'
 import { KillSwitchBanner } from '../components/Dashboard/KillSwitchBanner'
 import { ColdRestartBanner } from '../components/Dashboard/ColdRestartBanner'
 import { BrokerStatusBar } from '../components/Broker/BrokerStatusBar'
+import { BrokerLoginModal } from '../components/Broker/BrokerLoginModal'
 import { ThemeSelector } from '../components/ui/ThemeSelector'
 import { SymbolSearchInput } from '../components/Strategy/SymbolSearchInput'
 import { StrategyParamsEditor, paramsToJson } from '../components/Strategy/StrategyParamsEditor'
@@ -24,6 +25,7 @@ import { RiskDashboardPage } from './RiskDashboardPage'
 import { CorrelationPage } from './CorrelationPage'
 import { NewsPage } from './NewsPage'
 import { ScreenerPage } from './ScreenerPage'
+import { OptionsIntelligencePage } from './OptionsIntelligencePage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { StrategiesPage as NewStrategiesPage } from './StrategiesPage'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
@@ -35,7 +37,7 @@ import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../st
 import { useUserMode } from '../context/UserModeContext'
 import { GuidedDashboard } from '../components/Dashboard/GuidedDashboard'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener' | 'options-intel'
 
 // Descriptions for known strategies; unknown ones registered on backend show name only.
 const STRATEGY_DESCS: Record<string, string> = {
@@ -54,6 +56,8 @@ const STRATEGY_DESCS: Record<string, string> = {
 export function Dashboard() {
   const { mode: userMode, toggle: toggleUserMode, isGuided } = useUserMode()
   const [activePage, setActivePage] = useState<Page>('portfolio')
+  const [brokerLoginTarget, setBrokerLoginTarget] = useState<'MStock' | 'Zerodha' | 'Upstox' | null>(null)
+  const [brokerDropOpen, setBrokerDropOpen] = useState(false)
   const [backtestPreset, setBacktestPreset] = useState<StrategyInstance | null>(null)
   const [scenarioJobId, setScenarioJobId] = useState<string | null>(null)
   const [openResultId, setOpenResultId] = useState<string | null>(null)
@@ -113,8 +117,9 @@ export function Dashboard() {
         { id: 'lab',         label: 'Strategy Lab' },
         { id: 'backtest',    label: 'Backtest' },
         { id: 'forwardtest', label: 'Fwd Test' },
-        { id: 'screener',    label: 'Screener' },
-        { id: 'news',        label: 'News' },
+        { id: 'screener',       label: 'Screener' },
+        { id: 'news',           label: 'News' },
+        { id: 'options-intel',  label: 'Options' },
       ],
     },
     {
@@ -151,7 +156,7 @@ export function Dashboard() {
   return (
     <div
       style={{ display: 'flex', flexDirection: 'column', height: '100vh', minWidth: 1280, backgroundColor: C.bg, color: C.text, fontFamily: "'Inter', system-ui, sans-serif" }}
-      onClick={() => setOpenNavGroup(null)}   // close any open dropdown on page click
+      onClick={() => { setOpenNavGroup(null); setBrokerDropOpen(false) }}   // close dropdowns on page click
     >
       {/* Top Navigation Bar */}
       <header style={{
@@ -160,6 +165,7 @@ export function Dashboard() {
         display: 'flex', alignItems: 'center',
         paddingLeft: 16, paddingRight: 16, gap: 0,
         position: 'relative', zIndex: 100,   // keeps dropdowns above content
+        overflow: 'visible',                 // allow dropdown menus to escape nav bounds
       }}>
         {/* Brand */}
         <span style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: '0.05em', marginRight: 16, flexShrink: 0 }}>
@@ -255,9 +261,51 @@ export function Dashboard() {
           <BrokerStatusBar />
           <SignalRIndicator connected={signalRConnected} />
 
+          {/* Broker Login — always visible regardless of brokerRequired flag */}
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={e => { e.stopPropagation(); setBrokerDropOpen(o => !o) }}
+              title="Login to broker"
+              style={{
+                fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 4,
+                cursor: 'pointer', background: '#1e3a5f',
+                color: '#93c5fd', border: '1px solid #1d4ed8',
+              }}
+            >
+              🔑 Broker
+            </button>
+            {brokerDropOpen && (
+              <div
+                style={{
+                  position: 'absolute', top: '110%', right: 0, zIndex: 200,
+                  background: '#1a1a2e', border: `1px solid #2a2a40`,
+                  borderRadius: 6, padding: '4px 0', minWidth: 130,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+                }}
+                onClick={e => e.stopPropagation()}
+              >
+                {(['MStock', 'Zerodha', 'Upstox'] as const).map(b => (
+                  <button
+                    key={b}
+                    onClick={() => { setBrokerLoginTarget(b); setBrokerDropOpen(false) }}
+                    style={{
+                      display: 'block', width: '100%', textAlign: 'left',
+                      padding: '7px 14px', background: 'none', border: 'none',
+                      color: '#93c5fd', cursor: 'pointer', fontSize: 12,
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#1e3a5f')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Kill Switch toggle — always accessible */}
           <button
-            onClick={() => killSwitchMut.mutate(!killSwitchStatus)}
+            onClick={e => { e.stopPropagation(); killSwitchMut.mutate(!killSwitchStatus) }}
             disabled={killSwitchMut.isPending}
             title={killSwitchStatus ? 'Kill switch ON — click to resume live trading' : 'Click to block all live orders'}
             style={{
@@ -278,6 +326,16 @@ export function Dashboard() {
           <LogoutButton />
         </div>
       </header>
+
+      {/* Broker Login Modal — opened via the always-visible 🔑 Broker nav button */}
+      {brokerLoginTarget && (
+        <BrokerLoginModal
+          broker={brokerLoginTarget}
+          apiKey=""
+          onSuccess={() => { setBrokerLoginTarget(null) }}
+          onClose={() => setBrokerLoginTarget(null)}
+        />
+      )}
 
       {/* Kill Switch Banner — full-width critical alert */}
       {killSwitchStatus === true && <KillSwitchBanner />}
@@ -325,6 +383,7 @@ export function Dashboard() {
         {activePage === 'correlation' && <CorrelationPage />}
         {activePage === 'news' && <NewsPage />}
         {activePage === 'screener' && <ScreenerPage />}
+        {activePage === 'options-intel' && <OptionsIntelligencePage />}
       </main>
 
     </div>
