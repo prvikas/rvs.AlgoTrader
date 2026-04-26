@@ -421,7 +421,8 @@ public class BacktestEngine(
             if (spreadBreakLoop) break;
 
             // ── ALL-TRADES: monitor all open equity/options positions independently ──
-            bool slTpFiredThisBar = false;
+            bool    slTpFiredThisBar = false;
+            decimal slTpExitPrice   = 0m; // last SL/TP fill price this bar (for chart tooltip)
             bool tradeBreakLoop   = false;
             foreach (var openTrade in openTrades.ToList())
             {
@@ -444,6 +445,7 @@ public class BacktestEngine(
                     trades.Add(closed);
                     openTrades.Remove(updated);
                     slTpFiredThisBar = true;
+                    slTpExitPrice    = closed.ExitPrice;
 
                     if (equity > peakEquity) peakEquity = equity;
                     var drawdown = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
@@ -525,7 +527,9 @@ public class BacktestEngine(
                     TimeMs: current.OpenTime.ToInstant().ToUnixTimeMilliseconds(),
                     Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
                     Volume: current.Volume,
-                    Signal: inPosSig, SignalPrice: null, StopLoss: null, TakeProfit: null, Indicators: null));
+                    Signal: inPosSig,
+                    SignalPrice: slTpFiredThisBar && slTpExitPrice > 0 ? slTpExitPrice : null,
+                    StopLoss: null, TakeProfit: null, Indicators: null));
                 continue;
             }
 
@@ -573,7 +577,8 @@ public class BacktestEngine(
                 Open: current.Open, High: current.High, Low: current.Low, Close: current.Close,
                 Volume: current.Volume,
                 Signal: chartSig,
-                SignalPrice: isEntrySignal ? signal.EntryPrice : null,
+                SignalPrice: isEntrySignal ? signal.EntryPrice
+                           : slTpFiredThisBar && slTpExitPrice > 0 ? slTpExitPrice : null,
                 StopLoss:    isEntrySignal ? signal.StopLoss   : null,
                 TakeProfit:  isEntrySignal ? signal.TakeProfit : null,
                 Indicators: signal.IndicatorValues));
