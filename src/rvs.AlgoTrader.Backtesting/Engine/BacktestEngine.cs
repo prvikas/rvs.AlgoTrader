@@ -1291,24 +1291,31 @@ public class BacktestEngine(
     /// </summary>
     private static BacktestTrade ApplyTrailingStop(BacktestTrade trade, ClosedCandle candle, BacktestRequest req)
     {
-        // Always update WorstPrice (MAE tracking) regardless of trailing stop settings
+        // Always update WorstPrice (MAE) and BestPrice (MFE) regardless of trailing stop settings.
+        // BestPrice was previously only updated inside the trailing-stop block, causing MFE = 0
+        // for all trades when no trail was configured.
         var worstPrice = trade.Direction == "BUY"
             ? Math.Min(trade.WorstPrice, candle.Low)
             : Math.Max(trade.WorstPrice, candle.High);
-
-        // Nothing to do for trailing stop if both features are disabled
-        if (req.TrailActivationR <= 0 && !req.BreakEvenAt1R)
-        {
-            return worstPrice == trade.WorstPrice ? trade : trade with { WorstPrice = worstPrice };
-        }
-
-        var initialR = Math.Abs(trade.EntryPrice - trade.InitialStopLoss);
-        if (initialR == 0) return worstPrice == trade.WorstPrice ? trade : trade with { WorstPrice = worstPrice };
-
-        // Update the running best price (ratchet — only ever improves)
         var bestPrice = trade.Direction == "BUY"
             ? Math.Max(trade.BestPrice, candle.High)
             : Math.Min(trade.BestPrice, candle.Low);
+
+        // Nothing more to do when trailing stop is fully disabled
+        if (req.TrailActivationR <= 0 && !req.BreakEvenAt1R)
+        {
+            return (worstPrice == trade.WorstPrice && bestPrice == trade.BestPrice)
+                ? trade
+                : trade with { WorstPrice = worstPrice, BestPrice = bestPrice };
+        }
+
+        var initialR = Math.Abs(trade.EntryPrice - trade.InitialStopLoss);
+        if (initialR == 0)
+        {
+            return (worstPrice == trade.WorstPrice && bestPrice == trade.BestPrice)
+                ? trade
+                : trade with { WorstPrice = worstPrice, BestPrice = bestPrice };
+        }
 
         // How many R has the trade moved in our favour based on best price seen
         var gainR = trade.Direction == "BUY"
