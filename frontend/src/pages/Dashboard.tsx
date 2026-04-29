@@ -26,6 +26,7 @@ import { CorrelationPage } from './CorrelationPage'
 import { NewsPage } from './NewsPage'
 import { ScreenerPage } from './ScreenerPage'
 import { OptionsIntelligencePage } from './OptionsIntelligencePage'
+import { QuantIntelligencePage } from './QuantIntelligencePage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { StrategiesPage as NewStrategiesPage } from './StrategiesPage'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
@@ -37,7 +38,7 @@ import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../st
 import { useUserMode } from '../context/UserModeContext'
 import { GuidedDashboard } from '../components/Dashboard/GuidedDashboard'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener' | 'options-intel'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener' | 'options-intel' | 'quant-intel'
 
 // Descriptions for known strategies; unknown ones registered on backend show name only.
 const STRATEGY_DESCS: Record<string, string> = {
@@ -120,6 +121,7 @@ export function Dashboard() {
         { id: 'screener',       label: 'Screener' },
         { id: 'news',           label: 'News' },
         { id: 'options-intel',  label: 'Options' },
+        { id: 'quant-intel',   label: 'Quant Intel' },
       ],
     },
     {
@@ -384,6 +386,7 @@ export function Dashboard() {
         {activePage === 'news' && <NewsPage />}
         {activePage === 'screener' && <ScreenerPage />}
         {activePage === 'options-intel' && <OptionsIntelligencePage />}
+        {activePage === 'quant-intel'  && <QuantIntelligencePage />}
       </main>
 
     </div>

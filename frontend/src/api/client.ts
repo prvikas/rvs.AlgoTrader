@@ -448,12 +448,19 @@ export interface BacktestRequest {
   sebiChargesPct?: number
   /** Stamp duty as % (e.g. 0.003). */
   stampDutyPct?: number
-  /** Trailing stop: R-multiple gain required before trail activates. 0 = disabled. */
+  /** "None" | "RMultiple" | "ATRMultiple". Default = "None". */
+  trailingType?: string
+  /** R-multiple gain required before trail activates. 0 = activate immediately. */
   trailActivationR?: number
-  /** Trailing stop: offset behind best price in R multiples. Default = 0.5. */
+  /** Trail distance: R offset (RMultiple) or ATR multiplier (ATRMultiple). Default = 0.5 / 1.5. */
   trailOffsetR?: number
   /** Slide SL to break-even once 1R is gained. Default = false. */
   breakEvenAt1R?: boolean
+  /** Close bookPct% of position when profit reaches triggerR. */
+  profitBookingEnabled?: boolean
+  profitBookingTriggerR?: number
+  profitBookingPct?: number
+  profitBookingContinueTrail?: boolean
   /** Stop backtest when equity < initialCapital × circuitBreakerPct. 0 = disabled. Default = 0.5 (50%). */
   circuitBreakerPct?: number
 }
@@ -1544,6 +1551,28 @@ export const strategyDomainApi = {
       brokerageFields.stampDutyPct       = bc.stampDutyPct
     }
 
+    // Map trailing stop config from strategy definition to backtest engine params
+    const trailing = parsed.trailing
+    const profitBooking = parsed.profitBooking
+    const trailingFields: Partial<BacktestRequest> = {}
+
+    if (trailing?.enabled) {
+      // All trailing types map to ATR-based engine trail; MovingAverage/Donchian/FixedPoints
+      // are approximated as ATR × multiplier (engine doesn't have indicator access mid-loop).
+      trailingFields.trailingType = 'ATRMultiple'
+      trailingFields.trailOffsetR = trailing.trailingParams?.multiplier ?? 1.5
+      trailingFields.trailActivationR = trailing.startCondition === StartCondition.AfterKR
+        ? (trailing.startConditionValue ?? 1)
+        : 0  // Immediately = activate from any profit
+    }
+
+    if (profitBooking?.enabled) {
+      trailingFields.profitBookingEnabled       = true
+      trailingFields.profitBookingTriggerR      = profitBooking.triggerR ?? 2
+      trailingFields.profitBookingPct           = profitBooking.bookPct ?? 50
+      trailingFields.profitBookingContinueTrail = profitBooking.continueTrailing ?? true
+    }
+
     // Launch real async backtest — pass scenarioId so the backend auto-updates
     // scenario.Status → Backtested and saves lastMetrics on completion.
     const btResp = await backtestApi.start({
@@ -1556,6 +1585,7 @@ export const strategyDomainApi = {
       initialCapital:  scenario.capital,
       scenarioId:      scenarioId,
       ...brokerageFields,
+      ...trailingFields,
     })
     const jobId: string = btResp.data?.data?.jobId ?? ''
 
@@ -1705,4 +1735,140 @@ export const newsApi = {
     apiClient.post<ApiResponse<string>>('/news', body),
   delete: (id: string) =>
     apiClient.delete<ApiResponse<boolean>>(`/news/${id}`),
+}
+
+// ── Options Intelligence ──────────────────────────────────────────────────────
+
+export interface OptionStrike {
+  strike: number
+  ceOI: number
+  ceDeltaOI: number
+  ceLTP: number
+  ceIV: number
+  peOI: number
+  peDeltaOI: number
+  peLTP: number
+  peIV: number
+  isAtm: boolean
+}
+
+export interface OptionChainSnapshot {
+  symbol: string
+  expiry: string
+  spotPrice: number
+  pcr: number
+  pcrMax: number
+  pinIV: number
+  totalIV: number
+  totalCeOI: number
+  totalPeOI: number
+  maxPainStrike: number
+  atmStrike: number
+  strikes: OptionStrike[]
+  fetchedAt: string
+}
+
+export interface OptionsRuleSignal {
+  ruleId: string
+  ruleName: string
+  triggered: boolean
+  severity: 'info' | 'warn' | 'alert'
+  reason: string
+  value?: number
+  threshold?: number
+}
+
+export interface OptionsIntelligenceResult {
+  snapshot: OptionChainSnapshot
+  signals: OptionsRuleSignal[]
+  overallBias: 'Bullish' | 'Bearish' | 'Neutral'
+  biasScore: number
+  lastUpdated: string
+}
+
+export const optionsApi = {
+  getIntelligence: (symbol: string, expiry = 'nearest') =>
+    apiClient.get<ApiResponse<OptionsIntelligenceResult>>(
+      `/options/intelligence/${encodeURIComponent(symbol)}`,
+      { params: { expiry } }
+    ),
+  getChain: (symbol: string, expiry = 'nearest') =>
+    apiClient.get<ApiResponse<OptionChainSnapshot>>(
+      `/options/chain/${encodeURIComponent(symbol)}`,
+      { params: { expiry } }
+    ),
+  getExpiries: (symbol: string) =>
+    apiClient.get<ApiResponse<string[]>>(
+      `/options/expiries/${encodeURIComponent(symbol)}`
+    ),
+}
+
+// ── P10-A: Quant Intelligence ─────────────────────────────────────────────────
+
+export interface IndicatorIntelligenceCard {
+  id: string
+  indicatorKey: string
+  displayName: string
+  whatItMeasures: string
+  commonMistake: string
+  positiveEvConditions: string
+  ignoreConditions: string
+  bestPairedWith: string
+  sizingImplications: string
+  userNotes: string
+  updatedAt: string
+}
+
+export interface UpdateIndicatorIntelligenceRequest {
+  whatItMeasures: string
+  commonMistake: string
+  positiveEvConditions: string
+  ignoreConditions: string
+  bestPairedWith: string
+  sizingImplications: string
+  userNotes: string
+}
+
+export interface GreeksIntelligenceCard {
+  id: string
+  metricKey: string
+  displayName: string
+  whatItMeasures: string
+  whyItMatters: string
+  commonMisuse: string
+  positiveEvConditions: string
+  regimeContext: string
+  sizingImplications: string
+  portfolioImpact: string
+  userNotes: string
+  updatedAt: string
+}
+
+export interface UpdateGreeksIntelligenceRequest {
+  whatItMeasures: string
+  whyItMatters: string
+  commonMisuse: string
+  positiveEvConditions: string
+  regimeContext: string
+  sizingImplications: string
+  portfolioImpact: string
+  userNotes: string
+}
+
+export const indicatorIntelligenceApi = {
+  getAll: () =>
+    apiClient.get<ApiResponse<IndicatorIntelligenceCard[]>>('/indicator-intelligence'),
+  getByKey: (key: string) =>
+    apiClient.get<ApiResponse<IndicatorIntelligenceCard>>(`/indicator-intelligence/${encodeURIComponent(key)}`),
+  update: (key: string, req: UpdateIndicatorIntelligenceRequest) =>
+    apiClient.put<ApiResponse<IndicatorIntelligenceCard>>(`/indicator-intelligence/${encodeURIComponent(key)}`, req),
+}
+
+export const greeksIntelligenceApi = {
+  getAll: () =>
+    apiClient.get<ApiResponse<GreeksIntelligenceCard[]>>('/greeks-intelligence'),
+  getByKey: (key: string) =>
+    apiClient.get<ApiResponse<GreeksIntelligenceCard>>(`/greeks-intelligence/${encodeURIComponent(key)}`),
+  update: (key: string, req: UpdateGreeksIntelligenceRequest) =>
+    apiClient.put<ApiResponse<GreeksIntelligenceCard>>(`/greeks-intelligence/${encodeURIComponent(key)}`, req),
 }

@@ -58,6 +58,10 @@ public class AlgoTraderDbContext : DbContext
     // Monitoring alert rules — user-defined threshold rules evaluated by MonitoringAlertJob
     public DbSet<MonitoringAlertRule> MonitoringAlertRules => Set<MonitoringAlertRule>();
 
+    // P10 Quant Intelligence — editable knowledge cards for indicators and options metrics
+    public DbSet<IndicatorIntelligence> IndicatorIntelligence => Set<IndicatorIntelligence>();
+    public DbSet<GreeksIntelligence>    GreeksIntelligence    => Set<GreeksIntelligence>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

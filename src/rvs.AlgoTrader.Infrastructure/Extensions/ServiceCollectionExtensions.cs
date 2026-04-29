@@ -127,8 +127,16 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISymbolDataPreferencesService, SymbolDataPreferencesService>();
         services.AddScoped<IMarketCalendarService, MarketCalendarService>();
         services.AddScoped<IMarketBreadthService, MarketBreadthService>();
-        services.AddScoped<IScreenerService, ScreenerService>();   // P9 Screener
-        services.AddScoped<INewsService, NewsService>();           // P9 News
+        services.AddScoped<IScreenerService, ScreenerService>();         // P9 Screener
+        services.AddScoped<INewsService, NewsService>();               // P9 News
+        services.AddScoped<IIndicatorIntelligenceService, IndicatorIntelligenceService>(); // P10-A
+        services.AddScoped<IGreeksIntelligenceService, GreeksIntelligenceService>();       // P10-A
+        services.AddScoped<IOptionsIntelligenceService>(sp => new OptionsIntelligenceService(
+            sp.GetRequiredService<IOptionChainService>(),
+            sp.GetRequiredService<IOptionChainSnapshotService>(),
+            sp.GetService<IConnectionMultiplexer>(),   // optional — Redis may be unavailable
+            sp.GetRequiredService<IClock>(),
+            sp.GetRequiredService<ILogger<OptionsIntelligenceService>>()));
         services.AddScoped<IEnumValuesService, EfEnumValuesService>();
         services.AddScoped<IBreadthJobDispatcher, HangfireBreadthJobDispatcher>();
         services.AddScoped<INseBhavcopyCandleSource, NseBhavcopyCandleSource>();
