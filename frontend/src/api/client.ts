@@ -1872,3 +1872,30 @@ export const greeksIntelligenceApi = {
   update: (key: string, req: UpdateGreeksIntelligenceRequest) =>
     apiClient.put<ApiResponse<GreeksIntelligenceCard>>(`/greeks-intelligence/${encodeURIComponent(key)}`, req),
 }
+
+// ── P10-B: Market Regime Engine ───────────────────────────────────────────────
+
+export interface QuantRegimeFactor {
+  name: string
+  value: string
+  interpretation: string
+  impact: 'supporting' | 'contradicting' | 'neutral'
+}
+
+export interface QuantRegimeResult {
+  regime: string        // e.g. "TrendingUp"
+  trafficLight: string  // "Green" | "Amber" | "Red"
+  confidence: number    // 0–100
+  summary: string
+  strategyGuidance: string
+  contributingFactors: QuantRegimeFactor[]
+  dataWarning?: string
+  symbol: string
+  timeframe: string
+  computedAt: string
+}
+
+export const regimeApi = {
+  classify: (symbol = 'NIFTY50', timeframe = '1d') =>
+    apiClient.get<ApiResponse<QuantRegimeResult>>('/regime/classify', { params: { symbol, timeframe } }),
+}

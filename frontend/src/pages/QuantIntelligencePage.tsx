@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import { indicatorIntelligenceApi, greeksIntelligenceApi } from '../api/client'
 import { IndicatorIntelligenceCardView } from '../components/quantIntelligence/IndicatorIntelligenceCard'
 import { GreeksIntelligenceCardView } from '../components/quantIntelligence/GreeksIntelligenceCard'
+import { RegimePanel } from '../components/quantIntelligence/RegimePanel'
 import { C, CONTENT_PAD } from '../styles/tokens'
 
-type Tab = 'indicators' | 'greeks'
+type Tab = 'regime' | 'indicators' | 'greeks'
 
 // ── Section header ─────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ function SectionHeader({ title, sub }: { title: string; sub: string }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function QuantIntelligencePage() {
-  const [activeTab, setActiveTab] = useState<Tab>('indicators')
+  const [activeTab, setActiveTab] = useState<Tab>('regime')
 
   const { data: indicators, isLoading: indLoading } = useQuery({
     queryKey: ['indicator-intelligence'],
@@ -40,6 +41,7 @@ export function QuantIntelligencePage() {
   const isLoading = activeTab === 'indicators' ? indLoading : grkLoading
 
   const TAB_ITEMS: { id: Tab; label: string }[] = [
+    { id: 'regime',     label: 'Market Regime' },
     { id: 'indicators', label: 'Indicator Intelligence' },
     { id: 'greeks',     label: 'Options / Greeks Intelligence' },
   ]
@@ -77,6 +79,17 @@ export function QuantIntelligencePage() {
           </button>
         ))}
       </div>
+
+      {/* Regime panel */}
+      {activeTab === 'regime' && (
+        <>
+          <SectionHeader
+            title="Market Regime Engine"
+            sub="Rules-based regime classifier using ADX, ATR expansion, and IV Percentile. Select a symbol and timeframe to see the current regime, traffic-light signal quality, and which factors contributed."
+          />
+          <RegimePanel />
+        </>
+      )}
 
       {/* Indicator cards */}
       {activeTab === 'indicators' && (
