@@ -1899,3 +1899,78 @@ export const regimeApi = {
   classify: (symbol = 'NIFTY50', timeframe = '1d') =>
     apiClient.get<ApiResponse<QuantRegimeResult>>('/regime/classify', { params: { symbol, timeframe } }),
 }
+
+// ── P10-C: Quant Lab ──────────────────────────────────────────────────────────
+
+export interface QuantConditionEntry {
+  indicator: string
+  operator: string
+  value: string
+  description: string
+}
+
+export interface QuantConditionNote {
+  id: string
+  date: string
+  text: string
+}
+
+export interface QuantCondition {
+  id: string
+  name: string
+  hypothesis: string
+  conditions: QuantConditionEntry[]
+  sizingRules: string
+  invalidationConditions: string
+  notes: QuantConditionNote[]
+  status: string
+  tags: string[]
+  isTemplate: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export const QUANT_CONDITION_STATUSES = [
+  'Hypothesis', 'Backtesting', 'PaperTrading', 'LiveSmall', 'LiveFull', 'Retired',
+] as const
+
+export type QuantConditionStatus = typeof QUANT_CONDITION_STATUSES[number]
+
+export interface CreateQuantConditionRequest {
+  name: string
+  hypothesis: string
+  conditions?: QuantConditionEntry[]
+  sizingRules: string
+  invalidationConditions: string
+  tags: string[]
+}
+
+export interface UpdateQuantConditionRequest {
+  name: string
+  hypothesis: string
+  conditions: QuantConditionEntry[]
+  sizingRules: string
+  invalidationConditions: string
+  tags: string[]
+}
+
+export const quantLabApi = {
+  getAll: () =>
+    apiClient.get<ApiResponse<QuantCondition[]>>('/quant-conditions'),
+  getTemplates: () =>
+    apiClient.get<ApiResponse<QuantCondition[]>>('/quant-conditions/templates'),
+  getById: (id: string) =>
+    apiClient.get<ApiResponse<QuantCondition>>(`/quant-conditions/${id}`),
+  create: (req: CreateQuantConditionRequest) =>
+    apiClient.post<ApiResponse<QuantCondition>>('/quant-conditions', req),
+  update: (id: string, req: UpdateQuantConditionRequest) =>
+    apiClient.put<ApiResponse<QuantCondition>>(`/quant-conditions/${id}`, req),
+  delete: (id: string) =>
+    apiClient.delete<ApiResponse<boolean>>(`/quant-conditions/${id}`),
+  addNote: (id: string, text: string) =>
+    apiClient.post<ApiResponse<QuantCondition>>(`/quant-conditions/${id}/notes`, { text }),
+  changeStatus: (id: string, status: string) =>
+    apiClient.put<ApiResponse<QuantCondition>>(`/quant-conditions/${id}/status`, { status }),
+  clone: (id: string) =>
+    apiClient.post<ApiResponse<QuantCondition>>(`/quant-conditions/${id}/clone`),
+}

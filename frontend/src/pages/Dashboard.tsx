@@ -27,6 +27,7 @@ import { NewsPage } from './NewsPage'
 import { ScreenerPage } from './ScreenerPage'
 import { OptionsIntelligencePage } from './OptionsIntelligencePage'
 import { QuantIntelligencePage } from './QuantIntelligencePage'
+import { QuantLabPage } from './QuantLabPage'
 import { PortfolioOverview } from '../components/Portfolio/PortfolioOverview'
 import { StrategiesPage as NewStrategiesPage } from './StrategiesPage'
 import { PromoteToForwardTestModal } from '../components/ForwardTest/PromoteToForwardTestModal'
@@ -38,7 +39,7 @@ import { C, NAV_HEIGHT, CONTENT_PAD, TABLE_CELL, TABLE_HEADER_CELL } from '../st
 import { useUserMode } from '../context/UserModeContext'
 import { GuidedDashboard } from '../components/Dashboard/GuidedDashboard'
 
-type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener' | 'options-intel' | 'quant-intel'
+type Page = 'portfolio' | 'strategies' | 'orders' | 'lab' | 'backtest' | 'forwardtest' | 'instruments' | 'master-data' | 'universe' | 'instrument-types' | 'settings' | 'journal' | 'portfolio-analysis' | 'risk' | 'correlation' | 'news' | 'screener' | 'options-intel' | 'quant-intel' | 'quant-lab'
 
 // Descriptions for known strategies; unknown ones registered on backend show name only.
 const STRATEGY_DESCS: Record<string, string> = {
@@ -122,6 +123,7 @@ export function Dashboard() {
         { id: 'news',           label: 'News' },
         { id: 'options-intel',  label: 'Options' },
         { id: 'quant-intel',   label: 'Quant Intel' },
+        { id: 'quant-lab',     label: 'Quant Lab' },
       ],
     },
     {
@@ -387,6 +389,7 @@ export function Dashboard() {
         {activePage === 'screener' && <ScreenerPage />}
         {activePage === 'options-intel' && <OptionsIntelligencePage />}
         {activePage === 'quant-intel'  && <QuantIntelligencePage />}
+        {activePage === 'quant-lab'    && <QuantLabPage />}
       </main>
 
     </div>

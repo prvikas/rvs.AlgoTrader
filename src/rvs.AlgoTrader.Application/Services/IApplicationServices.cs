@@ -763,6 +763,25 @@ public interface IBacktestReproductionService
 }
 
 /// <summary>
+/// Options Intelligence — derives PCR, IV, rule signals, and bias score from a live
+/// or snapshot option chain. pcrMax is persisted in Redis keyed by symbol+date and
+/// reset automatically (28h TTL). Rules are evaluated server-side; frontend renders only.
+/// </summary>
+public interface IOptionsIntelligenceService
+{
+    /// <summary>Full intelligence result — chain + rule signals + bias score.</summary>
+    Task<DTOs.Options.OptionsIntelligenceDto?> GetIntelligenceAsync(
+        string symbol, string expiry, CancellationToken ct);
+
+    /// <summary>Raw chain DTO without rule evaluation (lighter endpoint for chart-only use).</summary>
+    Task<DTOs.Options.OptionChainDto?> GetChainAsync(
+        string symbol, string expiry, CancellationToken ct);
+
+    /// <summary>Available expiries for a symbol (nearest weekly + nearest monthly).</summary>
+    Task<IReadOnlyList<string>> GetExpiriesAsync(string symbol, CancellationToken ct);
+}
+
+/// <summary>
 /// Paper-trading engine for forward test sessions.
 /// Receives closed candles from CandleAggregatorService, evaluates strategy,
 /// simulates fills, and persists virtual trades to DB.

@@ -62,6 +62,9 @@ public class AlgoTraderDbContext : DbContext
     public DbSet<IndicatorIntelligence> IndicatorIntelligence => Set<IndicatorIntelligence>();
     public DbSet<GreeksIntelligence>    GreeksIntelligence    => Set<GreeksIntelligence>();
 
+    // P10-C Quant Lab — user-defined research conditions with lifecycle and notes
+    public DbSet<QuantCondition> QuantConditions => Set<QuantCondition>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

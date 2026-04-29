@@ -132,6 +132,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IIndicatorIntelligenceService, IndicatorIntelligenceService>(); // P10-A
         services.AddScoped<IGreeksIntelligenceService, GreeksIntelligenceService>();       // P10-A
         services.AddScoped<IQuantRegimeService, QuantRegimeService>();                     // P10-B
+        services.AddScoped<IQuantConditionService, QuantConditionService>();               // P10-C
         services.AddScoped<IOptionsIntelligenceService>(sp => new OptionsIntelligenceService(
             sp.GetRequiredService<IOptionChainService>(),
             sp.GetRequiredService<IOptionChainSnapshotService>(),
