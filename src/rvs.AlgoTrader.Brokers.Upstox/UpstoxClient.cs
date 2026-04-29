@@ -28,7 +28,9 @@ public class UpstoxClient(
     private string? _accessToken;
     private const string BaseUrl = "https://api.upstox.com/v2";
 
-    public string BrokerName => "Upstox";
+    public string BrokerName   => Domain.Constants.BrokerNames.Upstox;
+    public string Market       => Domain.Constants.MarketCodes.India;
+    public Domain.Enums.BrokerAuthFlowType AuthFlowType => Domain.Enums.BrokerAuthFlowType.OAuth;
 
     private void SetAuthHeader()
     {

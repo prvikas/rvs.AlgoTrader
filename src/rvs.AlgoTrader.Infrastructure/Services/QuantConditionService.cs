@@ -9,19 +9,25 @@ using rvs.AlgoTrader.Infrastructure.Persistence;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
-public sealed class QuantConditionService(AlgoTraderDbContext db, IClock clock)
+public sealed class QuantConditionService(AlgoTraderDbContext db, IClock clock, ICurrentUser currentUser)
     : IQuantConditionService
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+
+    private Guid? CurrentUserId => Guid.TryParse(currentUser.UserId, out var g) ? g : null;
 
     // ── Queries ───────────────────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<QuantConditionDto>> GetAllAsync(
         bool templatesOnly = false, CancellationToken ct = default)
     {
+        var uid = CurrentUserId;
         var q = db.QuantConditions.AsQueryable();
         if (templatesOnly)
             q = q.Where(e => e.IsTemplate);
+        else
+            // Show user's own conditions + templates + legacy rows (user_id == null)
+            q = q.Where(e => e.IsTemplate || e.UserId == null || e.UserId == uid);
 
         var rows = await q.OrderBy(e => e.UpdatedAt).ToListAsync(ct);
         return rows.Select(ToDto).ToList();
@@ -29,7 +35,9 @@ public sealed class QuantConditionService(AlgoTraderDbContext db, IClock clock)
 
     public async Task<QuantConditionDto?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
-        var row = await db.QuantConditions.FirstOrDefaultAsync(e => e.Id == id, ct);
+        var uid = CurrentUserId;
+        var row = await db.QuantConditions.FirstOrDefaultAsync(
+            e => e.Id == id && (e.IsTemplate || e.UserId == null || e.UserId == uid), ct);
         return row is null ? null : ToDto(row);
     }
 

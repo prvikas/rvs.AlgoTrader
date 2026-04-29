@@ -3,10 +3,11 @@ using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.Application.Queries.Alerts;
 
-public class GetAlertRulesHandler(IAlertRulesRepository repo) : IRequestHandler<GetAlertRulesQuery, IReadOnlyList<AlertRuleDto>>
+public class GetAlertRulesHandler(IAlertRulesRepository repo, ICurrentUser currentUser)
+    : IRequestHandler<GetAlertRulesQuery, IReadOnlyList<AlertRuleDto>>
 {
     public Task<IReadOnlyList<AlertRuleDto>> Handle(GetAlertRulesQuery request, CancellationToken ct)
-        => repo.GetAllAsync(ct);
+        => repo.GetAllAsync(currentUser.UserId, ct);
 }
 
 public class GetAlertHistoryHandler(IAlertLogRepository repo) : IRequestHandler<GetAlertHistoryQuery, IReadOnlyList<AlertLogEntry>>

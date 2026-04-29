@@ -4,31 +4,138 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using rvs.AlgoTrader.API.Authorization;
 using rvs.AlgoTrader.Application.Commands.Broker;
+using rvs.AlgoTrader.Application.DTOs.Auth;
 using rvs.AlgoTrader.Application.DTOs.Broker;
-// MStockLoginRequest, ZerodhaCallbackRequest, UpstoxCallbackRequest defined in Application/DTOs/Broker/BrokerRequestDtos.cs
 using rvs.AlgoTrader.Application.DTOs.Common;
-using rvs.AlgoTrader.Application.Queries.Broker;
 using rvs.AlgoTrader.Application.Options;
+using rvs.AlgoTrader.Application.Queries.Broker;
+using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Brokers.Abstractions;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
+/// <summary>
+/// Generic broker management controller.
+/// Adding a new broker (Dhan, Alpaca, RobinHood, etc.) requires ONLY registering a new
+/// IFullBrokerClient in DI — no new controller methods are needed.
+/// </summary>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class BrokerController(IMediator mediator, IOptions<FeaturesOptions> featuresOptions) : ControllerBase
+public class BrokerController(
+    IMediator mediator,
+    IBrokerClientFactory brokerFactory,
+    IAppBrokerSessionManager sessions,
+    ICurrentUser currentUser,
+    IUserBrokerAccountRepository brokerAccounts,
+    IOptions<FeaturesOptions> featuresOptions) : ControllerBase
 {
-    /// <summary>
-    /// Returns HTTP 423 (Locked) when the system is in backtest-only mode.
-    /// Call at the top of every login endpoint.
-    /// </summary>
-    private ActionResult? BrokerLoginDisabledResult() =>
-        featuresOptions.Value.BrokerRequired
-            ? null
+    private ActionResult? BrokerModeDisabledResult() =>
+        featuresOptions.Value.BrokerRequired ? null
             : StatusCode(423, ApiResponse<object>.Fail(
-                "Broker login is disabled — system is running in backtest-only mode (Features:BrokerRequired=false)."));
+                "Broker connections are disabled — system is in backtest-only mode."));
 
+    // ── Broker registry ───────────────────────────────────────────────────────
 
-    // ── Status / Latency / Funds / Positions ─────────────────────────────────
+    /// <summary>
+    /// Lists all brokers registered in the system with their market, auth flow type,
+    /// and whether the current user has an active session.
+    /// Frontend uses this to render the broker connect panel dynamically —
+    /// no frontend changes are needed when a new broker is added.
+    /// </summary>
+    [HttpGet("available")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<BrokerInfoDto>>>> GetAvailable(CancellationToken ct)
+    {
+        var userId   = currentUser.UserId;
+        var brokers  = brokerFactory.GetRegisteredBrokers();
+        var result   = new List<BrokerInfoDto>();
+        foreach (var b in brokers)
+        {
+            var connected = await sessions.IsAuthenticatedAsync(userId, b.BrokerName, ct);
+            result.Add(new BrokerInfoDto(b.BrokerName, b.Market, b.AuthFlowType.ToString(), connected));
+        }
+        return Ok(ApiResponse<IReadOnlyList<BrokerInfoDto>>.Ok(result));
+    }
+
+    // ── User broker accounts ──────────────────────────────────────────────────
+
+    /// <summary>Returns the broker accounts configured by the current user.</summary>
+    [HttpGet("my-accounts")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<UserBrokerAccountDto>>>> GetMyAccounts(CancellationToken ct)
+    {
+        var userId  = currentUser.UserId;
+        var records = await brokerAccounts.GetByUserIdAsync(userId, ct);
+        var result  = new List<UserBrokerAccountDto>();
+        foreach (var r in records)
+        {
+            var connected = await sessions.IsAuthenticatedAsync(userId, r.BrokerName, ct);
+            result.Add(new UserBrokerAccountDto(r.Id, r.BrokerName, r.Market, r.DisplayName, r.IsActive, connected));
+        }
+        return Ok(ApiResponse<IReadOnlyList<UserBrokerAccountDto>>.Ok(result));
+    }
+
+    /// <summary>Registers a broker account for the current user (does not authenticate yet).</summary>
+    [HttpPost("my-accounts")]
+    public async Task<ActionResult<ApiResponse<UserBrokerAccountDto>>> AddAccount(
+        [FromBody] AddBrokerAccountRequest req, CancellationToken ct)
+    {
+        var result = await mediator.Send(
+            new AddBrokerAccountCommand(req.BrokerName, req.Market, req.DisplayName), ct);
+        return Ok(ApiResponse<UserBrokerAccountDto>.Ok(result));
+    }
+
+    /// <summary>Removes a broker account entry (does not revoke the token at the broker).</summary>
+    [HttpDelete("my-accounts/{accountId:guid}")]
+    public async Task<ActionResult<ApiResponse<bool>>> RemoveAccount(Guid accountId, CancellationToken ct)
+    {
+        var ok = await mediator.Send(new RemoveBrokerAccountCommand(accountId), ct);
+        return Ok(ApiResponse<bool>.Ok(ok));
+    }
+
+    // ── Generic broker authentication ─────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the OAuth login URL for brokers that use an OAuth flow (Zerodha, Upstox, etc.).
+    /// Returns null for direct-credential brokers (MStock, Dhan, etc.) — no redirect needed.
+    /// </summary>
+    [HttpGet("{brokerName}/login-url")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<string?>>> GetLoginUrl(string brokerName, CancellationToken ct)
+    {
+        if (BrokerModeDisabledResult() is { } blocked) return blocked;
+        var url = await mediator.Send(new GetBrokerLoginUrlQuery(brokerName), ct);
+        return Ok(ApiResponse<string?>.Ok(url));
+    }
+
+    /// <summary>
+    /// Generic broker connect endpoint — works for every broker regardless of auth flow.
+    /// For DirectCredentials brokers: pass { apiKey, clientCode, password, totp }.
+    /// For OAuth brokers: pass { code } or { requestToken } after the OAuth redirect completes.
+    /// For ApiKey brokers: pass { apiKey, apiSecret }.
+    /// </summary>
+    [HttpPost("{brokerName}/connect")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> Connect(
+        string brokerName,
+        [FromBody] Dictionary<string, string> credentials,
+        CancellationToken ct)
+    {
+        if (BrokerModeDisabledResult() is { } blocked) return blocked;
+        var result = await mediator.Send(new ConnectBrokerCommand(brokerName, credentials), ct);
+        return result.Success
+            ? Ok(ApiResponse<BrokerAuthResultDto>.Ok(result))
+            : UnprocessableEntity(ApiResponse<BrokerAuthResultDto>.Fail(result.Message ?? "Authentication failed"));
+    }
+
+    /// <summary>Disconnects the current user from the named broker (clears Redis session).</summary>
+    [HttpDelete("{brokerName}/connect")]
+    public async Task<ActionResult<ApiResponse<bool>>> Disconnect(string brokerName, CancellationToken ct)
+    {
+        var ok = await mediator.Send(new DisconnectBrokerCommand(brokerName), ct);
+        return Ok(ApiResponse<bool>.Ok(ok));
+    }
+
+    // ── Status / Latency / Funds / Positions ──────────────────────────────────
 
     [HttpGet("status")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<BrokerConnectionStatusDto>>>> GetStatus(CancellationToken ct)
@@ -48,8 +155,7 @@ public class BrokerController(IMediator mediator, IOptions<FeaturesOptions> feat
     public async Task<ActionResult<ApiResponse<BrokerFundsDto>>> GetFunds(string brokerName, CancellationToken ct)
     {
         var result = await mediator.Send(new GetBrokerFundsQuery(brokerName), ct);
-        if (result is null)
-            return NotFound(ApiResponse<BrokerFundsDto>.Fail("Broker funds not available — live integration not yet implemented"));
+        if (result is null) return NotFound(ApiResponse<BrokerFundsDto>.Fail("Not authenticated with this broker"));
         return Ok(ApiResponse<BrokerFundsDto>.Ok(result));
     }
 
@@ -67,97 +173,8 @@ public class BrokerController(IMediator mediator, IOptions<FeaturesOptions> feat
         var result = await mediator.Send(new ReconcileBrokerPositionsCommand(brokerName), ct);
         return Ok(ApiResponse<bool>.Ok(result));
     }
-
-    // ── mStock Type B Authentication ─────────────────────────────────────────
-
-    /// <summary>
-    /// Initiates mStock session exchange using User ID, Password, and TOTP.
-    /// TOTP is a 6-digit code from Google Authenticator / any TOTP app.
-    /// Never store TOTP — it expires every 30 seconds.
-    /// </summary>
-    [HttpPost("mstock/login")]
-    [AllowAnonymous] // Pre-auth — no JWT yet
-    public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> MStockLogin(
-        [FromBody] MStockLoginRequest req, CancellationToken ct)
-    {
-        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
-
-        if (string.IsNullOrWhiteSpace(req.Totp) || req.Totp.Length != 6)
-            return BadRequest(ApiResponse<BrokerAuthResultDto>.Fail("TOTP must be exactly 6 digits"));
-
-        var result = await mediator.Send(
-            new AuthenticateMStockCommand(req.ApiKey, req.ClientCode, req.Password, req.Totp), ct);
-
-        return result.Success
-            ? Ok(ApiResponse<BrokerAuthResultDto>.Ok(result))
-            : UnprocessableEntity(ApiResponse<BrokerAuthResultDto>.Fail(result.Message ?? "Login failed"));
-    }
-
-    // ── Zerodha OAuth ─────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns the Kite Connect login URL. Redirect the user's browser here.
-    /// After login, Zerodha redirects back to your callback URL with ?request_token=xxx
-    /// </summary>
-    [HttpGet("zerodha/login-url")]
-    [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<string>>> GetZerodhaLoginUrl(CancellationToken ct)
-    {
-        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
-
-        var url = await mediator.Send(new GetZerodhaLoginUrlQuery(), ct);
-        return Ok(ApiResponse<string>.Ok(url));
-    }
-
-    /// <summary>
-    /// Exchanges the request_token received from Zerodha's OAuth redirect
-    /// for an access_token. Call this after the user completes login on Kite.
-    /// </summary>
-    [HttpPost("zerodha/callback")]
-    [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> ZerodhaCallback(
-        [FromBody] ZerodhaCallbackRequest req, CancellationToken ct)
-    {
-        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
-
-        var result = await mediator.Send(new AuthenticateZerodhaCommand(req.RequestToken), ct);
-        return result.Success
-            ? Ok(ApiResponse<BrokerAuthResultDto>.Ok(result))
-            : UnprocessableEntity(ApiResponse<BrokerAuthResultDto>.Fail(result.Message ?? "Login failed"));
-    }
-
-    // ── Upstox OAuth2 ─────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns the Upstox OAuth2 authorization URL. Redirect the user's browser here.
-    /// After login, Upstox redirects back to RedirectUri with ?code=xxx
-    /// </summary>
-    [HttpGet("upstox/login-url")]
-    [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<string>>> GetUpstoxLoginUrl(CancellationToken ct)
-    {
-        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
-
-        var url = await mediator.Send(new GetUpstoxLoginUrlQuery(), ct);
-        return Ok(ApiResponse<string>.Ok(url));
-    }
-
-    /// <summary>
-    /// Exchanges the auth code from Upstox OAuth2 redirect for access_token + extended_token.
-    /// Token expires at 3:30 AM IST the following day.
-    /// </summary>
-    [HttpPost("upstox/callback")]
-    [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> UpstoxCallback(
-        [FromBody] UpstoxCallbackRequest req, CancellationToken ct)
-    {
-        if (BrokerLoginDisabledResult() is { } blocked) return blocked;
-
-        var result = await mediator.Send(new AuthenticateUpstoxCommand(req.AuthCode), ct);
-        return result.Success
-            ? Ok(ApiResponse<BrokerAuthResultDto>.Ok(result))
-            : UnprocessableEntity(ApiResponse<BrokerAuthResultDto>.Fail(result.Message ?? "Login failed"));
-    }
 }
 
-// Request DTOs moved to Application/DTOs/Broker/BrokerRequestDtos.cs
+// ── Request DTOs ──────────────────────────────────────────────────────────────
+
+public record AddBrokerAccountRequest(string BrokerName, string Market, string? DisplayName = null);

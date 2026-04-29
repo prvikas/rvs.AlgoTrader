@@ -3,7 +3,8 @@ using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.Application.Commands.Alerts;
 
-public class CreateAlertRuleHandler(IAlertRulesRepository repo) : IRequestHandler<CreateAlertRuleCommand, Guid>
+public class CreateAlertRuleHandler(IAlertRulesRepository repo, ICurrentUser currentUser)
+    : IRequestHandler<CreateAlertRuleCommand, Guid>
 {
     public Task<Guid> Handle(CreateAlertRuleCommand request, CancellationToken ct)
     {
@@ -20,7 +21,7 @@ public class CreateAlertRuleHandler(IAlertRulesRepository repo) : IRequestHandle
             IsActive:       true,
             MessageTemplate: request.Message ?? request.AlertType);
 
-        return repo.AddAsync(dto, ct);
+        return repo.AddAsync(dto, currentUser.UserId, ct);
     }
 }
 

@@ -19,5 +19,6 @@ public class MonitoringAlertRuleConfiguration : IEntityTypeConfiguration<Monitor
         builder.Property(r => r.Channels).HasColumnName("channels").IsRequired();
         builder.Property(r => r.IsActive).HasColumnName("is_active").IsRequired();
         builder.Property(r => r.MessageTemplate).HasColumnName("message_template").IsRequired();
+        builder.Property(r => r.UserId).HasColumnName("user_id");
     }
 }

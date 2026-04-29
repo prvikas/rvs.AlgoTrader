@@ -7,11 +7,10 @@ using rvs.AlgoTrader.Brokers.Abstractions;
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
 /// <summary>
-/// In-memory broker session manager. Used when Redis is not available (local dev / single-instance).
-/// Stores sessions in ConcurrentDictionary — augmented with DB write-through via
-/// DbBrokerSessionPersistence so tokens survive app restarts (same-day tokens still valid).
-/// StartupOrchestrator.Step7 calls DbBrokerSessionPersistence.LoadAllValidAsync to pre-populate
-/// the in-memory dict before any requests arrive.
+/// In-memory broker session manager — user-scoped.
+/// Used when Redis is not available (local dev / single-instance).
+/// Sessions are keyed by "{userId}:{brokerName}" so each user holds independent tokens.
+/// Write-through to DB via DbBrokerSessionPersistence so tokens survive app restarts.
 /// </summary>
 public class InMemoryBrokerSessionManager(
     IClock clock,
@@ -19,86 +18,97 @@ public class InMemoryBrokerSessionManager(
     DbBrokerSessionPersistence dbPersistence)
     : IBrokerSessionManager, IAppBrokerSessionManager
 {
+    // Key: "{userId}:{brokerName}" — case-insensitive on brokerName part
     private readonly ConcurrentDictionary<string, SessionEntry> _sessions = new(StringComparer.OrdinalIgnoreCase);
 
     private record SessionEntry(string AccessToken, DateTimeOffset? ExpiresAt, string? RefreshToken, string? FeedToken = null);
 
-    public Task<string> GetAccessTokenAsync(string brokerName, CancellationToken ct)
-    {
-        if (_sessions.TryGetValue(brokerName, out var entry) && entry.AccessToken != null)
-            return Task.FromResult(entry.AccessToken);
-        throw new InvalidOperationException($"No active session for broker '{brokerName}'. Login required.");
-    }
+    private const string SystemUserId = "00000000-0000-0000-0000-000000000001";
+    private static string Key(string userId, string broker) => $"{userId}:{broker.ToLower()}";
 
-    public bool IsSessionValid(string brokerName)
-    {
-        if (!_sessions.TryGetValue(brokerName, out var entry)) return false;
-        if (entry.ExpiresAt.HasValue)
-            return entry.ExpiresAt.Value > clock.NowInstant().ToDateTimeOffset().AddMinutes(5);
-        return !string.IsNullOrEmpty(entry.AccessToken);
-    }
+    // ── IAppBrokerSessionManager (user-scoped) ────────────────────────────────
 
-    public Task StoreSessionAsync(string brokerName, LoginResult result, CancellationToken ct)
+    public Task StoreSessionAsync(string userId, string brokerName, LoginResult result, CancellationToken ct)
     {
         if (!result.Success || result.AccessToken == null) return Task.CompletedTask;
         var entry = new SessionEntry(result.AccessToken, result.ExpiresAt, result.RefreshToken, result.FeedToken);
-        _sessions[brokerName] = entry;
-        logger.LogInformation("[{Broker}] In-memory session stored. Expires: {Expiry}",
-            brokerName, result.ExpiresAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "no expiry set");
-
-        // Write-through to DB (best-effort, fire-and-forget — in-memory is already updated)
-        _ = dbPersistence.UpsertAsync(brokerName, result.AccessToken, result.FeedToken, result.RefreshToken, result.ExpiresAt, CancellationToken.None);
+        _sessions[Key(userId, brokerName)] = entry;
+        logger.LogInformation("[{Broker}] In-memory session stored for user {UserId}. Expires: {Expiry}",
+            brokerName, userId, result.ExpiresAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "no expiry");
+        _ = dbPersistence.UpsertAsync(brokerName, result.AccessToken, result.FeedToken,
+            result.RefreshToken, result.ExpiresAt, CancellationToken.None);
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Restores a session from a pre-loaded DB record (called by StartupOrchestrator.Step7).
-    /// Populates the in-memory dict so IsSessionValid/GetAccessToken work immediately.
-    /// </summary>
-    public void RestoreFromDb(StoredBrokerSession stored)
+    public Task<bool> IsAuthenticatedAsync(string userId, string brokerName, CancellationToken ct)
     {
-        var entry = new SessionEntry(stored.AccessToken, stored.ExpiresAt, stored.RefreshToken, stored.FeedToken);
-        _sessions[stored.BrokerName] = entry;
-        logger.LogInformation("[{Broker}] Session restored from DB. Expires: {Expiry}",
-            stored.BrokerName, stored.ExpiresAt?.ToString("yyyy-MM-dd HH:mm zzz") ?? "no expiry");
+        if (!_sessions.TryGetValue(Key(userId, brokerName), out var entry)) return Task.FromResult(false);
+        if (entry.ExpiresAt.HasValue)
+            return Task.FromResult(entry.ExpiresAt.Value > clock.NowInstant().ToDateTimeOffset().AddMinutes(5));
+        return Task.FromResult(!string.IsNullOrEmpty(entry.AccessToken));
     }
 
-    public Task<string?> TryGetAccessTokenAsync(string brokerName, CancellationToken ct)
+    public Task<string?> TryGetAccessTokenAsync(string userId, string brokerName, CancellationToken ct)
     {
-        _sessions.TryGetValue(brokerName, out var entry);
+        _sessions.TryGetValue(Key(userId, brokerName), out var entry);
         return Task.FromResult(entry?.AccessToken);
     }
 
-    public Task<string?> TryGetFeedTokenAsync(string brokerName, CancellationToken ct)
+    public Task EnsureValidSessionAsync(string userId, string brokerName, CancellationToken ct)
     {
-        _sessions.TryGetValue(brokerName, out var entry);
-        return Task.FromResult(entry?.FeedToken);
-    }
-
-    public Task RefreshSessionAsync(string brokerName, CancellationToken ct)
-    {
-        logger.LogWarning("[{Broker}] Session refresh not supported in InMemoryBrokerSessionManager — re-login required", brokerName);
+        if (!_sessions.TryGetValue(Key(userId, brokerName), out _))
+            logger.LogWarning("[{Broker}] No session for user {UserId} — re-login required", brokerName, userId);
         return Task.CompletedTask;
     }
 
+    public Task RefreshAsync(string userId, string brokerName, CancellationToken ct)
+    {
+        logger.LogWarning("[{Broker}] Session refresh not supported in InMemoryBrokerSessionManager for user {UserId}",
+            brokerName, userId);
+        return Task.CompletedTask;
+    }
+
+    // ── Startup restore (system user) ────────────────────────────────────────
+
+    public void RestoreFromDb(StoredBrokerSession stored)
+    {
+        var entry = new SessionEntry(stored.AccessToken, stored.ExpiresAt, stored.RefreshToken, stored.FeedToken);
+        _sessions[Key(SystemUserId, stored.BrokerName)] = entry;
+        logger.LogInformation("[{Broker}] Session restored from DB (system user). Expires: {Expiry}",
+            stored.BrokerName, stored.ExpiresAt?.ToString("yyyy-MM-dd HH:mm zzz") ?? "no expiry");
+    }
+
+    public Task<string?> TryGetFeedTokenAsync(string userId, string brokerName, CancellationToken ct)
+    {
+        _sessions.TryGetValue(Key(userId, brokerName), out var entry);
+        return Task.FromResult(entry?.FeedToken);
+    }
+
+    // ── IBrokerSessionManager (legacy, system-user compat) ───────────────────
+
+    public Task<string> GetAccessTokenAsync(string brokerName, CancellationToken ct)
+    {
+        if (_sessions.TryGetValue(Key(SystemUserId, brokerName), out var entry) && entry.AccessToken != null)
+            return Task.FromResult(entry.AccessToken);
+        throw new InvalidOperationException($"No active session for broker '{brokerName}'.");
+    }
+
+    public bool IsSessionValid(string brokerName)
+        => IsAuthenticatedAsync(SystemUserId, brokerName, CancellationToken.None).GetAwaiter().GetResult();
+
+    public Task RefreshSessionAsync(string brokerName, CancellationToken ct)
+        => RefreshAsync(SystemUserId, brokerName, ct);
+
     public Task InvalidateSessionAsync(string brokerName, CancellationToken ct)
     {
-        _sessions.TryRemove(brokerName, out _);
-        logger.LogInformation("[{Broker}] In-memory session invalidated", brokerName);
+        _sessions.TryRemove(Key(SystemUserId, brokerName), out _);
         _ = dbPersistence.DeleteAsync(brokerName, CancellationToken.None);
         return Task.CompletedTask;
     }
 
     public Task EnsureValidSessionAsync(string brokerName, CancellationToken ct)
-    {
-        if (!IsSessionValid(brokerName))
-            logger.LogWarning("[{Broker}] Session invalid — re-login required", brokerName);
-        return Task.CompletedTask;
-    }
+        => EnsureValidSessionAsync(SystemUserId, brokerName, ct);
 
     public Task RefreshAsync(string brokerName, CancellationToken ct)
-        => RefreshSessionAsync(brokerName, ct);
-
-    public Task<bool> IsAuthenticatedAsync(string brokerName, CancellationToken ct)
-        => Task.FromResult(IsSessionValid(brokerName));
+        => RefreshAsync(SystemUserId, brokerName, ct);
 }

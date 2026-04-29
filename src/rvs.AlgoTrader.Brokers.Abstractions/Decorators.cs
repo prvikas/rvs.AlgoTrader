@@ -15,7 +15,9 @@ public class SessionAwareBrokerClient(
     IBrokerSessionManager sessionManager,
     ILogger<SessionAwareBrokerClient> logger) : IFullBrokerClient
 {
-    public string BrokerName => inner.BrokerName;
+    public string BrokerName             => inner.BrokerName;
+    public string Market                 => inner.Market;
+    public Domain.Enums.BrokerAuthFlowType AuthFlowType => inner.AuthFlowType;
 
     public async Task<LoginResult> AuthenticateAsync(BrokerCredentials creds, CancellationToken ct)
         => await inner.AuthenticateAsync(creds, ct);

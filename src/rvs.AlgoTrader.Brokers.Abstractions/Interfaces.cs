@@ -1,3 +1,5 @@
+using rvs.AlgoTrader.Domain.Enums;
+
 namespace rvs.AlgoTrader.Brokers.Abstractions;
 
 public interface IBrokerOrderClient
@@ -63,14 +65,26 @@ public interface IBrokerInstrumentClient
 public interface IFullBrokerClient
     : IBrokerOrderClient, IBrokerMarketDataClient, IBrokerAccountClient, IBrokerStreamClient, IBrokerInstrumentClient
 {
+    /// <summary>Canonical broker name — matches BrokerNames constants.</summary>
     string BrokerName { get; }
+
+    /// <summary>
+    /// Market this client trades on.  Matches MarketCodes constants (e.g. "IN", "US", "UK").
+    /// A broker that covers multiple markets should have separate IFullBrokerClient registrations,
+    /// one per market (e.g. DhanIndia + DhanUS), each returning a distinct Market value.
+    /// </summary>
+    string Market { get; }
+
+    /// <summary>Authentication flow this broker requires — drives the generic /broker/{name}/connect endpoint.</summary>
+    BrokerAuthFlowType AuthFlowType { get; }
+
     Task<LoginResult> AuthenticateAsync(BrokerCredentials creds, CancellationToken ct);
     Task<LatencyReport> MeasureLatencyAsync(CancellationToken ct);
 
     /// <summary>
     /// Restores a previously-obtained access token into this client's in-memory state
-    /// without going through a full auth round-trip. Called by IStartupOrchestrator Step 7
-    /// to re-inject Redis-persisted tokens after a process restart.
+    /// without going through a full auth round-trip. Called on process restart to re-inject
+    /// Redis-persisted tokens without a full re-auth round-trip.
     /// feedToken is optional (used by brokers that have a separate WebSocket feed token).
     /// </summary>
     void RestoreToken(string accessToken, string? feedToken = null);
@@ -82,9 +96,17 @@ public interface IBrokerClientFactory
     IBrokerOrderClient GetOrderClient(string brokerName);
     IBrokerMarketDataClient GetMarketDataClient(string brokerName);
     IBrokerStreamClient GetStreamClient(string brokerName);
-    /// <summary>Returns the names of all broker clients registered with the DI container.</summary>
+    /// <summary>Returns the names of all registered broker clients.</summary>
     IReadOnlyList<string> GetRegisteredBrokerNames();
+    /// <summary>Returns full metadata (name, market, auth flow) for all registered brokers.</summary>
+    IReadOnlyList<BrokerDescriptor> GetRegisteredBrokers();
 }
+
+/// <summary>Immutable descriptor returned by IBrokerClientFactory.GetRegisteredBrokers().</summary>
+public sealed record BrokerDescriptor(
+    string BrokerName,
+    string Market,
+    BrokerAuthFlowType AuthFlowType);
 
 public interface IBrokerSessionManager
 {

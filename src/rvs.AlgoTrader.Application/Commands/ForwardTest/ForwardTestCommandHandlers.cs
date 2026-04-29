@@ -90,6 +90,7 @@ public class PromoteForwardTestToLiveHandler(
     IStrategyInstanceRepository strategies,
     IKillSwitchService killSwitch,
     IAppBrokerSessionManager brokerSessions,
+    ICurrentUser currentUser,
     IAuditService audit,
     Domain.Interfaces.IClock clock)
     : IRequestHandler<PromoteForwardTestToLiveCommand, PromoteToLiveResultDto>
@@ -120,7 +121,7 @@ public class PromoteForwardTestToLiveHandler(
             ksActive ? "Kill switch is currently active — deactivate it before going live." : null));
 
         // 2. Broker must be authenticated
-        var brokerOk = await brokerSessions.IsAuthenticatedAsync(request.BrokerName, ct);
+        var brokerOk = await brokerSessions.IsAuthenticatedAsync(currentUser.UserId, request.BrokerName, ct);
         checks.Add(new PreFlightCheckDto(
             $"Broker '{request.BrokerName}' is authenticated",
             brokerOk,

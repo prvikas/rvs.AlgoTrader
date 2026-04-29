@@ -28,6 +28,7 @@
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
     <PackageReference Include="VaultSharp" />
+    <PackageReference Include="BCrypt.Net-Next" />
     <PackageReference Include="Polly" />
     <PackageReference Include="Microsoft.Extensions.Http.Polly" />
     <PackageReference Include="NodaTime" />

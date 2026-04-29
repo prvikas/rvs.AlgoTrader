@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Application.Options;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
@@ -11,7 +12,6 @@ using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Infrastructure.Hangfire;
-using rvs.AlgoTrader.Application.Options;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -41,11 +41,20 @@ public class StartupOrchestrator(
     IClock clock,
     ILogger<StartupOrchestrator> logger,
     IServiceProvider serviceProvider,
-    IOptions<FeaturesOptions> featuresOptions) : IStartupOrchestrator
+    IOptions<FeaturesOptions> featuresOptions,
+    IOptions<LocalAuthOptions> localAuthOptions,
+    IUserRepository userRepo,
+    IPasswordHasher passwordHasher) : IStartupOrchestrator
 {
+    // System user UUID — owns pre-migration rows and is the fallback for broker session lookups
+    private const string SystemUserId = "00000000-0000-0000-0000-000000000001";
+
     public async Task RunAsync(CancellationToken ct)
     {
         logger.LogInformation("[Startup] Beginning 11-step orchestration — {Time}", clock.NowIst());
+
+        // Step 0: Seed admin user from LocalAuth config (idempotent)
+        await Step0_SeedAdminUserAsync(ct);
 
         // Step 4: Kill-switch check (AP-015)
         var killSwitchWasActive = await Step4_CheckKillSwitchAsync(ct);
@@ -70,6 +79,57 @@ public class StartupOrchestrator(
         await audit.LogAsync("SYSTEM_STARTUP", "System", "System", "startup",
             new { Time = clock.NowIst().ToString(), KillSwitchWasActive = killSwitchWasActive },
             "system-startup", ct);
+    }
+
+    // ── Step 0 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Upserts the admin user from LocalAuth config into the users table on every startup.
+    /// Idempotent — if the user already exists with the same username, nothing changes.
+    /// This ensures the system-user UUID always has a matching row regardless of migration order.
+    /// </summary>
+    private async Task Step0_SeedAdminUserAsync(CancellationToken ct)
+    {
+        var opts = localAuthOptions.Value;
+        if (string.IsNullOrEmpty(opts.Username)) return;
+
+        try
+        {
+            var existing = await userRepo.GetByIdAsync(Guid.Parse(SystemUserId), ct);
+            if (existing == null)
+            {
+                var hash = !string.IsNullOrEmpty(opts.PasswordHash)
+                    ? opts.PasswordHash
+                    : !string.IsNullOrEmpty(opts.Password)
+                        ? passwordHasher.Hash(opts.Password)
+                        : null;
+
+                if (hash == null)
+                {
+                    logger.LogWarning("[Startup:Step0] LocalAuth:Username set but no Password/PasswordHash — system user not seeded");
+                    return;
+                }
+
+                var user = new User
+                {
+                    Id           = Guid.Parse(SystemUserId),
+                    Username     = opts.Username,
+                    PasswordHash = hash,
+                    Role         = "Admin",
+                    IsActive     = true,
+                };
+                await userRepo.CreateAsync(user, ct);
+                logger.LogInformation("[Startup:Step0] System admin user '{Username}' seeded into users table", opts.Username);
+            }
+            else
+            {
+                logger.LogDebug("[Startup:Step0] System admin user already exists — skipped seeding");
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[Startup:Step0] Failed to seed admin user — non-fatal, continuing startup");
+        }
     }
 
     // ── Step 4 ────────────────────────────────────────────────────────────────
@@ -218,9 +278,9 @@ public class StartupOrchestrator(
                 inMemorySessions.RestoreFromDb(stored);
         }
 
-        var brokers = new[] { BrokerNames.Zerodha, BrokerNames.Upstox, BrokerNames.MStock };
+        var brokers  = brokerFactory.GetRegisteredBrokerNames();
         var restored = 0;
-        var skipped = 0;
+        var skipped  = 0;
 
         foreach (var brokerName in brokers)
         {
@@ -233,7 +293,7 @@ public class StartupOrchestrator(
                     continue;
                 }
 
-                var accessToken = await sessions.TryGetAccessTokenAsync(brokerName, ct);
+                var accessToken = await sessions.TryGetAccessTokenAsync(SystemUserId, brokerName, ct);
                 if (string.IsNullOrEmpty(accessToken))
                 {
                     logger.LogWarning("[Startup:Step7] {Broker}: session flagged valid but token missing from Redis", brokerName);
@@ -242,7 +302,7 @@ public class StartupOrchestrator(
                 }
 
                 // Feed token is mStock-specific — null for Zerodha/Upstox (ignored by their RestoreToken)
-                var feedToken = await sessions.TryGetFeedTokenAsync(brokerName, ct);
+                var feedToken = await sessions.TryGetFeedTokenAsync(SystemUserId, brokerName, ct);
 
                 var client = brokerFactory.GetClient(brokerName);
                 client.RestoreToken(accessToken, feedToken);

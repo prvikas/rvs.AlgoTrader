@@ -24,4 +24,9 @@ public class BrokerClientFactory(IServiceProvider services) : IBrokerClientFacto
 
     public IReadOnlyList<string> GetRegisteredBrokerNames()
         => services.GetServices<IFullBrokerClient>().Select(c => c.BrokerName).ToList();
+
+    public IReadOnlyList<BrokerDescriptor> GetRegisteredBrokers()
+        => services.GetServices<IFullBrokerClient>()
+            .Select(c => new BrokerDescriptor(c.BrokerName, c.Market, c.AuthFlowType))
+            .ToList();
 }

@@ -25,7 +25,9 @@ public class ZerodhaClient(
     private string? _accessToken;
     private const string BaseUrl = "https://api.kite.trade";
 
-    public string BrokerName => "Zerodha";
+    public string BrokerName   => Domain.Constants.BrokerNames.Zerodha;
+    public string Market       => Domain.Constants.MarketCodes.India;
+    public Domain.Enums.BrokerAuthFlowType AuthFlowType => Domain.Enums.BrokerAuthFlowType.OAuth;
 
     private void SetAuthHeader()
     {

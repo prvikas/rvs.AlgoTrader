@@ -33,7 +33,9 @@ public class MStockClient(
     private string? _feedToken;
     private const string BaseUrl = "https://api.mstock.trade/openapi/typeb";
 
-    public string BrokerName => "MStock";
+    public string BrokerName   => Domain.Constants.BrokerNames.MStock;
+    public string Market       => Domain.Constants.MarketCodes.India;
+    public Domain.Enums.BrokerAuthFlowType AuthFlowType => Domain.Enums.BrokerAuthFlowType.DirectCredentials;
 
     private void SetAuthHeaders(HttpRequestMessage request)
     {

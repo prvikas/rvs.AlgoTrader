@@ -23,6 +23,8 @@ public class QuantCondition
     public string   Status                  { get; set; } = QuantConditionStatus.Hypothesis;
     public string[] Tags                    { get; set; } = [];
     public bool     IsTemplate              { get; set; }
+    /// <summary>Owner user. Null = template or legacy row (pre-migration 050).</summary>
+    public Guid?    UserId                  { get; set; }
     public Instant  CreatedAt               { get; set; }
     public Instant  UpdatedAt               { get; set; }
 }

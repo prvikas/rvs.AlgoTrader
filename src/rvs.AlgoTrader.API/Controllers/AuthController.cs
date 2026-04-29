@@ -9,9 +9,9 @@ using Microsoft.IdentityModel.Tokens;
 using NodaTime;
 using rvs.AlgoTrader.Application.Commands.Broker;
 using rvs.AlgoTrader.Application.DTOs.Auth;
-using rvs.AlgoTrader.Application.DTOs.Broker;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Options;
+using rvs.AlgoTrader.Application.Services;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -22,100 +22,102 @@ public class AuthController(
     IConfiguration config,
     IClock clock,
     IOptions<FeaturesOptions> featuresOptions,
-    IOptions<LocalAuthOptions> localAuthOptions) : ControllerBase
+    IOptions<LocalAuthOptions> localAuthOptions,
+    IUserRepository userRepo) : ControllerBase
 {
-    // ── Local (username/password) login ──────────────────────────────────────
+    // ── Register ─────────────────────────────────────────────────────────────
+
+    /// <summary>Creates a new application user. Returns user UUID — use POST /api/auth/login to get a JWT.</summary>
+    [HttpPost("register")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<RegisterResultDto>>> Register(
+        [FromBody] RegisterRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.Username) || req.Username.Length < 3)
+            return BadRequest(ApiResponse<RegisterResultDto>.Fail("Username must be at least 3 characters."));
+        if (string.IsNullOrWhiteSpace(req.Password) || req.Password.Length < 8)
+            return BadRequest(ApiResponse<RegisterResultDto>.Fail("Password must be at least 8 characters."));
+        try
+        {
+            var result = await mediator.Send(
+                new RegisterUserCommand(req.Username, req.Password, req.Role ?? "Analyst"), ct);
+            return Ok(ApiResponse<RegisterResultDto>.Ok(result));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<RegisterResultDto>.Fail(ex.Message));
+        }
+    }
+
+    // ── Login (DB-backed, multi-user) ─────────────────────────────────────────
 
     /// <summary>
-    /// Local username/password login.  Returns a signed JWT when credentials match
-    /// the <c>LocalAuth</c> config section.
-    ///
-    /// Available in all modes.  When <c>Features:BrokerRequired=false</c> this is the
-    /// primary login path.  When broker mode is active, this endpoint still works and
-    /// issues an Analyst-role token — useful for CI and headless backtest jobs.
+    /// Authenticates with username + password against the users table.
+    /// Returns a JWT: sub = user UUID, name = username, role = user role.
+    /// Each user independently connects their own broker accounts after login.
+    /// </summary>
+    [HttpPost("login")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<LoginResultDto>>> Login(
+        [FromBody] LocalLoginRequest req, CancellationToken ct)
+    {
+        var user = await userRepo.GetByUsernameAsync(req.Username, ct);
+        if (user == null)
+            return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
+
+        bool ok;
+        try { ok = BCrypt.Net.BCrypt.Verify(req.Password, user.PasswordHash); }
+        catch { ok = false; }
+        if (!ok)
+            return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
+
+        var token = GenerateJwtToken(user.Id.ToString(), user.Username, user.Role);
+        return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
+            clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
+    }
+
+    // ── Local config login (dev / CI) ─────────────────────────────────────────
+
+    /// <summary>
+    /// Single-user login backed by LocalAuth config section.
+    /// Useful for dev mode and CI. Issues the system-user UUID as sub.
     /// </summary>
     [HttpPost("local")]
     [AllowAnonymous]
-    public ActionResult<ApiResponse<LoginResultDto>> LocalLogin(
-        [FromBody] LocalLoginRequest req)
+    public ActionResult<ApiResponse<LoginResultDto>> LocalLogin([FromBody] LocalLoginRequest req)
     {
         var opts = localAuthOptions.Value;
-
-        // Username is case-insensitive
         if (!string.Equals(req.Username, opts.Username, StringComparison.OrdinalIgnoreCase))
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
 
-        // Password verification — prefer BCrypt hash if configured, fall back to plaintext
-        bool passwordOk;
+        bool ok;
         if (!string.IsNullOrEmpty(opts.PasswordHash))
         {
-            try { passwordOk = BCrypt.Net.BCrypt.Verify(req.Password, opts.PasswordHash); }
-            catch { passwordOk = false; }
+            try { ok = BCrypt.Net.BCrypt.Verify(req.Password, opts.PasswordHash); } catch { ok = false; }
         }
         else if (!string.IsNullOrEmpty(opts.Password))
         {
-            // Plaintext comparison — acceptable for dev / broker-free mode.
-            // Warn if used in a broker-required (production-like) environment.
             if (featuresOptions.Value.BrokerRequired)
-            {
                 return StatusCode(500, ApiResponse<LoginResultDto>.Fail(
-                    "LocalAuth:PasswordHash must be set when Features:BrokerRequired=true. " +
-                    "Use BCrypt.Net.BCrypt.HashPassword(\"yourpassword\") to generate a hash."));
-            }
-            passwordOk = req.Password == opts.Password;
+                    "LocalAuth:PasswordHash must be set when Features:BrokerRequired=true."));
+            ok = req.Password == opts.Password;
         }
         else
         {
             return StatusCode(500, ApiResponse<LoginResultDto>.Fail(
-                "LocalAuth is not configured. Set LocalAuth:Password (dev) or LocalAuth:PasswordHash (prod) in config."));
+                "LocalAuth not configured. Set LocalAuth:Password (dev) or LocalAuth:PasswordHash (prod)."));
         }
 
-        if (!passwordOk)
-            return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
+        if (!ok) return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
 
-        var jwtToken = GenerateJwtToken(opts.Username, role: "Analyst");
-
-        return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(
-            Token: jwtToken,
-            BrokerName: "None",
-            ExpiresAt: clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24)
-        )));
+        const string systemUserId = "00000000-0000-0000-0000-000000000001";
+        var token = GenerateJwtToken(systemUserId, opts.Username, "Analyst");
+        return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
+            clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
     }
 
-    // ── MStock broker login ──────────────────────────────────────────────────
+    // ── Offline dev auto-login ────────────────────────────────────────────────
 
-    [HttpPost("mstock/login")]
-    [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<LoginResultDto>>> MStockLogin(
-        [FromBody] MStockLoginRequest req, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(req.Totp) || req.Totp.Length != 6)
-            return BadRequest(ApiResponse<LoginResultDto>.Fail("TOTP must be exactly 6 digits"));
-
-        // Authenticate with MStock broker
-        var brokerResult = await mediator.Send(
-            new AuthenticateMStockCommand(req.ApiKey, req.ClientCode, req.Password, req.Totp), ct);
-
-        if (!brokerResult.Success)
-            return Unauthorized(ApiResponse<LoginResultDto>.Fail(brokerResult.Message ?? "Authentication failed"));
-
-        // Generate app JWT token
-        var jwtToken = GenerateJwtToken(brokerResult.BrokerName, role: "Trader");
-
-        return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(
-            Token: jwtToken,
-            BrokerName: brokerResult.BrokerName,
-            ExpiresAt: clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24)
-        )));
-    }
-
-    // ── Offline auto-login (legacy — kept for backward compat) ──────────────
-
-    /// <summary>
-    /// Backtest-only auto-login (no credentials required).
-    /// Returns HTTP 403 in normal (broker-required) mode.
-    /// Deprecated: prefer POST /api/auth/local with explicit credentials.
-    /// </summary>
     [HttpPost("offline")]
     [AllowAnonymous]
     public ActionResult<ApiResponse<LoginResultDto>> OfflineLogin()
@@ -123,47 +125,33 @@ public class AuthController(
         if (featuresOptions.Value.BrokerRequired)
             return StatusCode(403, ApiResponse<LoginResultDto>.Fail(
                 "Offline auto-login is only available when Features:BrokerRequired=false."));
-
-        var jwtToken = GenerateJwtToken("backtester", role: "Analyst");
-
-        return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(
-            Token: jwtToken,
-            BrokerName: "None",
-            ExpiresAt: clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24)
-        )));
+        const string systemUserId = "00000000-0000-0000-0000-000000000001";
+        var token = GenerateJwtToken(systemUserId, "backtester", "Analyst");
+        return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
+            clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
     }
 
-    // ── Shared ───────────────────────────────────────────────────────────────
+    // ── JWT generation ────────────────────────────────────────────────────────
 
-    private string GenerateJwtToken(string subject, string role)
+    private string GenerateJwtToken(string userId, string username, string role)
     {
-        var jwtSecret = config["JWT__SECRET"] ?? throw new InvalidOperationException("JWT__SECRET not configured");
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
+        var secret = config["JWT__SECRET"] ?? throw new InvalidOperationException("JWT__SECRET not configured");
+        var key    = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
+        var creds  = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var claims = new[]
         {
-            new Claim(ClaimTypes.NameIdentifier, subject),
-            new Claim(ClaimTypes.Name, subject),
-            new Claim("broker", subject),
-            new Claim("role", role),
+            new Claim(ClaimTypes.NameIdentifier, userId),    // sub = user UUID
+            new Claim(ClaimTypes.Name,           username),  // name = display name
+            new Claim("role",                    role),
         };
-
-        var token = new JwtSecurityToken(
-            issuer: null,
-            audience: null,
-            claims: claims,
+        var token = new JwtSecurityToken(null, null, claims,
             expires: clock.GetCurrentInstant().Plus(Duration.FromHours(24)).ToDateTimeUtc(),
-            signingCredentials: credentials
-        );
-
+            signingCredentials: creds);
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 }
 
-// ── Request DTOs ─────────────────────────────────────────────────────────────
+// ── Request DTOs ──────────────────────────────────────────────────────────────
 
-/// <summary>Request body for POST /api/auth/local</summary>
 public record LocalLoginRequest(string Username, string Password);
-
-// LoginResultDto is defined in Application/DTOs/Auth/AuthDtos.cs
+public record RegisterRequest(string Username, string Password, string? Role = null);

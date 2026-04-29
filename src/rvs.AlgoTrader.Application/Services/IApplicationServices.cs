@@ -12,8 +12,14 @@ namespace rvs.AlgoTrader.Application.Services;
 /// </summary>
 public interface ICurrentUser
 {
-    /// <summary>Returns the authenticated user's name/identity, or "System" when no HTTP context is present.</summary>
+    /// <summary>Authenticated user's display name, or "System" for background jobs.</summary>
     string Actor { get; }
+    /// <summary>
+    /// Authenticated user's UUID (matches users.id in the DB).
+    /// Returns the well-known system-user GUID "00000000-0000-0000-0000-000000000001"
+    /// when there is no HTTP context (background jobs, startup orchestrator).
+    /// </summary>
+    string UserId { get; }
 }
 
 public interface IMonitoringAlertEvaluator
@@ -114,21 +120,31 @@ public interface IHistoricalDataDownloadService
 /// </summary>
 public interface IAppBrokerSessionManager
 {
-    Task EnsureValidSessionAsync(string brokerName, CancellationToken ct);
-    Task RefreshAsync(string brokerName, CancellationToken ct);
-    Task<bool> IsAuthenticatedAsync(string brokerName, CancellationToken ct);
+    Task EnsureValidSessionAsync(string userId, string brokerName, CancellationToken ct);
+    Task RefreshAsync(string userId, string brokerName, CancellationToken ct);
+    Task<bool> IsAuthenticatedAsync(string userId, string brokerName, CancellationToken ct);
     /// <summary>Store a broker session after successful authentication.</summary>
-    Task StoreSessionAsync(string brokerName, LoginResult result, CancellationToken ct);
+    Task StoreSessionAsync(string userId, string brokerName, LoginResult result, CancellationToken ct);
     /// <summary>Retrieve a stored access token from persistent storage (Redis).</summary>
-    Task<string?> TryGetAccessTokenAsync(string brokerName, CancellationToken ct);
+    Task<string?> TryGetAccessTokenAsync(string userId, string brokerName, CancellationToken ct);
     /// <summary>Retrieve a stored feed token from persistent storage (Redis). mStock only.</summary>
-    Task<string?> TryGetFeedTokenAsync(string brokerName, CancellationToken ct);
-    /// <summary>Returns true if a non-expired session token exists in Redis.</summary>
+    Task<string?> TryGetFeedTokenAsync(string userId, string brokerName, CancellationToken ct);
+    /// <summary>Returns true if a non-expired session token exists in Redis for the system user.</summary>
     bool IsSessionValid(string brokerName);
 }
 
 // IInstrumentTokenResolver is defined in rvs.AlgoTrader.Brokers.Abstractions.
 // Application references that project directly, so no duplicate definition needed here.
+
+/// <summary>
+/// Abstracts password hashing so the Application layer has no direct dependency on BCrypt.
+/// Implemented by BcryptPasswordHasher in Infrastructure.
+/// </summary>
+public interface IPasswordHasher
+{
+    string Hash(string password);
+    bool Verify(string password, string hash);
+}
 
 public interface IDataQualityService
 {
@@ -909,26 +925,34 @@ public interface IInstrumentRefreshService
 }
 
 /// <summary>
-/// Abstracts broker authentication flows so the Application layer has no
-/// dependency on broker infrastructure projects.
-/// Implemented in rvs.AlgoTrader.Infrastructure.
+/// Generic broker authentication service — fully broker-agnostic.
+/// Adding a new broker requires only:
+///   1. Registering a new IFullBrokerClient implementation in DI.
+///   2. No changes here, no new controller methods.
 /// </summary>
 public interface IBrokerAuthService
 {
-    // mStock Type B — 2-step: /connect/login then /session/verifytotp
-    Task<BrokerAuthResultDto> AuthenticateMStockAsync(string apiKey, string clientCode, string password, string totp, CancellationToken ct);
+    /// <summary>
+    /// Authenticates a user with the named broker using the supplied credentials.
+    /// Credential keys depend on the broker's AuthFlowType:
+    ///   DirectCredentials: { "apiKey", "clientCode", "password", "totp" }
+    ///   OAuth:             { "code" } or { "requestToken" } (whatever the broker returns)
+    ///   ApiKey:            { "apiKey", "apiSecret" }
+    /// On success, stores the session in Redis keyed by (userId, brokerName).
+    /// </summary>
+    Task<BrokerAuthResultDto> AuthenticateAsync(
+        string userId, string brokerName,
+        IReadOnlyDictionary<string, string> credentials,
+        CancellationToken ct);
 
-    // Zerodha — returns Kite OAuth URL for browser redirect
-    Task<string> GetZerodhaLoginUrlAsync(CancellationToken ct);
+    /// <summary>
+    /// Returns the OAuth login URL for brokers with AuthFlowType = OAuth.
+    /// Returns null for DirectCredentials / ApiKey brokers (no redirect needed).
+    /// </summary>
+    Task<string?> GetLoginUrlAsync(string brokerName, string userId, CancellationToken ct);
 
-    // Zerodha — exchanges request_token (from Kite OAuth redirect) for access_token
-    Task<BrokerAuthResultDto> AuthenticateZerodhaAsync(string requestToken, CancellationToken ct);
-
-    // Upstox — returns OAuth2 authorization URL for browser redirect
-    Task<string> GetUpstoxLoginUrlAsync(CancellationToken ct);
-
-    // Upstox — exchanges auth_code (from OAuth2 redirect) for access_token + extended_token
-    Task<BrokerAuthResultDto> AuthenticateUpstoxAsync(string authCode, CancellationToken ct);
+    /// <summary>Invalidate and remove the broker session for this user.</summary>
+    Task DisconnectAsync(string userId, string brokerName, CancellationToken ct);
 }
 
 // ── P4: Approval Gate ─────────────────────────────────────────────────────────

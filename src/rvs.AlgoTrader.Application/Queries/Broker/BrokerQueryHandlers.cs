@@ -6,34 +6,36 @@ using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Application.Queries.Broker;
 
-public class GetBrokerLatencyHandler(IBrokerLatencyRepository repo) : IRequestHandler<GetBrokerLatencyQuery, IReadOnlyList<BrokerLatencyDto>>
+public class GetBrokerLatencyHandler(IBrokerLatencyRepository repo)
+    : IRequestHandler<GetBrokerLatencyQuery, IReadOnlyList<BrokerLatencyDto>>
 {
     public async Task<IReadOnlyList<BrokerLatencyDto>> Handle(GetBrokerLatencyQuery request, CancellationToken ct)
     {
         var reports = await repo.GetLatestAsync(request.BrokerName, ct);
-        return [.. reports.Select(r => new BrokerLatencyDto(r.BrokerName, r.P50Ms, r.P95Ms, r.P99Ms, r.SampleCount, r.MeasuredAt.ToDateTimeOffset()))];
+        return [.. reports.Select(r => new BrokerLatencyDto(
+            r.BrokerName, r.P50Ms, r.P95Ms, r.P99Ms, r.SampleCount,
+            r.MeasuredAt.ToDateTimeOffset()))];
     }
 }
 
 public class GetBrokerConnectionStatusHandler(
     IAppBrokerSessionManager sessions,
-    IBrokerClientFactory brokerFactory)
+    IBrokerClientFactory brokerFactory,
+    ICurrentUser currentUser)
     : IRequestHandler<GetBrokerConnectionStatusQuery, IReadOnlyList<BrokerConnectionStatusDto>>
 {
-    public async Task<IReadOnlyList<BrokerConnectionStatusDto>> Handle(GetBrokerConnectionStatusQuery request, CancellationToken ct)
+    public async Task<IReadOnlyList<BrokerConnectionStatusDto>> Handle(
+        GetBrokerConnectionStatusQuery request, CancellationToken ct)
     {
+        var userId  = currentUser.UserId;
         var results = new List<BrokerConnectionStatusDto>();
         foreach (var broker in brokerFactory.GetRegisteredBrokerNames())
         {
-            var authenticated = await sessions.IsAuthenticatedAsync(broker, ct);
+            var authenticated = await sessions.IsAuthenticatedAsync(userId, broker, ct);
             results.Add(new BrokerConnectionStatusDto(
-                BrokerName: broker,
-                IsConnected: authenticated,
-                IsAuthenticated: authenticated,
-                LastHeartbeatAt: null,
-                ReconnectAttempts: 0,
-                LastDisconnectReason: null,
-                SessionExpiresAt: null));
+                BrokerName: broker, IsConnected: authenticated, IsAuthenticated: authenticated,
+                LastHeartbeatAt: null, ReconnectAttempts: 0,
+                LastDisconnectReason: null, SessionExpiresAt: null));
         }
         return results;
     }
@@ -42,14 +44,14 @@ public class GetBrokerConnectionStatusHandler(
 public class GetBrokerFundsHandler(
     IBrokerClientFactory brokerFactory,
     IAppBrokerSessionManager sessions,
+    ICurrentUser currentUser,
     IClock clock)
     : IRequestHandler<GetBrokerFundsQuery, BrokerFundsDto?>
 {
     public async Task<BrokerFundsDto?> Handle(GetBrokerFundsQuery request, CancellationToken ct)
     {
-        // Guard: not authenticated → return null (controller returns 404)
-        if (!await sessions.IsAuthenticatedAsync(request.BrokerName, ct)) return null;
-
+        var userId = currentUser.UserId;
+        if (!await sessions.IsAuthenticatedAsync(userId, request.BrokerName, ct)) return null;
         try
         {
             var client = brokerFactory.GetClient(request.BrokerName);
@@ -62,20 +64,20 @@ public class GetBrokerFundsHandler(
                 Currency:        "INR",
                 FetchedAt:       clock.NowInstant().ToDateTimeOffset());
         }
-        catch { return null; }   // Not authenticated or broker API error → caller gets 404
+        catch { return null; }
     }
 }
 
 public class GetBrokerPositionsHandler(
     IBrokerClientFactory brokerFactory,
-    IAppBrokerSessionManager sessions)
+    IAppBrokerSessionManager sessions,
+    ICurrentUser currentUser)
     : IRequestHandler<GetBrokerPositionsQuery, IReadOnlyList<BrokerPositionDto>>
 {
     public async Task<IReadOnlyList<BrokerPositionDto>> Handle(GetBrokerPositionsQuery request, CancellationToken ct)
     {
-        if (!await sessions.IsAuthenticatedAsync(request.BrokerName, ct))
-            return [];
-
+        var userId = currentUser.UserId;
+        if (!await sessions.IsAuthenticatedAsync(userId, request.BrokerName, ct)) return [];
         try
         {
             var client    = brokerFactory.GetClient(request.BrokerName);
@@ -87,7 +89,7 @@ public class GetBrokerPositionsHandler(
                 AverageBuyPrice: p.AveragePrice,
                 LastTradedPrice: p.LastPrice,
                 UnrealisedPnl:   p.PnL,
-                RealisedPnl:     0m,    // Broker model carries only mark-to-market PnL
+                RealisedPnl:     0m,
                 Product:         p.ProductType)).ToList();
         }
         catch { return []; }

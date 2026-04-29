@@ -79,6 +79,7 @@ public static class ServiceCollectionExtensions
         }
 
         // Application services
+        services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<IFieldEncryptionService, FieldEncryptionService>();
 
         if (redisAvailable)
@@ -199,6 +200,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuditLogRepository, EfAuditLogRepository>();
         services.AddScoped<IAlertLogRepository, EfAlertLogRepository>();
         services.AddScoped<IAlertRulesRepository, EfAlertRulesRepository>();
+        services.AddScoped<IUserRepository, EfUserRepository>();
+        services.AddScoped<IUserBrokerAccountRepository, EfUserBrokerAccountRepository>();
         services.AddScoped<IDownloadJobRepository, EfDownloadJobRepository>();
         services.AddScoped<ISignalJournalRepository, EfSignalJournalRepository>();
         services.AddScoped<ICapitalAllocationRepository, EfCapitalAllocationRepository>();

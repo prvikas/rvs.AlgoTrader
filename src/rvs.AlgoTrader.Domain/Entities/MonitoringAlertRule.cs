@@ -16,4 +16,6 @@ public class MonitoringAlertRule
     public string[] Channels       { get; set; } = [];
     public bool   IsActive         { get; set; } = true;
     public string MessageTemplate  { get; set; } = string.Empty;
+    /// <summary>Owner user. Null = system-wide rule visible to all users (pre-migration 050 rows).</summary>
+    public Guid?  UserId           { get; set; }
 }

@@ -20,6 +20,7 @@ public class QuantConditionConfiguration : IEntityTypeConfiguration<QuantConditi
         builder.Property(e => e.Status).HasColumnName("status").HasMaxLength(50).IsRequired();
         builder.Property(e => e.Tags).HasColumnName("tags").IsRequired();
         builder.Property(e => e.IsTemplate).HasColumnName("is_template").IsRequired();
+        builder.Property(e => e.UserId).HasColumnName("user_id");
         builder.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
         builder.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
     }

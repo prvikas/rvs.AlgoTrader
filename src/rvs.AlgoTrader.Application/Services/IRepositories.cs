@@ -345,7 +345,27 @@ public record AlertRuleDto(
 
 public interface IAlertRulesRepository
 {
-    Task<IReadOnlyList<AlertRuleDto>> GetAllAsync(CancellationToken ct);
-    Task<Guid> AddAsync(AlertRuleDto rule, CancellationToken ct);
+    Task<IReadOnlyList<AlertRuleDto>> GetAllAsync(string userId, CancellationToken ct);
+    Task<Guid> AddAsync(AlertRuleDto rule, string userId, CancellationToken ct);
+    Task<bool> DeleteAsync(Guid id, CancellationToken ct);
+}
+
+// ── User repository ───────────────────────────────────────────────────────────
+
+public interface IUserRepository
+{
+    Task<Domain.Entities.User?> GetByIdAsync(Guid id, CancellationToken ct);
+    Task<Domain.Entities.User?> GetByUsernameAsync(string username, CancellationToken ct);
+    Task<IReadOnlyList<Domain.Entities.User>> GetAllAsync(CancellationToken ct);
+    Task<Guid> CreateAsync(Domain.Entities.User user, CancellationToken ct);
+    Task UpdateAsync(Domain.Entities.User user, CancellationToken ct);
+}
+
+public interface IUserBrokerAccountRepository
+{
+    Task<IReadOnlyList<Domain.Entities.UserBrokerAccount>> GetByUserIdAsync(string userId, CancellationToken ct);
+    Task<Domain.Entities.UserBrokerAccount?> GetAsync(string userId, string brokerName, string market, CancellationToken ct);
+    Task<Guid> AddAsync(Domain.Entities.UserBrokerAccount account, CancellationToken ct);
+    Task<bool> SetActiveAsync(Guid id, bool isActive, CancellationToken ct);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct);
 }

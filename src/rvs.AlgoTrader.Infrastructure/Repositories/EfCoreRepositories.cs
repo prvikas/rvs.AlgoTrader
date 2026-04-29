@@ -595,28 +595,30 @@ public class EfTradeJournalRepository(AlgoTraderDbContext db) : ITradeJournalRep
 
 public class EfAlertRulesRepository(AlgoTraderDbContext db) : IAlertRulesRepository
 {
-    public async Task<IReadOnlyList<AlertRuleDto>> GetAllAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<AlertRuleDto>> GetAllAsync(string userId, CancellationToken ct)
     {
         var rules = await db.MonitoringAlertRules
             .AsNoTracking()
+            .Where(r => r.UserId == null || r.UserId.ToString() == userId)
             .OrderBy(r => r.AlertType)
             .ToListAsync(ct);
         return rules.Select(ToDto).ToList();
     }
 
-    public async Task<Guid> AddAsync(AlertRuleDto rule, CancellationToken ct)
+    public async Task<Guid> AddAsync(AlertRuleDto rule, string userId, CancellationToken ct)
     {
         var entity = new MonitoringAlertRule
         {
-            Id             = rule.Id == Guid.Empty ? Guid.NewGuid() : rule.Id,
-            AlertType      = rule.AlertType,
-            MetricName     = rule.MetricName,
-            Operator       = rule.Operator,
-            ThresholdValue = rule.ThresholdValue,
-            Severity       = rule.Severity,
-            Channels       = rule.Channels,
-            IsActive       = rule.IsActive,
+            Id              = rule.Id == Guid.Empty ? Guid.NewGuid() : rule.Id,
+            AlertType       = rule.AlertType,
+            MetricName      = rule.MetricName,
+            Operator        = rule.Operator,
+            ThresholdValue  = rule.ThresholdValue,
+            Severity        = rule.Severity,
+            Channels        = rule.Channels,
+            IsActive        = rule.IsActive,
             MessageTemplate = rule.MessageTemplate,
+            UserId          = Guid.TryParse(userId, out var uid) ? uid : null,
         };
         db.MonitoringAlertRules.Add(entity);
         await db.SaveChangesAsync(ct);
@@ -635,4 +637,80 @@ public class EfAlertRulesRepository(AlgoTraderDbContext db) : IAlertRulesReposit
     private static AlertRuleDto ToDto(MonitoringAlertRule r) =>
         new(r.Id, r.AlertType, r.MetricName, r.Operator, r.ThresholdValue,
             r.Severity, r.Channels, r.IsActive, r.MessageTemplate);
+}
+
+// ── User repository ────────────────────────────────────────────────────────────
+
+public class EfUserRepository(AlgoTraderDbContext db) : IUserRepository
+{
+    public Task<User?> GetByIdAsync(Guid id, CancellationToken ct)
+        => db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id, ct);
+
+    public Task<User?> GetByUsernameAsync(string username, CancellationToken ct)
+        => db.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower() && u.IsActive, ct);
+
+    public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken ct)
+        => await db.Users.AsNoTracking().Where(u => u.IsActive).OrderBy(u => u.Username).ToListAsync(ct);
+
+    public async Task<Guid> CreateAsync(User user, CancellationToken ct)
+    {
+        db.Users.Add(user);
+        await db.SaveChangesAsync(ct);
+        return user.Id;
+    }
+
+    public async Task UpdateAsync(User user, CancellationToken ct)
+    {
+        db.Users.Update(user);
+        await db.SaveChangesAsync(ct);
+    }
+}
+
+// ── UserBrokerAccount repository ──────────────────────────────────────────────
+
+public class EfUserBrokerAccountRepository(AlgoTraderDbContext db) : IUserBrokerAccountRepository
+{
+    public async Task<IReadOnlyList<UserBrokerAccount>> GetByUserIdAsync(string userId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(userId, out var uid)) return [];
+        return await db.UserBrokerAccounts.AsNoTracking()
+            .Where(a => a.UserId == uid && a.IsActive)
+            .OrderBy(a => a.BrokerName)
+            .ToListAsync(ct);
+    }
+
+    public Task<UserBrokerAccount?> GetAsync(string userId, string brokerName, string market, CancellationToken ct)
+    {
+        if (!Guid.TryParse(userId, out var uid)) return Task.FromResult<UserBrokerAccount?>(null);
+        return db.UserBrokerAccounts.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.UserId == uid
+                && a.BrokerName == brokerName
+                && a.Market == market, ct);
+    }
+
+    public async Task<Guid> AddAsync(UserBrokerAccount account, CancellationToken ct)
+    {
+        db.UserBrokerAccounts.Add(account);
+        await db.SaveChangesAsync(ct);
+        return account.Id;
+    }
+
+    public async Task<bool> SetActiveAsync(Guid id, bool isActive, CancellationToken ct)
+    {
+        var entity = await db.UserBrokerAccounts.FindAsync([id], ct);
+        if (entity == null) return false;
+        entity.IsActive = isActive;
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    public async Task<bool> DeleteAsync(Guid id, CancellationToken ct)
+    {
+        var entity = await db.UserBrokerAccounts.FindAsync([id], ct);
+        if (entity == null) return false;
+        db.UserBrokerAccounts.Remove(entity);
+        await db.SaveChangesAsync(ct);
+        return true;
+    }
 }

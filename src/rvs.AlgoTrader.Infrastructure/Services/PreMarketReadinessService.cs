@@ -115,11 +115,14 @@ public sealed class PreMarketReadinessService(
         }
     }
 
+    // System user UUID — used for pre-market checks that run outside a user request scope.
+    private const string SystemUserId = "00000000-0000-0000-0000-000000000001";
+
     private async Task<ReadinessCheck> CheckBrokerTokenAsync(CancellationToken ct)
     {
         try
         {
-            var isValid = await sessionManager.IsAuthenticatedAsync("MStock", ct);
+            var isValid = await sessionManager.IsAuthenticatedAsync(SystemUserId, "MStock", ct);
             return new ReadinessCheck(
                 "BrokerToken_MStock",
                 isValid,

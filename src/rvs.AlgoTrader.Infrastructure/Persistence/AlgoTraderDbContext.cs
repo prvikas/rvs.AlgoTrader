@@ -65,6 +65,10 @@ public class AlgoTraderDbContext : DbContext
     // P10-C Quant Lab — user-defined research conditions with lifecycle and notes
     public DbSet<QuantCondition> QuantConditions => Set<QuantCondition>();
 
+    // Multi-user support (migration 050)
+    public DbSet<User>               Users               => Set<User>();
+    public DbSet<UserBrokerAccount>  UserBrokerAccounts  => Set<UserBrokerAccount>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
