@@ -21,4 +21,7 @@ public class BrokerClientFactory(IServiceProvider services) : IBrokerClientFacto
     public IBrokerOrderClient GetOrderClient(string brokerName) => GetClient(brokerName);
     public IBrokerMarketDataClient GetMarketDataClient(string brokerName) => GetClient(brokerName);
     public IBrokerStreamClient GetStreamClient(string brokerName) => GetClient(brokerName);
+
+    public IReadOnlyList<string> GetRegisteredBrokerNames()
+        => services.GetServices<IFullBrokerClient>().Select(c => c.BrokerName).ToList();
 }

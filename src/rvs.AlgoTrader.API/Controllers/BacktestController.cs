@@ -7,7 +7,7 @@ using rvs.AlgoTrader.Application.DTOs.Common;
 // DownloadHistoryRequest is defined in Application/DTOs/Backtest/DownloadHistoryRequest.cs
 using rvs.AlgoTrader.Application.Queries.Backtest;
 using rvs.AlgoTrader.Application.Services;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 
 namespace rvs.AlgoTrader.API.Controllers;
 

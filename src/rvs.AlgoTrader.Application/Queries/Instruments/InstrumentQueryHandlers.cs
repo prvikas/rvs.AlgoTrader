@@ -2,6 +2,7 @@ using MediatR;
 using rvs.AlgoTrader.Application.DTOs.Instruments;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Constants;
 
 namespace rvs.AlgoTrader.Application.Queries.Instruments;
 
@@ -26,9 +27,9 @@ internal static class InstrumentMapper
     private static IReadOnlyDictionary<string, string> BuildBrokerTokens(Domain.Entities.Instrument i)
     {
         var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (i.ZerodhaToken != null) d["Zerodha"] = i.ZerodhaToken;
-        if (i.UpstoxToken  != null) d["Upstox"]  = i.UpstoxToken;
-        if (i.MStockToken  != null) d["MStock"]  = i.MStockToken;
+        if (i.ZerodhaToken != null) d[BrokerNames.Zerodha] = i.ZerodhaToken;
+        if (i.UpstoxToken  != null) d[BrokerNames.Upstox]  = i.UpstoxToken;
+        if (i.MStockToken  != null) d[BrokerNames.MStock]  = i.MStockToken;
         return d;
     }
 }

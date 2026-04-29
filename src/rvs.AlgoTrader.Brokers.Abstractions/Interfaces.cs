@@ -82,6 +82,8 @@ public interface IBrokerClientFactory
     IBrokerOrderClient GetOrderClient(string brokerName);
     IBrokerMarketDataClient GetMarketDataClient(string brokerName);
     IBrokerStreamClient GetStreamClient(string brokerName);
+    /// <summary>Returns the names of all broker clients registered with the DI container.</summary>
+    IReadOnlyList<string> GetRegisteredBrokerNames();
 }
 
 public interface IBrokerSessionManager

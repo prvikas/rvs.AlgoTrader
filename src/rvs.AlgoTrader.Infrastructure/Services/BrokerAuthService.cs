@@ -6,6 +6,7 @@ using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Brokers.Upstox.Auth;
 using rvs.AlgoTrader.Brokers.Zerodha.Auth;
+using rvs.AlgoTrader.Domain.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -37,18 +38,18 @@ public class BrokerAuthService(
     {
         // Use the factory's cached client so _jwtToken is set on the same instance
         // that HistoricalDownloadService, LiveExecutionEngine, etc. will use.
-        var mStockClient = brokerFactory.GetClient("MStock");
-        var creds = new BrokerCredentials("MStock", apiKey, null, null, null, clientCode, password, totp);
+        var mStockClient = brokerFactory.GetClient(BrokerNames.MStock);
+        var creds = new BrokerCredentials(BrokerNames.MStock, apiKey, null, null, null, clientCode, password, totp);
         var result = await mStockClient.AuthenticateAsync(creds, ct);
 
         if (result.Success)
         {
-            await sessionManager.StoreSessionAsync("MStock", result, ct);
-            FireAndForgetRefresh("MStock");
+            await sessionManager.StoreSessionAsync(BrokerNames.MStock, result, ct);
+            FireAndForgetRefresh(BrokerNames.MStock);
         }
 
         return new BrokerAuthResultDto(
-            result.Success, "MStock",
+            result.Success, BrokerNames.MStock,
             result.Success ? "Authenticated successfully" : result.ErrorMessage,
             result.ExpiresAt);
     }
@@ -64,7 +65,7 @@ public class BrokerAuthService(
     public async Task<BrokerAuthResultDto> AuthenticateZerodhaAsync(string requestToken, CancellationToken ct)
     {
         var creds = new BrokerCredentials(
-            "Zerodha",
+            BrokerNames.Zerodha,
             config["Broker:Zerodha:ApiKey"]!,
             config["Broker:Zerodha:ApiSecret"]!,
             requestToken, null, null, null, null);
@@ -72,15 +73,15 @@ public class BrokerAuthService(
 
         if (result.Success)
         {
-            await sessionManager.StoreSessionAsync("Zerodha", result, ct);
+            await sessionManager.StoreSessionAsync(BrokerNames.Zerodha, result, ct);
             // Inject the token directly into the factory's cached client instance so it's
             // immediately usable for market-data / order calls without requiring a restart.
-            brokerFactory.GetClient("Zerodha").RestoreToken(result.AccessToken!, null);
-            FireAndForgetRefresh("Zerodha");
+            brokerFactory.GetClient(BrokerNames.Zerodha).RestoreToken(result.AccessToken!, null);
+            FireAndForgetRefresh(BrokerNames.Zerodha);
         }
 
         return new BrokerAuthResultDto(
-            result.Success, "Zerodha",
+            result.Success, BrokerNames.Zerodha,
             result.Success ? "Authenticated successfully" : result.ErrorMessage,
             result.ExpiresAt);
     }
@@ -98,7 +99,7 @@ public class BrokerAuthService(
     public async Task<BrokerAuthResultDto> AuthenticateUpstoxAsync(string authCode, CancellationToken ct)
     {
         var creds = new BrokerCredentials(
-            "Upstox",
+            BrokerNames.Upstox,
             config["Broker:Upstox:ApiKey"]!,
             config["Broker:Upstox:ApiSecret"]!,
             authCode, null, null, null, null);
@@ -107,14 +108,14 @@ public class BrokerAuthService(
 
         if (result.Success)
         {
-            await sessionManager.StoreSessionAsync("Upstox", result, ct);
+            await sessionManager.StoreSessionAsync(BrokerNames.Upstox, result, ct);
             // Inject the token directly into the factory's cached client instance.
-            brokerFactory.GetClient("Upstox").RestoreToken(result.AccessToken!, null);
-            FireAndForgetRefresh("Upstox");
+            brokerFactory.GetClient(BrokerNames.Upstox).RestoreToken(result.AccessToken!, null);
+            FireAndForgetRefresh(BrokerNames.Upstox);
         }
 
         return new BrokerAuthResultDto(
-            result.Success, "Upstox",
+            result.Success, BrokerNames.Upstox,
             result.Success ? "Authenticated successfully" : result.ErrorMessage,
             result.ExpiresAt);
     }

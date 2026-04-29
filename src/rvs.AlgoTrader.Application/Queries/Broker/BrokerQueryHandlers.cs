@@ -15,14 +15,15 @@ public class GetBrokerLatencyHandler(IBrokerLatencyRepository repo) : IRequestHa
     }
 }
 
-public class GetBrokerConnectionStatusHandler(IAppBrokerSessionManager sessions) : IRequestHandler<GetBrokerConnectionStatusQuery, IReadOnlyList<BrokerConnectionStatusDto>>
+public class GetBrokerConnectionStatusHandler(
+    IAppBrokerSessionManager sessions,
+    IBrokerClientFactory brokerFactory)
+    : IRequestHandler<GetBrokerConnectionStatusQuery, IReadOnlyList<BrokerConnectionStatusDto>>
 {
-    private static readonly string[] Brokers = ["Zerodha", "Upstox", "MStock"];
-
     public async Task<IReadOnlyList<BrokerConnectionStatusDto>> Handle(GetBrokerConnectionStatusQuery request, CancellationToken ct)
     {
         var results = new List<BrokerConnectionStatusDto>();
-        foreach (var broker in Brokers)
+        foreach (var broker in brokerFactory.GetRegisteredBrokerNames())
         {
             var authenticated = await sessions.IsAuthenticatedAsync(broker, ct);
             results.Add(new BrokerConnectionStatusDto(

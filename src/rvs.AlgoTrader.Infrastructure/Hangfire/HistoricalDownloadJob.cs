@@ -1,5 +1,5 @@
 using Hangfire;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Services;

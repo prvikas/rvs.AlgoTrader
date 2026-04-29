@@ -5,7 +5,7 @@ using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 

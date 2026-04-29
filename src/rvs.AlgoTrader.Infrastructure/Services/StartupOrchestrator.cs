@@ -9,7 +9,7 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Events;
 using rvs.AlgoTrader.Domain.Interfaces;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Infrastructure.Hangfire;
 using rvs.AlgoTrader.Application.Options;
 

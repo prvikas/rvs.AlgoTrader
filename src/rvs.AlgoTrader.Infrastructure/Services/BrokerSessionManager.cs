@@ -4,7 +4,7 @@ using NodaTime;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Domain.Interfaces;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 using StackExchange.Redis;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;

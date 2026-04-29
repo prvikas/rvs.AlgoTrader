@@ -1,6 +1,6 @@
 using Hangfire;
 using Microsoft.Extensions.Logging;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 using rvs.AlgoTrader.Infrastructure.Jobs;
 
 namespace rvs.AlgoTrader.Infrastructure.Hangfire;

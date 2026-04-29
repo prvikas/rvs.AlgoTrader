@@ -1,6 +1,6 @@
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Enums;
-using rvs.AlgoTrader.Infrastructure.Constants;
+using rvs.AlgoTrader.Domain.Constants;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
