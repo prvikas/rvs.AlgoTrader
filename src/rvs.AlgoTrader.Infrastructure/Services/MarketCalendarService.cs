@@ -5,7 +5,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 
 /// <summary>
 /// NSE market calendar: Mon–Fri, 9:15–15:30 IST.
-/// Excludes BSE/NSE holidays (TODO: integrate exchange holiday API).
+/// Excludes BSE/NSE holidays via a static set maintained annually (no live exchange API required).
 /// </summary>
 public sealed class MarketCalendarService : IMarketCalendarService
 {

@@ -1304,13 +1304,23 @@ function scenarioDtoToScenario(dto: DefinitionScenarioDto): Scenario {
   let overrides: import('../types/strategy').ParameterOverride[] = []
   let metrics: import('../types/strategy').RunMetrics | undefined
   let brokerageConfig: import('../types/strategy').BrokerageConfig | undefined
+  let hypothesis: string | undefined
+  let hypothesisTag: string | undefined
+  let isBaseline: boolean | undefined
+  let sweepGroupId: string | undefined
+  let promotionNotes: string | undefined
   try {
     const parsed = JSON.parse(dto.parameterOverridesJson)
     if (Array.isArray(parsed)) {
       overrides = parsed  // legacy format
     } else {
-      overrides = parsed.overrides ?? []
+      overrides       = parsed.overrides ?? []
       brokerageConfig = parsed.brokerageConfig
+      hypothesis      = parsed.hypothesis
+      hypothesisTag   = parsed.hypothesisTag
+      isBaseline      = parsed.isBaseline
+      sweepGroupId    = parsed.sweepGroupId
+      promotionNotes  = parsed.promotionNotes
     }
   } catch { /* ignore */ }
   try { if (dto.lastMetricsJson) metrics = JSON.parse(dto.lastMetricsJson) } catch { /* ignore */ }
@@ -1324,6 +1334,11 @@ function scenarioDtoToScenario(dto: DefinitionScenarioDto): Scenario {
     backtestRange:      { from: dto.backtestFrom, to: dto.backtestTo },
     parameterOverrides: overrides,
     brokerageConfig,
+    hypothesis,
+    hypothesisTag,
+    isBaseline,
+    sweepGroupId,
+    promotionNotes,
     status:             dto.status as ScenarioStatus,
     lastRunAt:          dto.lastRunAt,
     lastMetrics:        metrics,
@@ -1342,6 +1357,11 @@ function scenarioToUpsertRequest(s: Omit<Scenario, 'id' | 'strategyId'>): Upsert
     parameterOverridesJson: JSON.stringify({
       overrides:       s.parameterOverrides ?? [],
       brokerageConfig: s.brokerageConfig,
+      hypothesis:      s.hypothesis,
+      hypothesisTag:   s.hypothesisTag,
+      isBaseline:      s.isBaseline,
+      sweepGroupId:    s.sweepGroupId,
+      promotionNotes:  s.promotionNotes,
     }),
     status:                 s.status,
   }
@@ -1681,7 +1701,7 @@ export const strategyDomainApi = {
         brokerAccount:          Broker.MStock,
         backtestFrom:           '2023-01-01',
         backtestTo:             '2025-12-31',
-        parameterOverridesJson: JSON.stringify(overrides),
+        parameterOverridesJson: JSON.stringify({ overrides, sweepGroupId }),
         status:                 'Draft',
       }
       const resp = await apiClient.post<ApiResponse<DefinitionScenarioDto>>(
@@ -1691,8 +1711,6 @@ export const strategyDomainApi = {
     const created: ParameterSweep = {
       ...sweep, id: `psweep-${Date.now()}`, strategyId, generatedScenarioIds: ids,
     }
-    // sweepGroupId retained in-memory for grouping — sweep metadata not yet DB-persisted
-    void sweepGroupId
     return { ...created, generatedCount: steps }
   },
 }

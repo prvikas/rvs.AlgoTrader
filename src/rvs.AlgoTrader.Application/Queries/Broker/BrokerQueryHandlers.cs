@@ -2,6 +2,7 @@ using MediatR;
 using rvs.AlgoTrader.Application.DTOs.Broker;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Brokers.Abstractions;
+using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Application.Queries.Broker;
 
@@ -37,24 +38,57 @@ public class GetBrokerConnectionStatusHandler(IAppBrokerSessionManager sessions)
     }
 }
 
-public class GetBrokerFundsHandler : IRequestHandler<GetBrokerFundsQuery, BrokerFundsDto?>
+public class GetBrokerFundsHandler(
+    IBrokerClientFactory brokerFactory,
+    IAppBrokerSessionManager sessions,
+    IClock clock)
+    : IRequestHandler<GetBrokerFundsQuery, BrokerFundsDto?>
 {
-    public GetBrokerFundsHandler() { }
-
-    public Task<BrokerFundsDto?> Handle(GetBrokerFundsQuery request, CancellationToken ct)
+    public async Task<BrokerFundsDto?> Handle(GetBrokerFundsQuery request, CancellationToken ct)
     {
-        // Broker fund fetching requires live broker integration — returns null until implemented
-        return Task.FromResult<BrokerFundsDto?>(null);
+        // Guard: not authenticated → return null (controller returns 404)
+        if (!await sessions.IsAuthenticatedAsync(request.BrokerName, ct)) return null;
+
+        try
+        {
+            var client = brokerFactory.GetClient(request.BrokerName);
+            var funds  = await client.GetFundsAsync(ct);
+            return new BrokerFundsDto(
+                BrokerName:      request.BrokerName,
+                AvailableMargin: funds.AvailableBalance,
+                UsedMargin:      funds.UsedMargin,
+                TotalMargin:     funds.TotalBalance,
+                Currency:        "INR",
+                FetchedAt:       clock.NowInstant().ToDateTimeOffset());
+        }
+        catch { return null; }   // Not authenticated or broker API error → caller gets 404
     }
 }
 
-public class GetBrokerPositionsHandler : IRequestHandler<GetBrokerPositionsQuery, IReadOnlyList<BrokerPositionDto>>
+public class GetBrokerPositionsHandler(
+    IBrokerClientFactory brokerFactory,
+    IAppBrokerSessionManager sessions)
+    : IRequestHandler<GetBrokerPositionsQuery, IReadOnlyList<BrokerPositionDto>>
 {
-    public GetBrokerPositionsHandler() { }
-
-    public Task<IReadOnlyList<BrokerPositionDto>> Handle(GetBrokerPositionsQuery request, CancellationToken ct)
+    public async Task<IReadOnlyList<BrokerPositionDto>> Handle(GetBrokerPositionsQuery request, CancellationToken ct)
     {
-        // Broker position fetching requires live broker integration — returns empty until implemented
-        return Task.FromResult<IReadOnlyList<BrokerPositionDto>>([]);
+        if (!await sessions.IsAuthenticatedAsync(request.BrokerName, ct))
+            return [];
+
+        try
+        {
+            var client    = brokerFactory.GetClient(request.BrokerName);
+            var positions = await client.GetPositionsAsync(ct);
+            return positions.Select(p => new BrokerPositionDto(
+                TradingSymbol:   p.InternalSymbol,
+                InstrumentType:  p.ProductType,
+                Quantity:        p.Quantity,
+                AverageBuyPrice: p.AveragePrice,
+                LastTradedPrice: p.LastPrice,
+                UnrealisedPnl:   p.PnL,
+                RealisedPnl:     0m,    // Broker model carries only mark-to-market PnL
+                Product:         p.ProductType)).ToList();
+        }
+        catch { return []; }
     }
 }

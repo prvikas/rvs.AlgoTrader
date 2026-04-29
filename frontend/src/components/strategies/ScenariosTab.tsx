@@ -566,12 +566,18 @@ export function ScenariosTab({ strategy }: Props) {
   }
 
   function handlePromote(s: Scenario, notes: string) {
+    const updated = { ...s, status: ScenarioStatus.FwdTesting, promotionNotes: notes }
+    // Optimistic UI update
     qc.setQueryData(['scenarios', strategy.id], (old: Scenario[] | undefined) =>
-      old?.map(x => x.id === s.id
-        ? { ...x, status: ScenarioStatus.FwdTesting, promotionNotes: notes }
-        : x
-      ) ?? []
+      old?.map(x => x.id === s.id ? updated : x) ?? []
     )
+    // Persist status + promotionNotes to DB via upsert (serialised into parameterOverridesJson)
+    strategyDomainApi.updateScenario(strategy.id, s.id, updated).catch(() => {
+      // Rollback on failure
+      qc.setQueryData(['scenarios', strategy.id], (old: Scenario[] | undefined) =>
+        old?.map(x => x.id === s.id ? s : x) ?? []
+      )
+    })
     setPromotingScenario(null)
   }
 
