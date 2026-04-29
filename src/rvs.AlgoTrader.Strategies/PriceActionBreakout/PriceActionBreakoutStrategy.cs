@@ -18,6 +18,11 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
 {
     public string Name => "PriceActionBreakout";
 
+    // Warmup: consolidation range lookback + ATR period + buffer; TrendEMA dominates when set.
+    public int MinWarmupBars => Math.Max(
+        config.LookbackBars + config.AtrPeriod + 1,
+        config.TrendEmaPeriod > 0 ? config.TrendEmaPeriod + 2 : 1);
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         var candles = context.Candles;
@@ -130,9 +135,9 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
 
             // Structural stop: below range support (natural invalidation level).
             // Falls back to ATR-based stop when range is very narrow (rangeLow is near close).
-            var rangeLowStop = rangeLow - currentAtr * 0.15m;
+            var rangeLowStop = rangeLow - currentAtr * config.StructuralStopAtrBuffer;
             var atrStop      = current.Close - currentAtr * config.AtrStopMultiple;
-            var stopLoss     = Math.Max(rangeLowStop, Math.Max(atrStop, current.Low - currentAtr * 0.5m));
+            var stopLoss     = Math.Max(rangeLowStop, Math.Max(atrStop, current.Low - currentAtr * config.BarFloorAtrBuffer));
 
             // TP from actual risk — maintains the configured RRR regardless of stop method
             var risk       = current.Close - stopLoss;
@@ -156,9 +161,9 @@ public class PriceActionBreakoutStrategy(PriceActionBreakoutConfig config) : ISt
                     $"Entry too extended: {rangeLow - current.Close:F2}pts below breakdown (max {currentAtr * config.MaxEntryExtensionAtr:F2}pts)",
                     indicatorValues: indicators));
 
-            var rangeHighStop = rangeHigh + currentAtr * 0.15m;
+            var rangeHighStop = rangeHigh + currentAtr * config.StructuralStopAtrBuffer;
             var atrStop       = current.Close + currentAtr * config.AtrStopMultiple;
-            var stopLoss      = Math.Min(rangeHighStop, Math.Min(atrStop, current.High + currentAtr * 0.5m));
+            var stopLoss      = Math.Min(rangeHighStop, Math.Min(atrStop, current.High + currentAtr * config.BarFloorAtrBuffer));
 
             var risk       = stopLoss - current.Close;
             var takeProfit = current.Close - risk * config.RiskRewardRatio;
@@ -280,6 +285,22 @@ public class PriceActionBreakoutConfig
     /// </summary>
     public bool    RequireVolumeContraction { get; set; } = false;
 
+    /// <summary>
+    /// ATR multiple added/subtracted beyond the structural stop level (range low for longs,
+    /// range high for shorts). Small buffer absorbs wick noise at the range boundary without
+    /// moving the stop far from the structural invalidation point.
+    /// Default 0.15 (15% of ATR).
+    /// </summary>
+    public decimal StructuralStopAtrBuffer  { get; set; } = 0.15m;
+
+    /// <summary>
+    /// ATR multiple used as an absolute stop floor (below bar low for longs, above bar high
+    /// for shorts). Prevents a structurally-derived stop from being placed inside the entry
+    /// bar's own range — which would be triggered immediately on the next bar.
+    /// Default 0.5 (50% of ATR beyond bar extreme).
+    /// </summary>
+    public decimal BarFloorAtrBuffer        { get; set; } = 0.5m;
+
     public static PriceActionBreakoutConfig FromJson(string json)
         => JsonSerializer.Deserialize<PriceActionBreakoutConfig>(json) ?? new();
 
@@ -296,5 +317,9 @@ public class PriceActionBreakoutConfig
         new("AllowShort",               "Allow Short Trades",        "bool",    false, Hint: "Enable SELL signals on downside breakouts"),
         new("MaxEntryExtensionAtr",     "Max Entry Extension (ATR)", "decimal", 1.0m,  Min: 0.0m, Max: 5.0m, Step: 0.25m, Hint: "Reject if close is > this × ATR past the range boundary. 0 = disabled"),
         new("RequireVolumeContraction", "Require Volume Contraction","bool",    false, Hint: "Second-half of lookback must have lower avg volume than first half (VCP characteristic)"),
+        new("StructuralStopAtrBuffer",  "Structural Stop Buffer (ATR)", "decimal", 0.15m, Min: 0.0m, Max: 1.0m, Step: 0.05m,
+            Hint: "ATR buffer beyond range low/high for structural stop. Absorbs wick noise at range boundary."),
+        new("BarFloorAtrBuffer",        "Bar Floor Buffer (ATR)",       "decimal", 0.5m,  Min: 0.0m, Max: 2.0m, Step: 0.1m,
+            Hint: "Absolute stop floor: stop is always at least this many ATRs beyond the entry bar extreme."),
     ];
 }

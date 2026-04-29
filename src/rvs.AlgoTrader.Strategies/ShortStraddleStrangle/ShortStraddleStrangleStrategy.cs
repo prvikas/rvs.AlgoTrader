@@ -24,6 +24,10 @@ public class ShortStraddleStrangleStrategy(ShortStraddleStrangleConfig config) :
 {
     public string Name => "ShortStraddleStrangle";
 
+    // Signal is driven entirely by OptionChain (IV, DTE) — no candle-based indicator warmup.
+    // MinWarmupBars = 1 so the engine has at least one closed candle for timestamp resolution.
+    public int MinWarmupBars => 1;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         if (context.OptionChain is null)

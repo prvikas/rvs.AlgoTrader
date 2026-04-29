@@ -26,6 +26,13 @@ public class GenericRulesConfig
     [JsonPropertyName("tradingStyle")]
     public string? TradingStyle { get; set; }
 
+    /// <summary>
+    /// Maximum simultaneous open positions (trades + spreads combined).
+    /// Default 1 = single position. Set > 1 for pyramiding or multi-straddle strategies.
+    /// </summary>
+    [JsonPropertyName("maxConcurrentPositions")]
+    public int MaxConcurrentPositions { get; set; } = 1;
+
     [JsonPropertyName("instruments")]
     public string[]? Instruments { get; set; }
 
@@ -76,6 +83,16 @@ public class GenericRulesConfig
     /// <summary>Risk:reward ratio — from profitTarget config or 99 (no fixed TP, exit by signal).</summary>
     public decimal RiskRewardRatio =>
         ProfitTarget?.Value > 0 ? ProfitTarget.Value : 99m;
+
+    /// <summary>
+    /// % buffer below bar low (long stop floor) or above bar high (short stop ceiling).
+    /// Ensures the stop is never placed inside the entry bar's own range — a tight stop
+    /// inside the bar would be triggered immediately on any wick reversal.
+    /// Default 1.0 = 1% beyond bar extreme.
+    /// Configurable via JSON: set "stopBarBufferPct" in the strategy rules JSON.
+    /// </summary>
+    [JsonPropertyName("stopBarBufferPct")]
+    public decimal StopBarBufferPct { get; set; } = 1.0m;
 
     public static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -283,6 +300,17 @@ public class EntryExecutionConfig
 
     [JsonPropertyName("noTradeAfterMinute")]
     public int? NoTradeAfterMinute { get; set; }
+
+    /// <summary>
+    /// Execution band on stop-loss trigger: accept fills within ±N% of the SL price.
+    /// Example: SL trigger ₹60, band 10% → accept fills ₹60–₹66 for short positions.
+    /// In backtesting: expands the gap-fill window so gap-opens within the band still
+    /// fill at trigger (not at open), reducing pessimistic gap-fill bias.
+    /// In live: the bracket order spans [trigger, trigger*(1+bandPct/100)].
+    /// Null / 0 = no band (standard exact-trigger behaviour).
+    /// </summary>
+    [JsonPropertyName("executionBandPct")]
+    public decimal? ExecutionBandPct { get; set; }
 }
 
 public class StopTargetConfig

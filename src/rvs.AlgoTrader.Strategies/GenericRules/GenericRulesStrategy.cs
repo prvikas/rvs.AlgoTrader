@@ -45,31 +45,42 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
 
     public string Name => "GenericRules";
 
+    public int MaxConcurrentPositions => Math.Max(1, config.MaxConcurrentPositions);
+
     public int MinWarmupBars
     {
         get
         {
             // Compute worst-case warmup across all indicators + some extra
+            var primaryMins = int.TryParse(config.PrimaryTimeframe, out var pm) ? pm : 0;
+
             var maxPeriod = config.Indicators
-                .Select(ind => ind.Type.ToUpperInvariant() switch
+                .Select(ind =>
                 {
-                    "SMA"             => ind.GetInt("period", 20),
-                    "EMA"             => ind.GetInt("period", 20),
-                    "HULLMA"          => ind.GetInt("period", 20) * 2,
-                    "RSI"             => ind.GetInt("period", 14) + 1,
-                    "ATR"             => ind.GetInt("period", 14),
-                    "BOLLINGERBANDS"  => ind.GetInt("period", 20),
-                    "MACD"            => ind.GetInt("slowPeriod", 26) + ind.GetInt("signalPeriod", 9),
-                    "CCI"             => ind.GetInt("period", 20),
-                    "ADX"             => ind.GetInt("period", 14) * 3,
-                    "STOCHASTICS"     => ind.GetInt("kPeriod", 14) + ind.GetInt("dPeriod", 3),
-                    "DONCHIANCHANNEL"  => ind.GetInt("period", 20),
-                    "SUPERTREND"       => ind.GetInt("period", 10),
-                    "VOLUMESPIKE"      => ind.GetInt("maPeriod", 20),
-                    "SWINGHIGHLOW"     => ind.GetInt("lookback", 5),
-                    "RANGEPERCENTILE"  => ind.GetInt("period", 50),
-                    "ATRPERCENTILE"    => ind.GetInt("atrPeriod", 14) + ind.GetInt("period", 50),
-                    _ => 1
+                    var baseBars = ind.Type.ToUpperInvariant() switch
+                    {
+                        "SMA"             => ind.GetInt("period", 20),
+                        "EMA"             => ind.GetInt("period", 20),
+                        "HULLMA"          => ind.GetInt("period", 20) * 2,
+                        "RSI"             => ind.GetInt("period", 14) + 1,
+                        "ATR"             => ind.GetInt("period", 14),
+                        "BOLLINGERBANDS"  => ind.GetInt("period", 20),
+                        "MACD"            => ind.GetInt("slowPeriod", 26) + ind.GetInt("signalPeriod", 9),
+                        "CCI"             => ind.GetInt("period", 20),
+                        "ADX"             => ind.GetInt("period", 14) * 3,
+                        "STOCHASTICS"     => ind.GetInt("kPeriod", 14) + ind.GetInt("dPeriod", 3),
+                        "DONCHIANCHANNEL"  => ind.GetInt("period", 20),
+                        "SUPERTREND"       => ind.GetInt("period", 10),
+                        "VOLUMESPIKE"      => ind.GetInt("maPeriod", 20),
+                        "SWINGHIGHLOW"     => ind.GetInt("lookback", 5),
+                        "RANGEPERCENTILE"  => ind.GetInt("period", 50),
+                        "ATRPERCENTILE"    => ind.GetInt("atrPeriod", 14) + ind.GetInt("period", 50),
+                        _ => 1
+                    };
+                    // HTF indicators need baseBars × (htfMins / primaryMins) primary bars
+                    if (primaryMins > 0 && int.TryParse(ind.Timeframe, out var indMins) && indMins > primaryMins)
+                        baseBars *= indMins / primaryMins;
+                    return baseBars;
                 })
                 .DefaultIfEmpty(20)
                 .Max();
@@ -93,7 +104,7 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
             .ToList();
 
         // ── Compute all indicators (pass context for IVRank/PCR/AtmIV/MaxPain) ─
-        var computed = IndicatorEngine.ComputeAll(candles, config.Indicators, context);
+        var computed = IndicatorEngine.ComputeAll(candles, config.Indicators, context, config.PrimaryTimeframe);
 
         // Build indicator snapshot for charting
         var indicatorSnapshot = new Dictionary<string, decimal>();
@@ -121,7 +132,7 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
         if (position == "LONG")
         {
             if (config.LongExit.Enabled &&
-                RulesEvaluator.Evaluate(config.LongExit, computed, candles))
+                RulesEvaluator.Evaluate(config.LongExit, computed, candles, context.OpenPositionCount))
                 return Task.FromResult(SignalResult.ExitLong("Long exit conditions met", indicatorSnapshot));
             return Task.FromResult(SignalResult.Hold(
                 "Long: holding — exit conditions not met", indicatorValues: indicatorSnapshot));
@@ -130,7 +141,7 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
         if (position == "SHORT")
         {
             if (config.ShortExit.Enabled &&
-                RulesEvaluator.Evaluate(config.ShortExit, computed, candles))
+                RulesEvaluator.Evaluate(config.ShortExit, computed, candles, context.OpenPositionCount))
                 return Task.FromResult(SignalResult.ExitShort("Short exit conditions met", indicatorSnapshot));
             return Task.FromResult(SignalResult.Hold(
                 "Short: holding — exit conditions not met", indicatorValues: indicatorSnapshot));
@@ -149,8 +160,8 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
 
             // Use longEntry conditions for direction — if longEntry fires it's a bullish spread,
             // shortEntry fires it's a bearish spread (or the spread type itself is direction-neutral).
-            var longFires  = config.LongEntry.Enabled  && RulesEvaluator.Evaluate(config.LongEntry,  computed, candles);
-            var shortFires = config.ShortEntry.Enabled && RulesEvaluator.Evaluate(config.ShortEntry, computed, candles);
+            var longFires  = config.LongEntry.Enabled  && RulesEvaluator.Evaluate(config.LongEntry,  computed, candles, context.OpenPositionCount);
+            var shortFires = config.ShortEntry.Enabled && RulesEvaluator.Evaluate(config.ShortEntry, computed, candles, context.OpenPositionCount);
 
             if (!longFires && !shortFires)
                 return Task.FromResult(SignalResult.Hold(
@@ -176,41 +187,48 @@ public class GenericRulesStrategy(GenericRulesConfig config) : IStrategy
 
         var atrNow = GetAtrValue(computed) ?? ComputeFallbackAtr(candles);
 
+        decimal? premiumPctValue = null;
+        if (config.StopLoss != null
+            && config.StopLoss.Type?.Equals("PremiumPct", StringComparison.OrdinalIgnoreCase) == true
+            && config.StopLoss.Value > 0)
+            premiumPctValue = config.StopLoss.Value;
+
         if (config.LongEntry.Enabled &&
-            RulesEvaluator.Evaluate(config.LongEntry, computed, candles))
+            RulesEvaluator.Evaluate(config.LongEntry, computed, candles, context.OpenPositionCount))
         {
-            //var sl   = current.Close - atrNow * config.AtrStopMult;
-            // Signal at current.Close but engine fills at next open — use a price-agnostic ATR stop distance
-            // The engine will anchor the real SL from the fill price in the next bar
-            // Option: leave entryPrice = current.Close but note the discrepancy is minor for liquid stocks
-            // Better fix: compute SL as a distance, not an absolute price, and let the engine apply it
             var slDistance = atrNow * config.AtrStopMult;
-            var sl = current.Close - slDistance;   // acceptable approximation for non-gapping instruments
+            var sl   = current.Close - slDistance;
             var risk = current.Close - sl;
             var tp   = current.Close + risk * config.RiskRewardRatio;
 
-            return Task.FromResult(SignalResult.Buy(
+            var longSignal = SignalResult.Buy(
                 entryPrice: current.Close,
-                stopLoss:   Math.Min(sl, current.Low * 0.99m),  // Min = wider/lower stop for LONG (disaster stop)
+                stopLoss:   premiumPctValue.HasValue ? 0m : Math.Min(sl, current.Low * (1m - config.StopBarBufferPct / 100m)),
                 takeProfit: tp,
                 reason:     "Long entry conditions met",
-                indicatorValues: indicatorSnapshot));
+                indicatorValues: indicatorSnapshot);
+            if (premiumPctValue.HasValue)
+                longSignal = longSignal with { StopLoss = null, StopLossPct = premiumPctValue };
+            return Task.FromResult(longSignal);
         }
 
         if (config.AllowShort &&
             config.ShortEntry.Enabled &&
-            RulesEvaluator.Evaluate(config.ShortEntry, computed, candles))
+            RulesEvaluator.Evaluate(config.ShortEntry, computed, candles, context.OpenPositionCount))
         {
             var sl   = current.Close + atrNow * config.AtrStopMult;
             var risk = sl - current.Close;
             var tp   = current.Close - risk * config.RiskRewardRatio;
 
-            return Task.FromResult(SignalResult.Sell(
+            var shortSignal = SignalResult.Sell(
                 entryPrice: current.Close,
-                stopLoss:   Math.Max(sl, current.High * 1.01m),  // Max = wider/higher stop for SHORT (disaster stop)
+                stopLoss:   premiumPctValue.HasValue ? 0m : Math.Max(sl, current.High * (1m + config.StopBarBufferPct / 100m)),
                 takeProfit: tp,
                 reason:     "Short entry conditions met",
-                indicatorValues: indicatorSnapshot));
+                indicatorValues: indicatorSnapshot);
+            if (premiumPctValue.HasValue)
+                shortSignal = shortSignal with { StopLoss = null, StopLossPct = premiumPctValue };
+            return Task.FromResult(shortSignal);
         }
 
         return Task.FromResult(SignalResult.Hold(

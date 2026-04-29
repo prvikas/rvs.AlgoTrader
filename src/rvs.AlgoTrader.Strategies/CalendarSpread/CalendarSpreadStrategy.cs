@@ -25,6 +25,10 @@ public class CalendarSpreadStrategy(CalendarSpreadConfig config) : IStrategy
 {
     public string Name => "CalendarSpread";
 
+    // Signal is driven by IV term structure from NearExpiryChain / FarExpiryChain — no candle indicators.
+    // MinWarmupBars = 1 so the engine has at least one closed candle for timestamp resolution.
+    public int MinWarmupBars => 1;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         // CS-1: Use NearExpiryChain when available (populated by ForwardTestEngine / StrategyEvaluationQueue).

@@ -17,7 +17,7 @@ public class BacktestRunConfiguration : IEntityTypeConfiguration<BacktestRun>
         b.Property(x => x.Timeframe).HasColumnName("timeframe").HasMaxLength(10).IsRequired();
         b.Property(x => x.FromDate).HasColumnName("from_date").IsRequired();
         b.Property(x => x.ToDate).HasColumnName("to_date").IsRequired();
-        b.Property(x => x.InitialCapital).HasColumnName("initial_capital").HasColumnType("numeric(18,2)");
+        b.Property(x => x.InitialCapital).HasColumnName("initial_capital").HasColumnType("numeric(18,4)");
         b.Property(x => x.FinalEquity).HasColumnName("final_equity").HasColumnType("numeric(18,2)");
         b.Property(x => x.TotalPnl).HasColumnName("total_pnl").HasColumnType("numeric(18,2)");
         b.Property(x => x.TotalReturn).HasColumnName("total_return").HasColumnType("numeric(10,6)");

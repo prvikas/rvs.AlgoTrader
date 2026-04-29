@@ -203,6 +203,9 @@ public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
         bool tightening = true;
         for (int i = 1; i < contractions.Count; i++)
         {
+            // 0.95 = 5% slack — allow near-equal contractions as "tightening".
+            // Two contractions of exactly the same depth (ratio = 1.0) would fail a strict
+            // >-check; 0.95 tolerates tiny measurement noise without hiding genuine widening.
             if (contractions[i].DepthPct >= contractions[i - 1].DepthPct * 0.95m)
             {
                 tightening = false;
@@ -215,7 +218,7 @@ public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
         var last = contractions[^1];
         decimal resistance = pivotHighs[^1].Price;   // most recent swing high = breakout level
         decimal support    = last.Low;                // final contraction low
-        decimal stopLoss   = support - atr * 0.15m;  // just below final contraction low
+        decimal stopLoss   = support - atr * config.StopAtrBuffer;
 
         var indicators = new Dictionary<string, decimal>
         {
@@ -261,7 +264,7 @@ public class VcpSwingStrategy(VcpSwingConfig config) : IStrategy
 
         // ── Entry: price near final contraction support ────────────────────
         decimal buffer = resistance * config.EntryBufferPct / 100m;
-        if (current.Close >= support - buffer && current.Close <= support + buffer * 3)
+        if (current.Close >= support - buffer && current.Close <= support + buffer * config.SupportEntryZoneMultiple)
         {
             var risk = current.Close - stopLoss;
             if (risk <= 0) return Task.FromResult(SignalResult.Hold("Zero/negative risk at support"));
@@ -336,6 +339,22 @@ public class VcpSwingConfig
     public bool    RsFilterEnabled   { get; set; } = false;
     /// <summary>Minimum 12-month price rate-of-change % (RS proxy — not broker RS rating).</summary>
     public decimal MinRsRatingPct    { get; set; } = 20m;
+
+    // ── Stop & Entry Zone ─────────────────────────────────────────────────────
+    /// <summary>
+    /// ATR multiple subtracted from the final contraction low to set the stop-loss.
+    /// Small buffer keeps the stop at the structural invalidation level while absorbing
+    /// normal intraday wick noise below the base. Default 0.15 (15% of ATR).
+    /// </summary>
+    public decimal StopAtrBuffer               { get; set; } = 0.15m;
+
+    /// <summary>
+    /// Upper bound of the support-area entry zone, expressed as a multiple of EntryBufferPct.
+    /// Entry is allowed when price is between (support − buffer) and (support + buffer × this).
+    /// Higher = wider zone above support; lower = tighter touch required.
+    /// Default 3.0.
+    /// </summary>
+    public decimal SupportEntryZoneMultiple    { get; set; } = 3.0m;
 
     // ── Volume Dry-Up ─────────────────────────────────────────────────────────
     /// <summary>Require volume to contract inside the base before entry.
@@ -421,5 +440,11 @@ public class VcpSwingConfig
             Hint: "Recent bars to average for volume dry-up check",                                                             Section: "Volume Dry-Up", EnabledBy: "VolumeDryUpEnabled"),
         new("VolumeDryUpThresholdPct",  "Dry-Up Threshold %",     "decimal", 70m,   Min: 20m, Max: 90m, Step: 5m,
             Hint: "Recent avg volume must be below this % of the lookback average volume",                                      Section: "Volume Dry-Up", EnabledBy: "VolumeDryUpEnabled"),
+
+        // ── Stop & Entry Zone ────────────────────────────────────────────────
+        new("StopAtrBuffer",            "Stop ATR Buffer",         "decimal", 0.15m, Min: 0.0m, Max: 1.0m, Step: 0.05m,
+            Hint: "ATR multiple subtracted from final contraction low for stop placement. Lower = tighter stop.",               Section: "Stop & Entry Zone"),
+        new("SupportEntryZoneMultiple", "Support Zone Multiple",   "decimal", 3.0m,  Min: 1.0m, Max: 8.0m, Step: 0.5m,
+            Hint: "Entry zone extends this many buffer-widths above support. Higher = wider zone, more entries.",               Section: "Stop & Entry Zone"),
     ];
 }

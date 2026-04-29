@@ -18,8 +18,8 @@ public class ForwardTestSessionConfiguration : IEntityTypeConfiguration<ForwardT
         builder.Property(s => s.FinalPnl).HasColumnName("final_pnl").HasPrecision(18, 4);
         builder.Property(s => s.TradeCount).HasColumnName("trade_count");
         builder.Property(s => s.WinRate).HasColumnName("win_rate").HasPrecision(6, 4);
-        builder.Property(s => s.MaxDrawdown).HasColumnName("max_drawdown").HasPrecision(8, 4);
-        builder.Property(s => s.SharpeRatio).HasColumnName("sharpe_ratio").HasPrecision(8, 4);
+        builder.Property(s => s.MaxDrawdown).HasColumnName("max_drawdown").HasColumnType("numeric(10,6)");
+        builder.Property(s => s.SharpeRatio).HasColumnName("sharpe_ratio").HasColumnType("numeric(10,4)");
         builder.Property(s => s.SourceBacktestId).HasColumnName("source_backtest_id");
         builder.Property(s => s.Status).HasColumnName("status").HasMaxLength(30);
         builder.Property(s => s.StartedAt).HasColumnName("started_at")

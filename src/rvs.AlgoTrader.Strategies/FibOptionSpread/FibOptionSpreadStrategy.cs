@@ -22,6 +22,9 @@ public class FibOptionSpreadStrategy(FibOptionSpreadConfig config) : IStrategy
 
     private static readonly decimal[] FibLevels = [0.236m, 0.382m, 0.500m, 0.618m, 0.786m, 1.000m, 1.618m];
 
+    // Needs SwingLookback bars for Fib detection + Sma50Period bars for trend filter + buffer.
+    public int MinWarmupBars => config.SwingLookback + config.Sma50Period + 5;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         var candles = context.Candles;

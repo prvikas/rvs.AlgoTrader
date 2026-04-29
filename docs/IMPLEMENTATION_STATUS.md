@@ -5,12 +5,12 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Area | Status | Notes |
 |---|---|---|
 | Solution structure | PARTIAL | repo, backend, frontend, tests, Claude kit |
-| Strategy abstraction | DONE | StrategyFactory+GetSchema(); 11 strategies; ExitLong/ExitShort; BacktestEngine re-evaluates while position open |
+| Strategy abstraction | DONE | StrategyFactory+GetSchema(); 11 strategies; ExitLong/ExitShort; BacktestEngine re-evaluates while position open; MinWarmupBars per-strategy (Issue #187); all magic numbers promoted to config+GetSchema() |
 | Strategies (6) | DONE | STRAT-001 VCP (breadth≥40%); STRAT-002 Fib (1.618/0.786, IVP, events); STRAT-003 PCR intraday; +fib1618 fix; DTE filter; VWAP TF; AtmIv guard |
 | Vertical Spreads | DONE | All 4 types (BullCall/BearPut/BullPut/BearCall), delta-based legs; SpreadEntry→ISpreadOrderManager |
 | Backtest engine | DONE | async/SignalR; SharpeRatio daily; WarmupBars; spread B-S sim; synthetic option chain (BT-OPT-1/2); real EOD snapshots (FIB-5); SS-1/CS-1; 10-bug audit fixed; 5 more bugs fixed: Calmar now CAGR-based, expectancy lossRate uses actual loss count, position size re-capped at fill price, daily/monthly Sharpe pads flat days with 0-returns, SharpeRatio field is now per-trade Sharpe (distinct from DailySharpe); brokerage+taxes configurable from UI; MTM drawdown tracking (per-bar unrealized P&L updates peakEquity+maxDrawdown, not just at trade close); SL re-anchored to actual fill price (was signal-bar close — caused tight/wide SL on gap days) |
 | Scenarios | DONE | StrategyScenario, partial override, parallel run, promotion gate, comparison grid; Version auto-inc |
-| DB migrations | DONE | 001–042; 027 TimescaleDB; 034 iv_history; 038 option snapshots; 039 market_news; 040 app_config+symbol_data_prefs; 042 FK backtest_runs→definition_scenarios |
+| DB migrations | DONE | 001–044; 027 TimescaleDB; 034 iv_history; 038 option snapshots; 039 market_news; 040 app_config+symbol_data_prefs; 042 FK backtest_runs→definition_scenarios; 043 schema consistency (audit_log, signal_journal, allocated_capital, PnL sync trigger); 044 backtest_runs.initial_capital NUMERIC(18,4) |
 | Trade Journal | DONE | TradeJournalEntry, P&L attribution, TaxLotReportService (ITR-3); TradeJournalPage+PortfolioAnalysisPage |
 | Health checks | DONE | DbHealthCheck+RedisHealthCheck; /health /healthz; pre-market readiness; SLO registry+SloTracker |
 | Infra quality | DONE | FluentValidation; MediatR ValidationBehavior; HTTP 422; SECURITY/BACKUP/SLO docs; Polly retry+CB |
@@ -26,7 +26,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | Approval Gate | DONE | strategy_approvals table; IApprovalService (CAGR/DD/fwd checks); LiveExecutionEngine guard; ApprovalDrawer |
 | UI workflow | PARTIAL | 6-tier RBAC; GuidedDashboard; PayoffChart; StrategyLabPage wizard; Screener/News/Correlation/Risk pages; ByStrategy chart |
 | Strategy UI (PROMPT-001/002) | DONE | StrategiesPage 4-tab (Deployments removed); ScenariosTab: lifecycle actions (Backtest/View Backtest/→Fwd Test/Deploy Live stubs), instruments+timeframe stacked in row, backtest wording clarified; 401 cached-data fallback in BacktestJobManager |
-| Generic UI strategies | DONE | migrations 036-038; IStrategyDefinitionService; GenericRulesConfig; 6 option indicators; SpreadEntry 10 types; 15 bugs fixed: StopTargetConfig.baseValue JSON mismatch (ATR stop was always 10×), absence kind unhandled, sessionState always 0, SL anchoring at signal-close vs fill-open, MACD/BB/Stochastics/Donchian missing prev_* fields (crossover conditions used wrong previous values); 7 unimplemented indicators added: VolumeSpike, InsideBar, Engulfing, PrevHighLowBreak, SwingHighLow, RangePercentile, ATRPercentile (were silently returning null → conditions always 0) |
+| Generic UI strategies | DONE | migrations 036-038; IStrategyDefinitionService; GenericRulesConfig; 6 option indicators; SpreadEntry 10 types; 15 bugs fixed; generic multi-position architecture: MaxConcurrentPositions (strategy+config), multi-slot openTrades/openSpreads lists replacing single-slot variables, PremiumPct stop type (StopLossPct on SignalResult), OptionPremiumVwap VWAP tracking per-bar (CE_ATM/PE_ATM/STRADDLE_ATM keys), HTF indicator resampling (ResampleCandles in IndicatorEngine), touchedAndBounced/touchedAndFailed pullback operators, htfBias/isbullishbar/isbearishbar operand kinds, OpenPositionCount threaded to sessionState condition |
 | MCP/P8 | DONE | /mcp/strategy-status, /mcp/backtest-results/{id}, /mcp/kill-switch (RiskManager policy); JWT |
 | P9 Screener | DONE | ScreenerService SQL CTE; GET /api/screener; ScreenerJob 5PM IST; ScreenerPage |
 | P9 News | DONE | migration 039; NewsService CRUD; NewsController; NewsPage feed+create |
@@ -41,6 +41,7 @@ DONE | PARTIAL | STUB | MISSING | NOT_REVIEWED
 | MarketCalendar 2026 | DONE | NSE holidays 2026 added to MarketCalendarService static set (Republic Day through Christmas) |
 | CancelOrder wired | DONE | CancelOrderCommandHandler calls IBrokerClientFactory+CancelOrderAsync; MarkCancelled via GetByBrokerOrderIdAsync; IOrderRepository.GetByBrokerOrderIdAsync added |
 | app_config schema | DONE | Migration 041 adds value_json+actor columns (040 was a CREATE TABLE IF NOT EXISTS no-op); backfills to_json(value); SeedAppConfigAsync updated to insert value_json; repair check added |
+| Options Intelligence | DONE | OptionsIntelligenceService: live chain + DB fallback; 10 rule signals; bias score [-100,+100]; Redis pcrMax (28h TTL); 3 API endpoints; OptionsIntelligencePage (chain table, OI/ΔOI charts, IV skew, rule panel); wired under Research > Options in Dashboard |
 | AP-001 fixes | DONE | IClock injected everywhere; zero DateTime.Now/UtcNow/SystemClock.Instance left outside DI registrations; covers OrderManager, BrokerSessionManager(both), BacktestService, BacktestJobManager, InMemoryIdempotency/KillSwitch/BrokerSession, PositionReconciliation, RedisEncryptedTokenStore, AuthController, McpController, ZerodhaClient, MStockClient, UpstoxClient, Decorators.ReconnectingBrokerStreamClient |
 
 ## Update rule: revise affected rows only; do not mark DONE without code support.

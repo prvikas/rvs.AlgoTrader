@@ -26,6 +26,10 @@ public class IntradayPcrOptionsStrategy(IntradayPcrOptionsConfig config) : IStra
 
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
+    // Session VWAP and gap detection both need a few closed intraday bars before signalling.
+    // 5 bars = ~25 min of 5-min data, enough to form a stable opening-range reference.
+    public int MinWarmupBars => 5;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         var candles = context.Candles;

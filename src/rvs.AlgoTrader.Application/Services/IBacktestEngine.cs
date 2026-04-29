@@ -90,17 +90,26 @@ public record BacktestRequest(
     // The old hardcoded 0.25 cap was 4× too conservative and the primary cause of under-sized returns.
     decimal MaxCapitalUsagePct = 0.95m,
     // ── Trailing stop parameters ──────────────────────────────────────────
+    // TrailingType: "None" | "RMultiple" | "ATRMultiple"
+    string TrailingType = "None",
     decimal TrailActivationR = 0m,
-    decimal TrailOffsetR = 0.5m,
+    decimal TrailOffsetR = 0.5m,    // R offset (RMultiple) or ATR multiplier (ATRMultiple)
     bool BreakEvenAt1R = false,
+    // ── Profit booking ────────────────────────────────────────────────────
+    bool ProfitBookingEnabled = false,
+    decimal ProfitBookingTriggerR = 2m,
+    decimal ProfitBookingPct = 50m,
+    bool ProfitBookingContinueTrail = true,
     // ── Circuit breaker ───────────────────────────────────────────────────
     // Stop the backtest early if equity falls below this fraction of InitialCapital.
     // Default 0.5 = 50%.  Set to 0 to disable.
     decimal CircuitBreakerPct = 0,
     // ── Warmup period ─────────────────────────────────────────────────────
-    // Bars skipped at the start so indicators have enough history before trading.
-    // Default 50. Strategy should set this to its longest lookback period.
-    int WarmupBars = 50);
+    // Additional bars to skip BEYOND IStrategy.MinWarmupBars.
+    // Engine uses Max(WarmupBars, strategy.MinWarmupBars) so strategies always
+    // get at least their declared minimum.  Default 0 = let each strategy
+    // dictate its own warmup via MinWarmupBars (Issue #187).
+    int WarmupBars = 0);
 
 public record BacktestResult(
     bool Success,

@@ -24,6 +24,9 @@ public class IronCondorStrategy(IronCondorConfig config) : IStrategy
 {
     public string Name => "IronCondor";
 
+    // Bollinger Bands need BollingerPeriod candles; +5 gives the std-dev estimate stability.
+    public int MinWarmupBars => config.BollingerPeriod + 5;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         var candles = context.Candles;

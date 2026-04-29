@@ -23,6 +23,9 @@ public class VerticalSpreadStrategy(VerticalSpreadConfig config) : IStrategy
 {
     public string Name => "VerticalSpread";
 
+    // Trend SMA needs TrendSmaPeriod candles; +5 gives a stable average before trading.
+    public int MinWarmupBars => config.TrendSmaPeriod + 5;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         var candles = context.Candles;

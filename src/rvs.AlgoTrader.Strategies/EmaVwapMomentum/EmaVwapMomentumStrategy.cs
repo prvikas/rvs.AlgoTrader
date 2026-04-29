@@ -234,7 +234,7 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
 
             return Task.FromResult(SignalResult.Buy(
                 entryPrice: current.Close,
-                stopLoss:   Math.Max(sl, current.Low - atrNow * 0.5m), // never below bar low
+                stopLoss:   Math.Max(sl, current.Low - atrNow * config.StopBarFloorAtr),
                 takeProfit: tp,
                 reason: $"EMA golden cross [{fastNow:F0}>{slowNow:F0}], above VWAP {vwapNow:F0}, " +
                         $"above BB mid {bbMidNow:F0}, Vol×{current.Volume / avgVolume:F1}",
@@ -273,7 +273,7 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
 
             return Task.FromResult(SignalResult.Sell(
                 entryPrice: current.Close,
-                stopLoss:   Math.Min(sl, current.High + atrNow * 0.5m), // never above bar high
+                stopLoss:   Math.Min(sl, current.High + atrNow * config.StopBarFloorAtr),
                 takeProfit: tp,
                 reason: $"EMA death cross [{fastNow:F0}<{slowNow:F0}], below VWAP {vwapNow:F0}, " +
                         $"below BB mid {bbMidNow:F0}, Vol×{current.Volume / avgVolume:F1}",
@@ -472,6 +472,15 @@ public class EmaVwapMomentumConfig
     /// normal bar ranges while still filtering out extreme extended entries.</summary>
     public decimal PullbackAtrFactor     { get; set; } = 2.0m;
 
+    // ── Stop floor ────────────────────────────────────────────────────────
+    /// <summary>
+    /// ATR multiple used as an absolute stop floor below bar low (long) or ceiling above
+    /// bar high (short). Ensures the ATR-based SL is never placed inside the entry bar's
+    /// own range — which would be hit immediately on the next tick.
+    /// Default 0.5 (50% of ATR beyond the bar extreme).
+    /// </summary>
+    public decimal StopBarFloorAtr         { get; set; } = 0.5m;
+
     // ── Session / time filters ────────────────────────────────────────────
     /// <summary>
     /// Skip the first N bars of each session (opening price discovery is noisy).
@@ -521,5 +530,6 @@ public class EmaVwapMomentumConfig
         new("OiWallBufferPct",       "OI Wall Buffer %",       "decimal", 0.3m,  Min: 0.1m, Max: 5.0m,  Step: 0.1m, Hint: "Suppress signal if price is within this % of a max-OI strike"),
         new("SessionStartBars",      "Session Start Buffer",   "int",     3,     Min: 0,    Max: 12,               Hint: "Skip first N bars each session (opening noise). 0 = disabled"),
         new("NoTradeAfterMinutes",   "No Trade After (min)",   "int",     900,   Min: 0,    Max: 1110,             Hint: "Minutes from midnight IST — e.g. 900 = 15:00. 0 = disabled"),
+        new("StopBarFloorAtr",       "Stop Bar Floor (ATR)",   "decimal", 0.5m,  Min: 0.0m, Max: 2.0m, Step: 0.1m, Hint: "Absolute stop floor: SL is always at least this many ATRs beyond the entry bar low/high"),
     ];
 }

@@ -12,10 +12,21 @@ public interface IStrategy
 
     /// <summary>
     /// Minimum bars required before the strategy can produce reliable signals.
-    /// BacktestEngine uses Max(request.WarmupBars, strategy.MinWarmupBars) so strategies
-    /// with long lookbacks (e.g. SMA-200) are never under-warmed.
+    /// BacktestEngine uses Max(request.WarmupBars, strategy.MinWarmupBars).
+    /// Default 50 acts as a safe floor for strategies that do not declare their
+    /// own requirement.  Strategies SHOULD override this with a value derived
+    /// from their actual indicator periods (e.g. SlowPeriod + 5) so the engine
+    /// skips exactly the right number of warmup bars — no more, no less.
     /// </summary>
     int MinWarmupBars => 50;
+
+    /// <summary>
+    /// Maximum number of concurrent open positions (trades + spreads combined).
+    /// Default 1 preserves backward-compatible single-position behaviour.
+    /// Strategies that pyramid or hold multiple independent legs (e.g. straddle with
+    /// strike-shift) override this to allow simultaneous open positions.
+    /// </summary>
+    int MaxConcurrentPositions => 1;
 }
 
 public interface IStrategyFactory
@@ -99,7 +110,18 @@ public record StrategyContext(
     // "LONG", "SHORT", or null (no position / not applicable).
     // Strategies that use signal-based exits (e.g. SMA crossover) read this to decide
     // whether to check entry conditions or exit conditions on the current bar.
-    string? CurrentPosition = null
+    string? CurrentPosition = null,
+
+    // Number of positions (trades + spreads) currently open.
+    // Populated by BacktestEngine each bar. Strategies read this via "sessionState" →
+    // "OpenPositionCount" to implement max-concurrent-position guards in condition trees.
+    int OpenPositionCount = 0,
+
+    // Per-session option premium VWAP, keyed by "CE_ATM", "PE_ATM", "STRADDLE_ATM",
+    // or "CE_{strike}", "PE_{strike}" for specific strikes.
+    // Populated by BacktestEngine each bar from Black-Scholes option chain pricing.
+    // Read by IndicatorEngine when indicator type = "OPTIONPREMIUMVWAP".
+    IReadOnlyDictionary<string, decimal>? OptionPremiumVwap = null
 );
 
 /// <summary>
@@ -181,7 +203,11 @@ public record SignalResult(
     OptionsLegSpec? OptionsLeg = null,
     // Optional: populated by multi-leg spread strategies (Iron Condor, Vertical, Straddle, etc.).
     // When non-null, ISpreadOrderManager handles atomic leg placement instead of LiveExecutionEngine.
-    SpreadSignalResult? Spread = null
+    SpreadSignalResult? Spread = null,
+    // Optional: stop expressed as a % of entry price (PremiumPct stop type).
+    // When set, BacktestEngine re-anchors to actual fill price: SL = fillPrice ± StopLossPct%.
+    // Takes precedence over StopLoss when both are present.
+    decimal? StopLossPct = null
 )
 {
     public static SignalResult Buy(decimal entryPrice, decimal stopLoss, decimal takeProfit, string reason,

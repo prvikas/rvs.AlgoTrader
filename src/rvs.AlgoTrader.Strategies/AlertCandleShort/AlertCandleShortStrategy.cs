@@ -57,6 +57,11 @@ public class AlertCandleShortStrategy(AlertCandleShortConfig config) : IStrategy
 {
     public string Name => "AlertCandleShort";
 
+    // Warmup: the slower of the fast EMA or trend filter EMA must be seeded + buffer.
+    // SessionStartBufferBars is an intraday skip (not a warmup requirement), so excluded here.
+    public int MinWarmupBars =>
+        Math.Max(config.EmaPeriod, config.TrendFilterPeriod > 0 ? config.TrendFilterPeriod : config.EmaPeriod) + 5;
+
     public Task<SignalResult> EvaluateAsync(StrategyContext context, CancellationToken ct)
     {
         var candles = context.Candles;
