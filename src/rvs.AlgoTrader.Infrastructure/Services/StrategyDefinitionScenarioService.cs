@@ -16,13 +16,19 @@ public class StrategyDefinitionScenarioService(IConfiguration config) : IStrateg
         await conn.OpenAsync(ct);
 
         await using var cmd = new NpgsqlCommand("""
-            SELECT id, strategy_definition_id, name, description,
-                   capital, broker_account, backtest_from, backtest_to,
-                   parameter_overrides, status, last_run_at, last_metrics,
-                   created_at, updated_at
-            FROM strategy_definition_scenarios
-            WHERE strategy_definition_id = @defId
-            ORDER BY created_at ASC
+            SELECT sds.id, sds.strategy_definition_id, sds.name, sds.description,
+                   sds.capital, sds.broker_account, sds.backtest_from, sds.backtest_to,
+                   sds.parameter_overrides, sds.status, sds.last_run_at, sds.last_metrics,
+                   sds.created_at, sds.updated_at,
+                   si.id AS active_instance_id
+            FROM strategy_definition_scenarios sds
+            LEFT JOIN LATERAL (
+                SELECT id FROM strategy_instances
+                WHERE definition_scenario_id = sds.id AND is_active = TRUE
+                ORDER BY created_at DESC LIMIT 1
+            ) si ON TRUE
+            WHERE sds.strategy_definition_id = @defId
+            ORDER BY sds.created_at ASC
             """, conn);
         cmd.Parameters.AddWithValue("@defId", definitionId);
 
@@ -40,12 +46,18 @@ public class StrategyDefinitionScenarioService(IConfiguration config) : IStrateg
         await conn.OpenAsync(ct);
 
         await using var cmd = new NpgsqlCommand("""
-            SELECT id, strategy_definition_id, name, description,
-                   capital, broker_account, backtest_from, backtest_to,
-                   parameter_overrides, status, last_run_at, last_metrics,
-                   created_at, updated_at
-            FROM strategy_definition_scenarios
-            WHERE id = @id
+            SELECT sds.id, sds.strategy_definition_id, sds.name, sds.description,
+                   sds.capital, sds.broker_account, sds.backtest_from, sds.backtest_to,
+                   sds.parameter_overrides, sds.status, sds.last_run_at, sds.last_metrics,
+                   sds.created_at, sds.updated_at,
+                   si.id AS active_instance_id
+            FROM strategy_definition_scenarios sds
+            LEFT JOIN LATERAL (
+                SELECT id FROM strategy_instances
+                WHERE definition_scenario_id = sds.id AND is_active = TRUE
+                ORDER BY created_at DESC LIMIT 1
+            ) si ON TRUE
+            WHERE sds.id = @id
             """, conn);
         cmd.Parameters.AddWithValue("@id", id);
 
@@ -196,6 +208,8 @@ public class StrategyDefinitionScenarioService(IConfiguration config) : IStrateg
                                               : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(10), DateTimeKind.Utc)),
         LastMetricsJson:       r.IsDBNull(11) ? null : r.GetString(11),
         CreatedAt:             new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(12), DateTimeKind.Utc)),
-        UpdatedAt:             new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc))
+        UpdatedAt:             new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc)),
+        // Column 14 present only in List/GetById queries (the RETURNING queries return 14 cols without the join).
+        ActiveInstanceId:      r.FieldCount > 14 && !r.IsDBNull(14) ? r.GetGuid(14) : null
     );
 }

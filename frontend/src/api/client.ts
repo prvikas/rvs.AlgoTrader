@@ -1217,6 +1217,8 @@ interface DefinitionScenarioDto {
   lastMetricsJson?: string
   createdAt: string
   updatedAt: string
+  /** ID of the running StrategyInstance (Fwd or Live) for this scenario, if any. */
+  activeInstanceId?: string
 }
 
 interface UpsertDefinitionScenarioRequest {
@@ -1325,6 +1327,7 @@ function scenarioDtoToScenario(dto: DefinitionScenarioDto): Scenario {
     status:             dto.status as ScenarioStatus,
     lastRunAt:          dto.lastRunAt,
     lastMetrics:        metrics,
+    activeInstanceId:   dto.activeInstanceId,
   }
 }
 

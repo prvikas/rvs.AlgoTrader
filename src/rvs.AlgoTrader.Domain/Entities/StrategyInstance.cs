@@ -49,6 +49,13 @@ public class StrategyInstance
     /// </summary>
     public ExecutionMode ExecutionMode { get; set; } = ExecutionMode.Live;
 
+    /// <summary>
+    /// Links this instance back to the GenericRules UI scenario that produced it.
+    /// Set on PromoteBacktestToForwardTest and copied on PromoteForwardTestToLive.
+    /// Enables ScenariosTab to stop/deploy the running instance by scenario ID.
+    /// </summary>
+    public Guid? DefinitionScenarioId { get; set; }
+
     /// <summary>Alias for Name; used by domain events and query handlers.</summary>
     public string StrategyName => Name;
 

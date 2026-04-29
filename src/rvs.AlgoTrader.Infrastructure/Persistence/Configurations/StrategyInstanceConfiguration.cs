@@ -39,6 +39,7 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.ConfigJson).HasColumnName("config_json").HasColumnType("jsonb");
         builder.Property(s => s.CreatedBy).HasColumnName("created_by").HasMaxLength(200);
         builder.Property(s => s.WatchlistId).HasColumnName("watchlist_id");
+        builder.Property(s => s.DefinitionScenarioId).HasColumnName("definition_scenario_id");
 
         // Foreign keys to related entities (Migration 021 #192, #197)
         builder.HasOne<RiskProfile>().WithMany().HasForeignKey(s => s.RiskProfileId).OnDelete(DeleteBehavior.SetNull);

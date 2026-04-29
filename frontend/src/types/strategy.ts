@@ -480,7 +480,7 @@ export interface TradeRecord {
   pnlR: number
   pnlAbsolute: number
   barsHeld: number
-  exitReason: 'StopHit' | 'TargetHit' | 'TrailingStop' | 'SessionEnd' | 'Manual' | 'Strategy'
+  exitReason: 'StopHit' | 'TargetHit' | 'TrailingStop' | 'SessionEnd' | 'Manual' | 'Strategy' | 'PartialClose'
   regime?: string
 }
 
@@ -593,6 +593,8 @@ export interface Scenario {
   isBaseline?: boolean
   sweepGroupId?: string
   promotionNotes?: string
+  /** ID of the currently active StrategyInstance (Forward or Live) for this scenario. */
+  activeInstanceId?: string
 }
 
 // ─── Deployment ───────────────────────────────────────────────────────────────

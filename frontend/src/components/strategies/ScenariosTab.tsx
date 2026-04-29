@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { strategyDomainApi, apiClient, backtestApi, BacktestJobStatus } from '../../api/client'
+import { strategyDomainApi, apiClient, backtestApi, BacktestJobStatus, strategiesApi, forwardTestApi } from '../../api/client'
 import {
   OverrideSection, ParamRange,
   Scenario, ScenarioStatus, Strategy, RunMetrics,
@@ -63,12 +63,19 @@ function overridesSummary(scenario: Scenario): string {
   return summary.length > 60 ? summary.slice(0, 57) + '...' : summary
 }
 
-function MetricCell({ value, positive }: { value: number | undefined; positive?: boolean }) {
-  if (value === undefined) return <td style={{ ...tdStyle, color: C.textMuted }}>—</td>
+function MetricCell({ value, positive, fmt = 'num' }: {
+  value: number | undefined
+  positive?: boolean
+  fmt?: 'pct' | 'num'
+}) {
+  if (value === undefined || value === null) return <td style={{ ...tdStyle, color: C.textMuted }}>—</td>
   const color = positive !== undefined ? (positive ? C.green : C.red) : C.text
+  const display = fmt === 'pct'
+    ? `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
+    : value.toFixed(2)
   return (
     <td style={{ ...tdStyle, fontFamily: F.mono, color, textAlign: 'right' }}>
-      {value.toFixed(2)}
+      {display}
     </td>
   )
 }
@@ -514,6 +521,23 @@ export function ScenariosTab({ strategy }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scenarios', strategy.id] }),
   })
 
+  // Stop a running Forward Test or Live instance tied to a scenario
+  const stopInstanceMut = useMutation({
+    mutationFn: (instanceId: string) => strategiesApi.stop(instanceId, 'Stopped from Scenarios UI'),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scenarios', strategy.id] }),
+  })
+
+  // Promote a Forward Test instance to Live (opens modal for broker + capital)
+  const [deployingScenario, setDeployingScenario] = useState<Scenario | null>(null)
+  const deployMut = useMutation({
+    mutationFn: ({ instanceId, broker, capital }: { instanceId: string; broker: string; capital: number }) =>
+      forwardTestApi.promoteToLive(instanceId, { brokerName: broker, allocatedCapital: capital }),
+    onSuccess: () => {
+      setDeployingScenario(null)
+      qc.invalidateQueries({ queryKey: ['scenarios', strategy.id] })
+    },
+  })
+
   const runMut = useMutation({
     mutationFn: (sid: string) => strategyDomainApi.runScenario(strategy.id, sid),
     onSuccess: (result, sid) => {
@@ -632,8 +656,10 @@ export function ScenariosTab({ strategy }: Props) {
                   onView={() => setViewingScenarioId(s.id)}
                   onDelete={() => deleteMut.mutate(s.id)}
                   onPromote={() => setPromotingScenario(s)}
+                  onStop={() => s.activeInstanceId && stopInstanceMut.mutate(s.activeInstanceId)}
+                  onDeployLive={() => setDeployingScenario(s)}
                   onDismissError={() => setLastFailedProgress(prev => { const { [s.id]: _, ...rest } = prev; return rest })}
-                  loading={runMut.isPending || deleteMut.isPending}
+                  loading={runMut.isPending || deleteMut.isPending || stopInstanceMut.isPending}
                   colCount={COLS.length}
                   jobProgress={activeJob?.scenarioId === s.id ? jobProgress : (lastFailedProgress[s.id] ?? null)}
                   signalRConnected={signalRConnected}
@@ -675,8 +701,10 @@ export function ScenariosTab({ strategy }: Props) {
                         onView={() => setViewingScenarioId(s.id)}
                         onDelete={() => deleteMut.mutate(s.id)}
                         onPromote={() => setPromotingScenario(s)}
+                        onStop={() => s.activeInstanceId && stopInstanceMut.mutate(s.activeInstanceId)}
+                        onDeployLive={() => setDeployingScenario(s)}
                         onDismissError={() => setLastFailedProgress(prev => { const { [s.id]: _, ...rest } = prev; return rest })}
-                        loading={runMut.isPending || deleteMut.isPending}
+                        loading={runMut.isPending || deleteMut.isPending || stopInstanceMut.isPending}
                         indented
                         colCount={COLS.length}
                         jobProgress={activeJob?.scenarioId === s.id ? jobProgress : (lastFailedProgress[s.id] ?? null)}
@@ -724,6 +752,20 @@ export function ScenariosTab({ strategy }: Props) {
           onCancel={() => setPromotingScenario(null)}
         />
       )}
+
+      {/* Deploy Live modal — runs pre-flight checks, then creates a Live instance */}
+      {deployingScenario && (
+        <DeployLiveModal
+          scenario={deployingScenario}
+          onConfirm={(broker, capital) => {
+            if (!deployingScenario.activeInstanceId) return
+            deployMut.mutate({ instanceId: deployingScenario.activeInstanceId, broker, capital })
+          }}
+          onCancel={() => setDeployingScenario(null)}
+          isLoading={deployMut.isPending}
+          result={deployMut.data?.data?.data ?? null}
+        />
+      )}
     </div>
   )
 }
@@ -731,16 +773,18 @@ export function ScenariosTab({ strategy }: Props) {
 // ── Scenario row ──────────────────────────────────────────────────────────────
 
 function ScenarioRow({
-  scenario: s, strategy, onEdit, onRun, onView, onDelete, onPromote, onDismissError,
+  scenario: s, strategy, onEdit, onRun, onView, onDelete, onPromote, onStop, onDeployLive, onDismissError,
   loading, indented, colCount, jobProgress, signalRConnected,
 }: {
   scenario: Scenario
   strategy: Strategy
   onEdit: () => void
-  onRun: () => void       // Backtest (historical only)
-  onView: () => void      // View Backtest / View Results
+  onRun: () => void           // Backtest (historical only)
+  onView: () => void          // View Backtest / View Results
   onDelete: () => void
-  onPromote: () => void   // Open promotion checklist → Fwd Test
+  onPromote: () => void       // Open promotion checklist → Fwd Test
+  onStop: () => void          // Stop running Forward Test or Live instance
+  onDeployLive: () => void    // Open Deploy Live modal (LiveCandidate → Live)
   onDismissError: () => void
   loading: boolean
   indented?: boolean
@@ -806,8 +850,8 @@ function ScenarioRow({
         }>
           {overridesSummary(s)}
         </td>
-        <MetricCell value={s.lastMetrics?.returnPct} positive={(s.lastMetrics?.returnPct ?? 0) >= 0} />
-        <MetricCell value={s.lastMetrics?.maxDrawdownPct} positive={false} />
+        <MetricCell value={s.lastMetrics?.returnPct} positive={(s.lastMetrics?.returnPct ?? 0) >= 0} fmt="pct" />
+        <MetricCell value={s.lastMetrics?.maxDrawdownPct} positive={false} fmt="pct" />
         <MetricCell value={s.lastMetrics?.profitFactor} />
         <td style={tdStyle}>
           <StatusChip status={s.status} promotionNotes={s.promotionNotes} />
@@ -841,27 +885,28 @@ function ScenarioRow({
               />
             )}
 
-            {/* Forward Test actions (engine integration pending) */}
+            {/* Forward Test actions */}
             {isFwdTest && (
               <>
                 <ActionBtn label="View Results" onClick={onView} title="View forward-test results" />
                 <ActionBtn
                   label="Stop Fwd Test"
-                  onClick={() => { /* stub — forward-test control not yet wired */ }}
-                  disabled
-                  title="Forward-test stop: coming soon"
+                  onClick={onStop}
+                  disabled={!s.activeInstanceId || loading}
+                  title={s.activeInstanceId ? 'Stop the running forward test' : 'No active instance found'}
+                  danger
                 />
               </>
             )}
 
-            {/* Live Candidate: deploy gate (requires approval gate) */}
+            {/* Live Candidate: deploy gate (runs pre-flight checks) */}
             {isLiveCand && (
               <>
                 <ActionBtn
                   label="Deploy Live"
-                  onClick={() => { /* stub — live deployment requires approval gate */ }}
-                  disabled
-                  title="Deploy Live: requires passing approval gate criteria"
+                  onClick={onDeployLive}
+                  disabled={!s.activeInstanceId || loading}
+                  title={s.activeInstanceId ? 'Run pre-flight checks and promote to live trading' : 'No forward test instance found'}
                 />
                 <ActionBtn label="View Results" onClick={onView} />
               </>
@@ -873,10 +918,10 @@ function ScenarioRow({
                 <ActionBtn label="View Live" onClick={onView} title="View live trading results" />
                 <ActionBtn
                   label="Stop Live"
-                  onClick={() => { /* stub */ }}
+                  onClick={onStop}
+                  disabled={!s.activeInstanceId || loading}
+                  title={s.activeInstanceId ? 'Stop the live trading instance' : 'No active instance found'}
                   danger
-                  disabled
-                  title="Live stop: coming soon"
                 />
               </>
             )}
@@ -1034,6 +1079,104 @@ function ActionBtn({ label, onClick, loading, danger, disabled, title }: {
     >
       {loading ? '…' : label}
     </button>
+  )
+}
+
+// ── Deploy Live Modal ─────────────────────────────────────────────────────────
+
+function DeployLiveModal({ scenario, onConfirm, onCancel, isLoading, result }: {
+  scenario: Scenario
+  onConfirm: (broker: string, capital: number) => void
+  onCancel: () => void
+  isLoading: boolean
+  result: import('../../api/client').PromoteToLiveResult | null
+}) {
+  const [broker,  setBroker]  = useState('MStock')
+  const [capital, setCapital] = useState(scenario.capital)
+
+  const overlay: React.CSSProperties = {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+  }
+  const box: React.CSSProperties = {
+    background: '#0d0d17', border: `1px solid #2a2a3a`, borderRadius: 8,
+    padding: 28, width: 480, maxWidth: '90vw',
+  }
+  const label: React.CSSProperties = { fontSize: 11, color: '#888', marginBottom: 4, display: 'block' }
+  const input: React.CSSProperties = {
+    width: '100%', background: '#12121e', border: '1px solid #2a2a3a', borderRadius: 4,
+    color: '#e0e0e0', fontSize: 13, padding: '6px 10px', boxSizing: 'border-box',
+  }
+
+  return (
+    <div style={overlay}>
+      <div style={box}>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>
+          Deploy Live — {scenario.name}
+        </div>
+
+        {/* Pre-flight result */}
+        {result && (
+          <div style={{ marginBottom: 16 }}>
+            {result.checks.map(c => (
+              <div key={c.name} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
+                <span style={{ color: c.passed ? '#00d07a' : '#ff4757', fontSize: 13, minWidth: 14 }}>
+                  {c.passed ? '✓' : '✗'}
+                </span>
+                <div>
+                  <span style={{ fontSize: 12, color: c.passed ? '#e0e0e0' : '#ff4757' }}>{c.name}</span>
+                  {c.reason && <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{c.reason}</div>}
+                </div>
+              </div>
+            ))}
+            {result.error && (
+              <div style={{ color: '#ff4757', fontSize: 12, marginTop: 8 }}>{result.error}</div>
+            )}
+            {result.success && (
+              <div style={{ color: '#00d07a', fontSize: 13, marginTop: 8, fontWeight: 600 }}>
+                ✓ Live instance created — strategy is now deployed.
+              </div>
+            )}
+          </div>
+        )}
+
+        {!result?.success && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <label style={label}>Broker</label>
+              <select value={broker} onChange={e => setBroker(e.target.value)} style={input}>
+                <option>MStock</option>
+                <option>Zerodha</option>
+                <option>Upstox</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={label}>Allocated Capital (₹)</label>
+              <input
+                type="number" value={capital} min={1000} step={1000}
+                onChange={e => setCapital(Number(e.target.value))}
+                style={input}
+              />
+            </div>
+          </>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} style={{ padding: '6px 16px', background: 'transparent', border: '1px solid #2a2a3a', borderRadius: 4, color: '#888', cursor: 'pointer', fontSize: 13 }}>
+            {result?.success ? 'Close' : 'Cancel'}
+          </button>
+          {!result?.success && (
+            <button
+              onClick={() => onConfirm(broker, capital)}
+              disabled={isLoading || capital <= 0}
+              style={{ padding: '6px 16px', background: '#00d07a22', border: '1px solid #00d07a', borderRadius: 4, color: '#00d07a', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: 13, opacity: isLoading ? 0.5 : 1 }}
+            >
+              {isLoading ? 'Running checks…' : 'Run Pre-flight & Deploy'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 

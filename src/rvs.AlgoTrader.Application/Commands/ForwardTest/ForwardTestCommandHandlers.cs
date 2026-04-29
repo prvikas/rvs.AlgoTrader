@@ -47,7 +47,9 @@ public class PromoteBacktestToForwardTestHandler(
             scheduleJson: request.ScheduleJson,
             parametersJson: null); // Backtest params not stored on BacktestResultDto; user may override
 
-        instance.AllocatedCapital = request.InitialCapital;
+        instance.AllocatedCapital     = request.InitialCapital;
+        // Link back to the UI scenario so ScenariosTab can stop/promote via scenario ID.
+        instance.DefinitionScenarioId = bt.ScenarioId;
 
         await strategies.AddAsync(instance, ct);
 
@@ -182,7 +184,9 @@ public class PromoteForwardTestToLiveHandler(
             scheduleJson: request.ScheduleJson ?? instance.ScheduleJson,
             parametersJson: instance.ParametersJson);
 
-        liveInstance.AllocatedCapital = request.AllocatedCapital;
+        liveInstance.AllocatedCapital     = request.AllocatedCapital;
+        // Propagate scenario link so the ScenariosTab can track the live instance too.
+        liveInstance.DefinitionScenarioId = instance.DefinitionScenarioId;
 
         await strategies.AddAsync(liveInstance, ct);
 

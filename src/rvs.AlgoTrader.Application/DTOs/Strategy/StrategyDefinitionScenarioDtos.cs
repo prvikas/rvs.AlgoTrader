@@ -5,6 +5,8 @@ namespace rvs.AlgoTrader.Application.DTOs.Strategy;
 /// parameter_overrides_json holds the ParameterOverride[] array from the frontend.
 /// last_metrics_json holds RunMetrics JSON from the latest completed backtest.
 /// </summary>
+// ActiveInstanceId: ID of the currently active StrategyInstance (Forward or Live) promoted
+// from this scenario. Null if no active instance. Used by ScenariosTab to stop/deploy.
 public record StrategyDefinitionScenarioDto(
     Guid            Id,
     Guid            StrategyDefinitionId,
@@ -19,7 +21,8 @@ public record StrategyDefinitionScenarioDto(
     DateTimeOffset? LastRunAt,
     string?         LastMetricsJson,
     DateTimeOffset  CreatedAt,
-    DateTimeOffset  UpdatedAt
+    DateTimeOffset  UpdatedAt,
+    Guid?           ActiveInstanceId = null
 );
 
 /// <summary>Request body for create / update.</summary>
