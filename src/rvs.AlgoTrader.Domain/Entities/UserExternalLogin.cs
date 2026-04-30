@@ -15,7 +15,8 @@ public class UserExternalLogin
     public string  ProviderSub { get; set; } = string.Empty;
     /// <summary>Email reported by provider at the time of link — informational only.</summary>
     public string? Email       { get; set; }
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Set by the caller (ExternalAuthService) using IClock — never defaults to UtcNow.</summary>
+    public DateTimeOffset CreatedAt { get; set; }
 
     public User? User { get; set; }
 }

@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using rvs.AlgoTrader.Application.Options;
@@ -9,16 +8,29 @@ namespace rvs.AlgoTrader.Infrastructure.Services.Auth;
 
 /// <summary>
 /// Google Sign-In via OAuth 2.0 Authorization Code flow.
-/// Scopes: openid email profile — returns id_token (JWT) in token response.
+/// Scopes: openid email profile — returns id_token (JWT) in the token response.
 /// </summary>
-public sealed class GoogleAuthProvider(
-    IHttpClientFactory httpFactory,
-    IOptions<OAuthOptions> opts)
-    : IExternalAuthProvider
+public sealed class GoogleAuthProvider : OAuthProviderBase, IExternalAuthProvider
 {
-    private GoogleOAuthOptions Cfg => opts.Value.Google!;
+    private const string IssuerUrl = "https://accounts.google.com";
+
+    private readonly IHttpClientFactory   _httpFactory;
+    private readonly IOptions<OAuthOptions> _opts;
+
+    public GoogleAuthProvider(IHttpClientFactory httpFactory, IOptions<OAuthOptions> opts)
+    {
+        _httpFactory = httpFactory;
+        _opts        = opts;
+    }
+
+    private GoogleOAuthOptions Cfg => _opts.Value.Google
+        ?? throw new InvalidOperationException("Auth:Google configuration section is missing.");
 
     public string ProviderName => "Google";
+    public string DisplayName  => "Google";
+    public string IconKey      => "google";
+    public bool   IsEnabled    => _opts.Value.Google?.Enabled == true
+                               && !string.IsNullOrEmpty(_opts.Value.Google.ClientId);
 
     public string GetAuthorizationUrl(string state, string redirectUri)
     {
@@ -29,18 +41,17 @@ public sealed class GoogleAuthProvider(
             ["redirect_uri"]  = redirectUri,
             ["scope"]         = "openid email profile",
             ["state"]         = state,
-            ["access_type"]   = "offline",   // request refresh_token
+            ["access_type"]   = "offline",        // request refresh_token
             ["prompt"]        = "select_account",
         };
-        return "https://accounts.google.com/o/oauth2/v2/auth?" + BuildQuery(q);
+        return $"https://accounts.google.com/o/oauth2/v2/auth?{BuildQuery(q)}";
     }
 
     public async Task<ExternalUserInfo> ExchangeCodeAsync(
         string code, string redirectUri, string? rawIdToken, CancellationToken ct)
     {
-        var http = httpFactory.CreateClient("OAuth");
+        var http = _httpFactory.CreateClient("OAuth");
 
-        // Exchange code for tokens
         var resp = await http.PostAsync("https://oauth2.googleapis.com/token",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
@@ -52,32 +63,25 @@ public sealed class GoogleAuthProvider(
             }), ct);
 
         resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        var json    = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         var idToken = json.GetProperty("id_token").GetString()
-            ?? throw new InvalidOperationException("Google token response missing id_token");
+            ?? throw new InvalidOperationException("Google token response missing id_token.");
 
-        return ParseIdToken(idToken);
+        return ParseIdToken(idToken, Cfg.ClientId);
     }
 
-    private static ExternalUserInfo ParseIdToken(string idToken)
+    private static ExternalUserInfo ParseIdToken(string idToken, string clientId)
     {
         using var doc = DecodeJwtPayload(idToken);
         var root = doc.RootElement;
+
+        ValidateIssuer(root, IssuerUrl);
+        ValidateAudience(root, clientId);
+
         return new ExternalUserInfo(
             Sub:         root.GetProperty("sub").GetString()!,
-            Email:       root.TryGetProperty("email", out var e)       ? e.GetString() : null,
-            DisplayName: root.TryGetProperty("name", out var n)        ? n.GetString() : null,
-            AvatarUrl:   root.TryGetProperty("picture", out var p)     ? p.GetString() : null);
+            Email:       root.TryGetProperty("email",   out var e) ? e.GetString() : null,
+            DisplayName: root.TryGetProperty("name",    out var n) ? n.GetString() : null,
+            AvatarUrl:   root.TryGetProperty("picture", out var p) ? p.GetString() : null);
     }
-
-    private static JsonDocument DecodeJwtPayload(string jwt)
-    {
-        var parts   = jwt.Split('.');
-        var payload = parts[1].Replace('-', '+').Replace('_', '/');
-        var padded  = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-        return JsonDocument.Parse(Convert.FromBase64String(padded));
-    }
-
-    private static string BuildQuery(Dictionary<string, string> d)
-        => string.Join('&', d.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
 }

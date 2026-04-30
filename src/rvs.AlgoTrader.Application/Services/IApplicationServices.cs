@@ -11,12 +11,21 @@ namespace rvs.AlgoTrader.Application.Services;
 /// <summary>
 /// Implemented once per OAuth provider (Google, Microsoft, Apple, …).
 /// Adding a new provider = implement this interface + register in DI + enable in config.
-/// No switch statements, no hardcoded provider names in the auth flow.
+/// No switch statements, no hardcoded provider names anywhere in the auth flow.
 /// </summary>
 public interface IExternalAuthProvider
 {
     /// <summary>Canonical name matching the config section key: "Google" | "Microsoft" | "Apple".</summary>
     string ProviderName { get; }
+
+    /// <summary>User-facing label shown on the login button, e.g. "Google", "Microsoft".</summary>
+    string DisplayName { get; }
+
+    /// <summary>Icon key used by the frontend to render the provider logo, e.g. "google".</summary>
+    string IconKey { get; }
+
+    /// <summary>True when this provider's config section has Enabled=true and a non-empty ClientId.</summary>
+    bool IsEnabled { get; }
 
     /// <summary>Builds the authorization URL the user's browser should be redirected to.</summary>
     string GetAuthorizationUrl(string state, string redirectUri);

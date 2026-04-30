@@ -1,84 +1,62 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using rvs.AlgoTrader.Application.Options;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Infrastructure.Services.Auth;
 
 /// <summary>
 /// Singleton service that orchestrates the OAuth 2.0 authorization code flow:
-///   1. Resolves the correct IExternalAuthProvider by name.
+///   1. Resolves the correct IExternalAuthProvider by name (no switch statements).
 ///   2. Manages CSRF state tokens (10-minute TTL).
 ///   3. Manages one-time exchange tokens (2-minute TTL) so the JWT never appears in a URL.
 ///   4. Creates / links / updates application user accounts via IUserExternalLoginRepository
 ///      using a short-lived DI scope (DbContext is scoped, this service is singleton).
 ///
-/// In-memory state dicts are intentional — state tokens have a 2–10 minute lifetime,
+/// In-memory state dicts are intentional — state tokens have a 2–10 minute lifetime
 /// and the callback hits the same process that issued the login URL.
-/// If multi-replica deployment is needed later, swap the dicts for Redis SETNX.
+/// For multi-replica deployment: swap the ConcurrentDictionary stores for Redis SETNX.
+///
+/// The enabled provider list is built at construction time from each provider's own
+/// IsEnabled property — no reflection, no hardcoded name arrays, no ProviderMeta dict.
+/// Adding a new provider requires only: implement IExternalAuthProvider + register in DI.
 /// </summary>
 public sealed class ExternalAuthService : IExternalAuthService
 {
     private readonly IReadOnlyDictionary<string, IExternalAuthProvider> _providers;
     private readonly IReadOnlyList<ProviderInfoDto>                      _enabledProviders;
     private readonly IServiceScopeFactory                                _scopes;
+    private readonly IClock                                              _clock;
     private readonly ILogger<ExternalAuthService>                        _logger;
 
     // ── In-memory state stores ────────────────────────────────────────────────
 
     // CSRF state: state-token → expiry
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _stateTokens  = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _stateTokens   = new();
     // Exchange tokens: exchange-token → (jwt, expiry)
     private readonly ConcurrentDictionary<string, (string Jwt, DateTimeOffset Expiry)> _exchangeTokens = new();
 
-    // ── Display-name map (shown on login button) ──────────────────────────────
-
-    private static readonly Dictionary<string, (string DisplayName, string IconKey)> ProviderMeta = new(
-        StringComparer.OrdinalIgnoreCase)
-    {
-        ["Google"]    = ("Google",    "google"),
-        ["Microsoft"] = ("Microsoft", "microsoft"),
-        ["Apple"]     = ("Apple",     "apple"),
-    };
-
     public ExternalAuthService(
         IEnumerable<IExternalAuthProvider> providers,
-        IOptions<OAuthOptions> opts,
         IServiceScopeFactory scopes,
+        IClock clock,
         ILogger<ExternalAuthService> logger)
     {
         _scopes  = scopes;
+        _clock   = clock;
         _logger  = logger;
 
-        var cfg  = opts.Value;
-
-        // Only include providers that are both registered in DI and enabled in config.
-        var map      = providers.ToDictionary(p => p.ProviderName, StringComparer.OrdinalIgnoreCase);
-        var enabled  = new List<ProviderInfoDto>();
-
-        static bool IsEnabled(object? section)
-            => section?.GetType().GetProperty("Enabled")?.GetValue(section) is true;
-
-        object?[] sections = [cfg.Google, cfg.Microsoft, cfg.Apple];
-        foreach (var section in sections)
-        {
-            if (section is null || !IsEnabled(section)) continue;
-            var nameVal = section.GetType().GetProperty("ClientId")?.GetValue(section) as string ?? "";
-            if (string.IsNullOrEmpty(nameVal)) continue;
-
-            // Derive provider name from option type name (GoogleOAuthOptions → "Google")
-            var typeName = section.GetType().Name.Replace("OAuthOptions", "");
-            if (!map.ContainsKey(typeName)) continue;
-
-            var (display, icon) = ProviderMeta.TryGetValue(typeName, out var m) ? m : (typeName, typeName.ToLower());
-            enabled.Add(new ProviderInfoDto(typeName, display, icon));
-        }
-
-        _providers        = map;
-        _enabledProviders = enabled.AsReadOnly();
+        // Each provider self-declares IsEnabled, DisplayName, and IconKey.
+        // No reflection, no hardcoded arrays. OCP: adding a new provider requires zero changes here.
+        var all = providers.ToList();
+        _providers = all.ToDictionary(p => p.ProviderName, StringComparer.OrdinalIgnoreCase);
+        _enabledProviders = all
+            .Where(p => p.IsEnabled)
+            .Select(p => new ProviderInfoDto(p.ProviderName, p.DisplayName, p.IconKey))
+            .ToList()
+            .AsReadOnly();
     }
 
     // ── IExternalAuthService ──────────────────────────────────────────────────
@@ -88,17 +66,17 @@ public sealed class ExternalAuthService : IExternalAuthService
     public string GenerateLoginUrl(string providerName, string redirectUri, out string state)
     {
         state = Guid.NewGuid().ToString("N");
-        _stateTokens[state] = DateTimeOffset.UtcNow.AddMinutes(10);
+        var expiry = _clock.NowInstant().ToDateTimeOffset().AddMinutes(10);
+        _stateTokens[state] = expiry;
         PurgeExpired();
 
-        var provider = GetProvider(providerName);
-        return provider.GetAuthorizationUrl(state, redirectUri);
+        return GetProvider(providerName).GetAuthorizationUrl(state, redirectUri);
     }
 
     public bool ValidateAndConsumeState(string state)
     {
         if (!_stateTokens.TryRemove(state, out var expiry)) return false;
-        return expiry > DateTimeOffset.UtcNow;
+        return expiry > _clock.NowInstant().ToDateTimeOffset();
     }
 
     public async Task<User> AuthenticateAsync(
@@ -111,24 +89,25 @@ public sealed class ExternalAuthService : IExternalAuthService
         _logger.LogInformation("[OAuth:{Provider}] Authenticated — sub={Sub} email={Email}",
             providerName, info.Sub, info.Email);
 
-        await using var scope = _scopes.CreateAsyncScope();
+        await using var scope    = _scopes.CreateAsyncScope();
         var loginRepo = scope.ServiceProvider.GetRequiredService<IUserExternalLoginRepository>();
         var userRepo  = scope.ServiceProvider.GetRequiredService<IUserRepository>();
 
-        return await UpsertUserAsync(providerName, info, loginRepo, userRepo, ct);
+        return await UpsertUserAsync(providerName, info, loginRepo, userRepo, _clock, ct);
     }
 
     public string IssueExchangeToken(string jwt)
     {
-        var token   = Guid.NewGuid().ToString("N");
-        _exchangeTokens[token] = (jwt, DateTimeOffset.UtcNow.AddMinutes(2));
+        var token  = Guid.NewGuid().ToString("N");
+        var expiry = _clock.NowInstant().ToDateTimeOffset().AddMinutes(2);
+        _exchangeTokens[token] = (jwt, expiry);
         return token;
     }
 
     public string? RedeemExchangeToken(string exchangeToken)
     {
         if (!_exchangeTokens.TryRemove(exchangeToken, out var entry)) return null;
-        return entry.Expiry > DateTimeOffset.UtcNow ? entry.Jwt : null;
+        return entry.Expiry > _clock.NowInstant().ToDateTimeOffset() ? entry.Jwt : null;
     }
 
     // ── Account upsert logic ──────────────────────────────────────────────────
@@ -137,19 +116,21 @@ public sealed class ExternalAuthService : IExternalAuthService
         string providerName, ExternalUserInfo info,
         IUserExternalLoginRepository loginRepo,
         IUserRepository userRepo,
+        IClock clock,
         CancellationToken ct)
     {
-        // 1. Existing link?
-        var existing = await loginRepo.FindAsync(providerName, info.Sub, ct);
-        if (existing?.User != null)
+        var now = clock.NowInstant().ToDateTimeOffset();
+
+        // 1. Existing link for this provider + sub?
+        var existingLink = await loginRepo.FindAsync(providerName, info.Sub, ct);
+        if (existingLink?.User != null)
         {
-            // Update profile if provider sent fresher data
-            var u = existing.User;
+            var u     = existingLink.User;
             bool dirty = false;
             if (info.Email       != null && u.Email       != info.Email)       { u.Email       = info.Email;       dirty = true; }
             if (info.DisplayName != null && u.DisplayName != info.DisplayName) { u.DisplayName = info.DisplayName; dirty = true; }
             if (info.AvatarUrl   != null && u.AvatarUrl   != info.AvatarUrl)   { u.AvatarUrl   = info.AvatarUrl;   dirty = true; }
-            if (dirty) { u.UpdatedAt = DateTimeOffset.UtcNow; await userRepo.UpdateAsync(u, ct); }
+            if (dirty) { u.UpdatedAt = now; await userRepo.UpdateAsync(u, ct); }
             return u;
         }
 
@@ -168,24 +149,28 @@ public sealed class ExternalAuthService : IExternalAuthService
                 AvatarUrl   = info.AvatarUrl,
                 Role        = "Analyst",
                 IsActive    = true,
+                CreatedAt   = now,
+                UpdatedAt   = now,
             };
             await userRepo.CreateAsync(user, ct);
         }
         else
         {
-            // Link new provider to existing account; update profile if stale
+            // Link new provider to existing account; fill in missing profile fields
             if (info.DisplayName != null && user.DisplayName is null) user.DisplayName = info.DisplayName;
             if (info.AvatarUrl   != null && user.AvatarUrl   is null) user.AvatarUrl   = info.AvatarUrl;
-            user.UpdatedAt = DateTimeOffset.UtcNow;
+            user.UpdatedAt = now;
             await userRepo.UpdateAsync(user, ct);
         }
 
+        // 4. Create the external login link
         await loginRepo.AddAsync(new UserExternalLogin
         {
             UserId      = user.Id,
             Provider    = providerName,
             ProviderSub = info.Sub,
             Email       = info.Email,
+            CreatedAt   = now,
         }, ct);
 
         return user;
@@ -196,11 +181,16 @@ public sealed class ExternalAuthService : IExternalAuthService
     private IExternalAuthProvider GetProvider(string providerName)
         => _providers.TryGetValue(providerName, out var p)
             ? p
-            : throw new InvalidOperationException($"OAuth provider '{providerName}' is not registered or not enabled.");
+            : throw new InvalidOperationException(
+                $"OAuth provider '{providerName}' is not registered or not enabled.");
 
+    /// <summary>
+    /// Removes expired tokens from the in-memory dicts.
+    /// Called on every login URL generation — frequency is naturally rate-limited.
+    /// </summary>
     private void PurgeExpired()
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _clock.NowInstant().ToDateTimeOffset();
         foreach (var key in _stateTokens.Where(kv => kv.Value < now).Select(kv => kv.Key))
             _stateTokens.TryRemove(key, out _);
         foreach (var key in _exchangeTokens.Where(kv => kv.Value.Expiry < now).Select(kv => kv.Key))

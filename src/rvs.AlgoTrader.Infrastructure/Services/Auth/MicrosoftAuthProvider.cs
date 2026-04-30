@@ -7,22 +7,31 @@ using rvs.AlgoTrader.Application.Services;
 namespace rvs.AlgoTrader.Infrastructure.Services.Auth;
 
 /// <summary>
-/// Microsoft identity platform (personal accounts + Azure AD) via OAuth 2.0 Authorization Code flow.
-/// TenantId defaults to "common" (accepts personal Microsoft accounts and any Azure AD tenant).
-/// Scopes: openid email profile — returns id_token containing oid + email.
-/// Uses "oid" claim as the stable provider_sub (the sub claim changes per application registration;
-/// oid is the immutable Object ID of the user in Azure AD).
+/// Microsoft identity platform (personal + Azure AD) via OAuth 2.0 Authorization Code flow.
+/// TenantId defaults to "common" (accepts personal + any Azure AD tenant).
+/// Uses the "oid" claim as the stable provider_sub — "sub" is per-application and can change.
 /// </summary>
-public sealed class MicrosoftAuthProvider(
-    IHttpClientFactory httpFactory,
-    IOptions<OAuthOptions> opts)
-    : IExternalAuthProvider
+public sealed class MicrosoftAuthProvider : OAuthProviderBase, IExternalAuthProvider
 {
-    private MicrosoftOAuthOptions Cfg => opts.Value.Microsoft!;
+    private readonly IHttpClientFactory     _httpFactory;
+    private readonly IOptions<OAuthOptions> _opts;
 
-    public string ProviderName => "Microsoft";
+    public MicrosoftAuthProvider(IHttpClientFactory httpFactory, IOptions<OAuthOptions> opts)
+    {
+        _httpFactory = httpFactory;
+        _opts        = opts;
+    }
+
+    private MicrosoftOAuthOptions Cfg => _opts.Value.Microsoft
+        ?? throw new InvalidOperationException("Auth:Microsoft configuration section is missing.");
 
     private string AuthBase => $"https://login.microsoftonline.com/{Cfg.TenantId}/oauth2/v2.0";
+
+    public string ProviderName => "Microsoft";
+    public string DisplayName  => "Microsoft";
+    public string IconKey      => "microsoft";
+    public bool   IsEnabled    => _opts.Value.Microsoft?.Enabled == true
+                               && !string.IsNullOrEmpty(_opts.Value.Microsoft.ClientId);
 
     public string GetAuthorizationUrl(string state, string redirectUri)
     {
@@ -35,15 +44,15 @@ public sealed class MicrosoftAuthProvider(
             ["state"]         = state,
             ["prompt"]        = "select_account",
         };
-        return AuthBase + "/authorize?" + BuildQuery(q);
+        return $"{AuthBase}/authorize?{BuildQuery(q)}";
     }
 
     public async Task<ExternalUserInfo> ExchangeCodeAsync(
         string code, string redirectUri, string? rawIdToken, CancellationToken ct)
     {
-        var http = httpFactory.CreateClient("OAuth");
+        var http = _httpFactory.CreateClient("OAuth");
 
-        var resp = await http.PostAsync(AuthBase + "/token",
+        var resp = await http.PostAsync($"{AuthBase}/token",
             new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"]    = "authorization_code",
@@ -55,40 +64,41 @@ public sealed class MicrosoftAuthProvider(
             }), ct);
 
         resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        var json    = await resp.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         var idToken = json.GetProperty("id_token").GetString()
-            ?? throw new InvalidOperationException("Microsoft token response missing id_token");
+            ?? throw new InvalidOperationException("Microsoft token response missing id_token.");
 
-        return ParseIdToken(idToken);
+        return ParseIdToken(idToken, Cfg.ClientId);
     }
 
-    private static ExternalUserInfo ParseIdToken(string idToken)
+    private static ExternalUserInfo ParseIdToken(string idToken, string clientId)
     {
-        using var doc  = DecodeJwtPayload(idToken);
-        var root       = doc.RootElement;
+        using var doc = DecodeJwtPayload(idToken);
+        var root = doc.RootElement;
 
-        // Prefer "oid" (Object ID) as the stable sub — "sub" is per-app and changes
-        // if the user's tenant is migrated or the app registration changes.
-        var sub = root.TryGetProperty("oid", out var oid) ? oid.GetString()
-                : root.GetProperty("sub").GetString();
+        // Microsoft issues iss per-tenant: https://login.microsoftonline.com/{tenantId}/v2.0
+        // For "common" / "consumers" tenants the iss contains the actual tenant UUID after login,
+        // so we validate only the suffix pattern rather than an exact string.
+        if (root.TryGetProperty("iss", out var issProp))
+        {
+            var iss = issProp.GetString() ?? "";
+            if (!iss.StartsWith("https://login.microsoftonline.com/", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Microsoft id_token issuer unexpected: '{iss}'.");
+        }
+
+        ValidateAudience(root, clientId);
+
+        // Prefer "oid" (Object ID) as the stable identifier — "sub" is per-application.
+        var sub = root.TryGetProperty("oid", out var oid)
+            ? oid.GetString()
+            : root.GetProperty("sub").GetString();
 
         return new ExternalUserInfo(
             Sub:         sub!,
-            Email:       root.TryGetProperty("email", out var e)             ? e.GetString()
+            Email:       root.TryGetProperty("email", out var e)              ? e.GetString()
                        : root.TryGetProperty("preferred_username", out var u) ? u.GetString()
                        : null,
-            DisplayName: root.TryGetProperty("name", out var n)              ? n.GetString() : null,
-            AvatarUrl:   null);  // Microsoft Graph required for photo — not fetched here
+            DisplayName: root.TryGetProperty("name", out var n)               ? n.GetString() : null,
+            AvatarUrl:   null);  // Microsoft Graph API required for photo — not fetched here
     }
-
-    private static JsonDocument DecodeJwtPayload(string jwt)
-    {
-        var parts   = jwt.Split('.');
-        var payload = parts[1].Replace('-', '+').Replace('_', '/');
-        var padded  = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
-        return JsonDocument.Parse(Convert.FromBase64String(padded));
-    }
-
-    private static string BuildQuery(Dictionary<string, string> d)
-        => string.Join('&', d.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
 }
