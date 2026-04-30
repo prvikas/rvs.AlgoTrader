@@ -648,7 +648,8 @@ public class EfUserRepository(AlgoTraderDbContext db) : IUserRepository
 
     public Task<User?> GetByUsernameAsync(string username, CancellationToken ct)
         => db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Username.ToLower() == username.ToLower() && u.IsActive, ct);
+            .FirstOrDefaultAsync(
+                u => u.Username != null && u.Username.ToLower() == username.ToLower() && u.IsActive, ct);
 
     public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken ct)
         => await db.Users.AsNoTracking().Where(u => u.IsActive).OrderBy(u => u.Username).ToListAsync(ct);
@@ -712,5 +713,28 @@ public class EfUserBrokerAccountRepository(AlgoTraderDbContext db) : IUserBroker
         db.UserBrokerAccounts.Remove(entity);
         await db.SaveChangesAsync(ct);
         return true;
+    }
+}
+
+// ── UserExternalLogin repository ──────────────────────────────────────────────
+
+public class EfUserExternalLoginRepository(AlgoTraderDbContext db) : IUserExternalLoginRepository
+{
+    public Task<UserExternalLogin?> FindAsync(string provider, string providerSub, CancellationToken ct)
+        => db.UserExternalLogins
+             .Include(l => l.User)
+             .AsNoTracking()
+             .FirstOrDefaultAsync(l => l.Provider == provider && l.ProviderSub == providerSub, ct);
+
+    public Task<User?> FindUserByEmailAsync(string email, CancellationToken ct)
+        => db.Users
+             .AsNoTracking()
+             .FirstOrDefaultAsync(
+                 u => u.Email != null && u.Email.ToLower() == email.ToLower() && u.IsActive, ct);
+
+    public async Task AddAsync(UserExternalLogin login, CancellationToken ct)
+    {
+        db.UserExternalLogins.Add(login);
+        await db.SaveChangesAsync(ct);
     }
 }

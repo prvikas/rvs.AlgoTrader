@@ -23,7 +23,10 @@ public class AuthController(
     IClock clock,
     IOptions<FeaturesOptions> featuresOptions,
     IOptions<LocalAuthOptions> localAuthOptions,
-    IUserRepository userRepo) : ControllerBase
+    IOptions<OAuthOptions> oauthOptions,
+    IUserRepository userRepo,
+    IExternalAuthService externalAuth,
+    IPasswordHasher hasher) : ControllerBase
 {
     // ── Register ─────────────────────────────────────────────────────────────
 
@@ -65,13 +68,14 @@ public class AuthController(
         if (user == null)
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
 
-        bool ok;
-        try { ok = BCrypt.Net.BCrypt.Verify(req.Password, user.PasswordHash); }
-        catch { ok = false; }
+        if (string.IsNullOrEmpty(user.PasswordHash))
+            return Unauthorized(ApiResponse<LoginResultDto>.Fail(
+                "This account uses social login. Please sign in with your identity provider."));
+        bool ok = hasher.Verify(req.Password, user.PasswordHash);
         if (!ok)
             return Unauthorized(ApiResponse<LoginResultDto>.Fail("Invalid username or password"));
 
-        var token = GenerateJwtToken(user.Id.ToString(), user.Username, user.Role);
+        var token = GenerateJwtToken(user.Id.ToString(), user.Username ?? user.Email ?? "user", user.Role);
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
             clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
     }
@@ -93,7 +97,7 @@ public class AuthController(
         bool ok;
         if (!string.IsNullOrEmpty(opts.PasswordHash))
         {
-            try { ok = BCrypt.Net.BCrypt.Verify(req.Password, opts.PasswordHash); } catch { ok = false; }
+            ok = hasher.Verify(req.Password, opts.PasswordHash);
         }
         else if (!string.IsNullOrEmpty(opts.Password))
         {
@@ -131,6 +135,142 @@ public class AuthController(
             clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
     }
 
+    // ── Login (DB-backed, multi-user) — update for nullable Username ─────────
+
+    // ── OAuth provider endpoints ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the list of OAuth providers that are enabled in config.
+    /// The login page calls this once and renders a button for each entry.
+    /// Disabling a provider in config hides its button automatically — no frontend changes needed.
+    /// </summary>
+    [HttpGet("providers")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<IReadOnlyList<ProviderInfoDto>>> GetProviders()
+        => Ok(ApiResponse<IReadOnlyList<ProviderInfoDto>>.Ok(externalAuth.GetEnabledProviders()));
+
+    /// <summary>
+    /// Returns the authorization URL the browser should navigate to for the given provider.
+    /// The redirect_uri must be registered in the OAuth provider's dashboard.
+    /// For local dev: http://localhost:62318/api/auth/oauth/{provider}/callback
+    /// </summary>
+    [HttpGet("oauth/{provider}/login-url")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<string>> GetOAuthLoginUrl(string provider)
+    {
+        var redirectUri = BuildBackendCallbackUri(provider);
+        var url         = externalAuth.GenerateLoginUrl(provider, redirectUri, out _);
+        return Ok(ApiResponse<string>.Ok(url));
+    }
+
+    /// <summary>
+    /// OAuth callback for Google and Microsoft (GET with ?code=...&amp;state=...).
+    /// Exchanges the code, creates/links the user account, issues a short-lived
+    /// exchange token and redirects the browser to the frontend callback page.
+    /// The JWT never appears in a URL — the frontend redeems the exchange token separately.
+    /// </summary>
+    [HttpGet("oauth/{provider}/callback")]
+    [AllowAnonymous]
+    public async Task<IActionResult> OAuthCallback(
+        string provider, string? code, string? state, string? error, CancellationToken ct)
+    {
+        var frontend = oauthOptions.Value.FrontendBaseUrl.TrimEnd('/');
+        if (!string.IsNullOrEmpty(error))
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error={Uri.EscapeDataString(error)}");
+
+        if (string.IsNullOrEmpty(code))
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error=missing_code");
+
+        if (string.IsNullOrEmpty(state) || !externalAuth.ValidateAndConsumeState(state))
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error=invalid_state");
+
+        try
+        {
+            var redirectUri   = BuildBackendCallbackUri(provider);
+            var user          = await externalAuth.AuthenticateAsync(provider, code, redirectUri, null, ct);
+            var jwt           = GenerateJwtToken(user.Id.ToString(), user.DisplayName ?? user.Email ?? "User", user.Role);
+            var exchangeToken = externalAuth.IssueExchangeToken(jwt);
+            return Redirect($"{frontend}/auth/callback?provider={provider}&exchange={exchangeToken}");
+        }
+        catch (Exception ex)
+        {
+            var msg = Uri.EscapeDataString(ex.Message.Length > 120 ? ex.Message[..120] : ex.Message);
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error={msg}");
+        }
+    }
+
+    /// <summary>
+    /// Apple-specific callback: Apple uses response_mode=form_post so this is a POST endpoint.
+    /// The body contains code, state, id_token, and optionally a "user" JSON field (first login only).
+    /// </summary>
+    [HttpPost("oauth/apple/callback")]
+    [AllowAnonymous]
+    [Consumes("application/x-www-form-urlencoded")]
+    public async Task<IActionResult> AppleCallback(
+        [FromForm] string? code,
+        [FromForm] string? state,
+        [FromForm(Name = "id_token")] string? idToken,
+        [FromForm] string? error,
+        CancellationToken ct)
+    {
+        const string provider = "Apple";
+        var frontend = oauthOptions.Value.FrontendBaseUrl.TrimEnd('/');
+
+        if (!string.IsNullOrEmpty(error))
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error={Uri.EscapeDataString(error)}");
+
+        if (string.IsNullOrEmpty(code))
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error=missing_code");
+
+        if (string.IsNullOrEmpty(state) || !externalAuth.ValidateAndConsumeState(state))
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error=invalid_state");
+
+        try
+        {
+            var redirectUri   = BuildBackendCallbackUri(provider);
+            var user          = await externalAuth.AuthenticateAsync(provider, code, redirectUri, idToken, ct);
+            var jwt           = GenerateJwtToken(user.Id.ToString(), user.DisplayName ?? user.Email ?? "User", user.Role);
+            var exchangeToken = externalAuth.IssueExchangeToken(jwt);
+            return Redirect($"{frontend}/auth/callback?provider={provider}&exchange={exchangeToken}");
+        }
+        catch (Exception ex)
+        {
+            var msg = Uri.EscapeDataString(ex.Message.Length > 120 ? ex.Message[..120] : ex.Message);
+            return Redirect($"{frontend}/auth/callback?provider={provider}&error={msg}");
+        }
+    }
+
+    /// <summary>
+    /// Redeems a one-time exchange token (2-minute TTL) for the actual JWT.
+    /// Called by the frontend's /auth/callback page immediately after the OAuth redirect.
+    /// This is the only point where the JWT crosses the wire; it is never in a URL.
+    /// </summary>
+    [HttpPost("oauth/{provider}/redeem")]
+    [AllowAnonymous]
+    public ActionResult<ApiResponse<LoginResultDto>> Redeem(string provider, [FromBody] RedeemRequest req)
+    {
+        var jwt = externalAuth.RedeemExchangeToken(req.ExchangeToken);
+        if (jwt is null)
+            return BadRequest(ApiResponse<LoginResultDto>.Fail("Exchange token is invalid or has expired. Please sign in again."));
+
+        return Ok(ApiResponse<LoginResultDto>.Ok(
+            new LoginResultDto(jwt, provider, clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the backend OAuth callback URL from the current request host.
+    /// This must match exactly what is registered in the provider's developer console.
+    /// </summary>
+    private string BuildBackendCallbackUri(string provider)
+    {
+        var scheme = Request.Scheme;
+        var host   = Request.Host.Value;
+        // Apple requires lowercase provider name in the path; all others accept either.
+        return $"{scheme}://{host}/api/auth/oauth/{provider.ToLower()}/callback";
+    }
+
     // ── JWT generation ────────────────────────────────────────────────────────
 
     private string GenerateJwtToken(string userId, string username, string role)
@@ -155,3 +295,4 @@ public class AuthController(
 
 public record LocalLoginRequest(string Username, string Password);
 public record RegisterRequest(string Username, string Password, string? Role = null);
+public record RedeemRequest(string ExchangeToken);

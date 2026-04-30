@@ -369,3 +369,15 @@ public interface IUserBrokerAccountRepository
     Task<bool> SetActiveAsync(Guid id, bool isActive, CancellationToken ct);
     Task<bool> DeleteAsync(Guid id, CancellationToken ct);
 }
+
+// ── External OAuth login repository ──────────────────────────────────────────
+
+public interface IUserExternalLoginRepository
+{
+    /// <summary>Find by (provider, provider_sub) — the stable unique identity from the OAuth provider.</summary>
+    Task<Domain.Entities.UserExternalLogin?> FindAsync(string provider, string providerSub, CancellationToken ct);
+    /// <summary>Find a user by email across any provider — used for account linking.</summary>
+    Task<Domain.Entities.User?> FindUserByEmailAsync(string email, CancellationToken ct);
+    /// <summary>Creates the external login row. The User must already exist.</summary>
+    Task AddAsync(Domain.Entities.UserExternalLogin login, CancellationToken ct);
+}

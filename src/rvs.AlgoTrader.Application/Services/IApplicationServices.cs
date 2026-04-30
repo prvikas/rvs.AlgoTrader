@@ -1,9 +1,78 @@
+using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Application.DTOs.Broker;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using NodaTime;
 
 namespace rvs.AlgoTrader.Application.Services;
+
+// ── External OAuth provider abstraction ───────────────────────────────────────
+
+/// <summary>
+/// Implemented once per OAuth provider (Google, Microsoft, Apple, …).
+/// Adding a new provider = implement this interface + register in DI + enable in config.
+/// No switch statements, no hardcoded provider names in the auth flow.
+/// </summary>
+public interface IExternalAuthProvider
+{
+    /// <summary>Canonical name matching the config section key: "Google" | "Microsoft" | "Apple".</summary>
+    string ProviderName { get; }
+
+    /// <summary>Builds the authorization URL the user's browser should be redirected to.</summary>
+    string GetAuthorizationUrl(string state, string redirectUri);
+
+    /// <summary>
+    /// Exchanges an authorization code (from the OAuth callback) for verified user identity.
+    /// For Apple, also pass the raw id_token from the form_post body when available.
+    /// </summary>
+    Task<ExternalUserInfo> ExchangeCodeAsync(string code, string redirectUri,
+        string? rawIdToken, CancellationToken ct);
+}
+
+/// <summary>
+/// Verified identity returned by an OAuth provider after a successful code exchange.
+/// Sub is the stable unique ID — never changes for a given account.
+/// Email may be null for Apple on repeat sign-ins (Apple only sends it once).
+/// </summary>
+public record ExternalUserInfo(string Sub, string? Email, string? DisplayName, string? AvatarUrl);
+
+/// <summary>DTO returned by GET /api/auth/providers.</summary>
+public record ProviderInfoDto(string Name, string DisplayName, string IconKey);
+
+// ── External auth service ─────────────────────────────────────────────────────
+
+/// <summary>
+/// Orchestrates the OAuth flow: provider resolution, CSRF state, exchange tokens,
+/// and user upsert (create-or-link-or-update).
+/// Implemented in Infrastructure as a singleton so state dicts survive across requests.
+/// </summary>
+public interface IExternalAuthService
+{
+    /// <summary>Returns providers with Enabled=true in config.</summary>
+    IReadOnlyList<ProviderInfoDto> GetEnabledProviders();
+
+    /// <summary>Generates a CSRF state token, stores it, returns the provider's authorization URL.</summary>
+    string GenerateLoginUrl(string providerName, string redirectUri, out string state);
+
+    /// <summary>Returns true and removes the state if it was previously issued. Prevents CSRF replay.</summary>
+    bool ValidateAndConsumeState(string state);
+
+    /// <summary>
+    /// Exchanges an authorization code for verified user info, then creates or links the
+    /// application user account. Returns the application User record.
+    /// </summary>
+    Task<User> AuthenticateAsync(string providerName, string code, string redirectUri,
+        string? rawIdToken, CancellationToken ct);
+
+    /// <summary>
+    /// Stores a JWT under a one-time exchange token (2-minute TTL).
+    /// The token is passed in the browser redirect so the JWT never appears in a URL.
+    /// </summary>
+    string IssueExchangeToken(string jwt);
+
+    /// <summary>Retrieves and invalidates an exchange token. Returns null if expired or not found.</summary>
+    string? RedeemExchangeToken(string exchangeToken);
+}
 
 /// <summary>
 /// Provides the identity of the current authenticated user.

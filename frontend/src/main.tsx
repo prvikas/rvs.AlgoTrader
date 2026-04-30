@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Dashboard } from './pages/Dashboard'
 import { Login } from './pages/Login'
 import { StrategiesPage } from './pages/StrategiesPage'
+import { AuthCallbackPage } from './pages/AuthCallbackPage'
 import { useAppStore } from './stores/appStore'
 import { C } from './styles/tokens'
 import { EnumsProvider } from './context/EnumsContext'
@@ -89,6 +90,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/auth/callback" element={<AuthCallbackPage />} />
             <Route path="/" element={<ProtectedRoute element={<Dashboard />} />} />
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
             <Route path="/strategies" element={<ProtectedRoute element={<StrategiesPage />} />} />

@@ -27,6 +27,7 @@ using rvs.AlgoTrader.Infrastructure.Jobs;
 using rvs.AlgoTrader.Infrastructure.Repositories;
 using rvs.AlgoTrader.Application.Options;
 using rvs.AlgoTrader.Infrastructure.Services;
+using rvs.AlgoTrader.Infrastructure.Services.Auth;
 namespace rvs.AlgoTrader.Infrastructure.Extensions;
 
 public static class ServiceCollectionExtensions
@@ -202,6 +203,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAlertRulesRepository, EfAlertRulesRepository>();
         services.AddScoped<IUserRepository, EfUserRepository>();
         services.AddScoped<IUserBrokerAccountRepository, EfUserBrokerAccountRepository>();
+        services.AddScoped<IUserExternalLoginRepository, EfUserExternalLoginRepository>();
         services.AddScoped<IDownloadJobRepository, EfDownloadJobRepository>();
         services.AddScoped<ISignalJournalRepository, EfSignalJournalRepository>();
         services.AddScoped<ICapitalAllocationRepository, EfCapitalAllocationRepository>();
@@ -320,6 +322,18 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IAppBrokerSessionManager>(
                 sp => sp.GetRequiredService<InMemoryBrokerSessionManager>());
         }
+
+        // ── OAuth / social login providers ────────────────────────────────────
+        // Only the providers whose config section has Enabled=true will be surfaced
+        // by IExternalAuthService.GetEnabledProviders() — the others are registered but
+        // ignored at runtime.  Adding a new provider = implement IExternalAuthProvider
+        // and add a line here; no other code needs to change.
+        services.Configure<OAuthOptions>(config.GetSection(OAuthOptions.SectionName));
+        services.AddHttpClient("OAuth");  // shared HttpClient for token exchange calls
+        services.AddSingleton<IExternalAuthProvider, GoogleAuthProvider>();
+        services.AddSingleton<IExternalAuthProvider, MicrosoftAuthProvider>();
+        services.AddSingleton<IExternalAuthProvider, AppleAuthProvider>();
+        services.AddSingleton<IExternalAuthService, ExternalAuthService>();
 
         // Broker auth service (Application interface → Infrastructure implementation)
         services.AddScoped<IBrokerAuthService, BrokerAuthService>();
