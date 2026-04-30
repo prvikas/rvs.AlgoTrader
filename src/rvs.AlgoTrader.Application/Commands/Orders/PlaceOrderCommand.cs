@@ -69,7 +69,13 @@ public class PlaceOrderCommandValidator : AbstractValidator<PlaceOrderCommand>
     }
 }
 
-public class PlaceOrderCommandHandler(IOrderRepository orders, IKillSwitchService killSwitch, IIdempotencyService idempotency, IRiskManagementService risk, Domain.Interfaces.IClock clock) : IRequestHandler<PlaceOrderCommand, PlaceOrderResult>
+public class PlaceOrderCommandHandler(
+    IOrderRepository orders,
+    IKillSwitchService killSwitch,
+    IIdempotencyService idempotency,
+    IRiskManagementService risk,
+    IMarketCalendarService calendar,
+    Domain.Interfaces.IClock clock) : IRequestHandler<PlaceOrderCommand, PlaceOrderResult>
 {
     public async Task<PlaceOrderResult> Handle(PlaceOrderCommand request, CancellationToken ct)
     {
@@ -82,12 +88,18 @@ public class PlaceOrderCommandHandler(IOrderRepository orders, IKillSwitchServic
         if (await killSwitch.IsActiveAsync(ct))
             return new PlaceOrderResult(false, null, null, "Kill switch is active");
 
-        // 3. Risk check
+        // 3. Market calendar check (AP-011) — reject orders on holidays/weekends
+        var today = clock.TodayIst();
+        if (!await calendar.IsTradingDayAsync(DateOnly.FromDateTime(today.ToDateTimeUnspecified()), ct))
+            return new PlaceOrderResult(false, null, null,
+                $"Market is closed today ({today:yyyy-MM-dd}). Orders cannot be placed on holidays or weekends.");
+
+        // 5. Risk check
         var riskResult = await risk.CheckAsync(request.StrategyRunId ?? Guid.Empty, request, ct);
         if (!riskResult.Allowed)
             return new PlaceOrderResult(false, null, null, riskResult.BlockReason);
 
-        // 4. Create order record
+        // 6. Create order record
         var orderType = Enum.Parse<Domain.Enums.OrderType>(request.OrderType.Replace("-", ""), true);
         var direction = request.Direction == "BUY" ? Domain.Enums.OrderDirection.Buy : Domain.Enums.OrderDirection.Sell;
         var order = Domain.Entities.Order.Create(

@@ -298,5 +298,6 @@ public class AuthController(
 // ── Request DTOs ──────────────────────────────────────────────────────────────
 
 public record LocalLoginRequest(string Username, string Password);
-public record RegisterRequest(string Username, string Password, string? Role = null);
+// Role is intentionally omitted — self-registered users are always Analyst (AP-SEC)
+public record RegisterRequest(string Username, string Password);
 public record RedeemRequest(string ExchangeToken);
