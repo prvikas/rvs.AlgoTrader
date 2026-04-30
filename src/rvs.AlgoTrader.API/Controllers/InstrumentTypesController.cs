@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Application.DTOs.Common;
@@ -12,6 +13,7 @@ namespace rvs.AlgoTrader.API.Controllers;
 /// </summary>
 [Route("api/[controller]")]
 [ApiController]
+[Authorize]
 public class InstrumentTypesController(IAppConfigService config) : ControllerBase
 {
     /// <summary>Get configured futures instrument type codes.</summary>

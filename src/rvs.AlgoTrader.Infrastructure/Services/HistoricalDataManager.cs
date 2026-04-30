@@ -36,8 +36,9 @@ public class HistoricalDataManager(
     {
         var stats = await db.Database
             .SqlQueryRaw<QualityStatsRow>(
-                $"SELECT COUNT(*) AS total, MIN(open_time) AS first_candle, MAX(open_time) AS last_candle " +
-                $"FROM candles WHERE internal_symbol = '{Esc(symbol)}' AND timeframe = '{Esc(timeframe)}'")
+                "SELECT COUNT(*) AS total, MIN(open_time) AS first_candle, MAX(open_time) AS last_candle " +
+                "FROM candles WHERE internal_symbol = {0} AND timeframe = {1}",
+                symbol, timeframe)
             .FirstOrDefaultAsync(ct);
 
         if (stats is null || stats.Total == 0)
@@ -48,10 +49,11 @@ public class HistoricalDataManager(
 
         var dups = await db.Database
             .SqlQueryRaw<CountRow>(
-                $"SELECT COUNT(*)::int AS value FROM (" +
-                $"  SELECT open_time, COUNT(*) c FROM candles " +
-                $"  WHERE internal_symbol = '{Esc(symbol)}' AND timeframe = '{Esc(timeframe)}' " +
-                $"  GROUP BY open_time HAVING COUNT(*) > 1) t")
+                "SELECT COUNT(*)::int AS value FROM (" +
+                "  SELECT open_time, COUNT(*) c FROM candles " +
+                "  WHERE internal_symbol = {0} AND timeframe = {1} " +
+                "  GROUP BY open_time HAVING COUNT(*) > 1) t",
+                symbol, timeframe)
             .FirstOrDefaultAsync(ct);
 
         var gaps = DetectGaps(first, last, stats.Total, timeframe);
@@ -64,12 +66,11 @@ public class HistoricalDataManager(
     public async Task<IReadOnlyList<DataQualityReportDto>> GetAllQualityReportsAsync(
         string timeframe = "1D", CancellationToken ct = default)
     {
-#pragma warning disable EF1002 // timeframe sanitised via Esc(); no user-controlled input
         var symbols = await db.Database
             .SqlQueryRaw<SymbolRow>(
-                $"SELECT DISTINCT internal_symbol AS symbol FROM candles WHERE timeframe = '{Esc(timeframe)}'")
+                "SELECT DISTINCT internal_symbol AS symbol FROM candles WHERE timeframe = {0}",
+                timeframe)
             .ToListAsync(ct);
-#pragma warning restore EF1002
 
         var reports = new List<DataQualityReportDto>(symbols.Count);
         foreach (var s in symbols)
@@ -233,8 +234,6 @@ public class HistoricalDataManager(
             _    => Math.Max(1, days / 2),
         };
     }
-
-    private static string Esc(string s) => s.Replace("'", "''");
 
     private sealed class QualityStatsRow
     {

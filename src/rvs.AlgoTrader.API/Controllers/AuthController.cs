@@ -12,6 +12,8 @@ using rvs.AlgoTrader.Application.DTOs.Auth;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Options;
 using rvs.AlgoTrader.Application.Services;
+// Alias resolves IClock to the domain interface (not NodaTime.IClock) — consistent with AP-001
+using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -42,8 +44,10 @@ public class AuthController(
             return BadRequest(ApiResponse<RegisterResultDto>.Fail("Password must be at least 8 characters."));
         try
         {
+            // Role is always Analyst for self-registration — prevents privilege escalation.
+            // Admins assign elevated roles via a separate admin-only endpoint.
             var result = await mediator.Send(
-                new RegisterUserCommand(req.Username, req.Password, req.Role ?? "Analyst"), ct);
+                new RegisterUserCommand(req.Username, req.Password, "Analyst"), ct);
             return Ok(ApiResponse<RegisterResultDto>.Ok(result));
         }
         catch (InvalidOperationException ex)
@@ -77,7 +81,7 @@ public class AuthController(
 
         var token = GenerateJwtToken(user.Id.ToString(), user.Username ?? user.Email ?? "user", user.Role);
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
-            clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
+            clock.NowInstant().ToDateTimeOffset().AddHours(24))));
     }
 
     // ── Local config login (dev / CI) ─────────────────────────────────────────
@@ -117,7 +121,7 @@ public class AuthController(
         const string systemUserId = "00000000-0000-0000-0000-000000000001";
         var token = GenerateJwtToken(systemUserId, opts.Username, "Analyst");
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
-            clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
+            clock.NowInstant().ToDateTimeOffset().AddHours(24))));
     }
 
     // ── Offline dev auto-login ────────────────────────────────────────────────
@@ -132,7 +136,7 @@ public class AuthController(
         const string systemUserId = "00000000-0000-0000-0000-000000000001";
         var token = GenerateJwtToken(systemUserId, "backtester", "Analyst");
         return Ok(ApiResponse<LoginResultDto>.Ok(new LoginResultDto(token, "None",
-            clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
+            clock.NowInstant().ToDateTimeOffset().AddHours(24))));
     }
 
     // ── Login (DB-backed, multi-user) — update for nullable Username ─────────
@@ -254,7 +258,7 @@ public class AuthController(
             return BadRequest(ApiResponse<LoginResultDto>.Fail("Exchange token is invalid or has expired. Please sign in again."));
 
         return Ok(ApiResponse<LoginResultDto>.Ok(
-            new LoginResultDto(jwt, provider, clock.GetCurrentInstant().ToDateTimeOffset().AddHours(24))));
+            new LoginResultDto(jwt, provider, clock.NowInstant().ToDateTimeOffset().AddHours(24))));
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -285,7 +289,7 @@ public class AuthController(
             new Claim("role",                    role),
         };
         var token = new JwtSecurityToken(null, null, claims,
-            expires: clock.GetCurrentInstant().Plus(Duration.FromHours(24)).ToDateTimeUtc(),
+            expires: clock.NowInstant().Plus(Duration.FromHours(24)).ToDateTimeUtc(),
             signingCredentials: creds);
         return new JwtSecurityTokenHandler().WriteToken(token);
     }

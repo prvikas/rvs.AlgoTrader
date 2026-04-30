@@ -35,6 +35,7 @@ public sealed class IvHistoryService(
         var todayStr = today.ToString("yyyy-MM-dd", null);
 
         // Upsert today's raw IV
+        // Parameters passed as explicit array so ct is the CancellationToken, not a SQL param.
         await db.Database.ExecuteSqlRawAsync(
             """
             INSERT INTO iv_history (internal_symbol, date, iv_close)
@@ -42,9 +43,10 @@ public sealed class IvHistoryService(
             ON CONFLICT (internal_symbol, date)
             DO UPDATE SET iv_close = EXCLUDED.iv_close
             """,
-            symbol, todayStr, ivClose, ct);
+            new object[] { symbol, todayStr, ivClose }, ct);
 
-        // Recompute ranks using SQL PERCENT_RANK() — efficient single-query update
+        // Recompute ranks using SQL PERCENT_RANK() — efficient single-query update.
+        // Parameters passed as explicit array so ct is the CancellationToken, not a SQL param.
         await db.Database.ExecuteSqlRawAsync(
             """
             WITH ranked AS (
@@ -75,7 +77,7 @@ public sealed class IvHistoryService(
             WHERE iv_history.id = ranked.id
               AND iv_history.date = {1}::date
             """,
-            symbol, todayStr, ct);
+            new object[] { symbol, todayStr }, ct);
 
         logger.LogInformation("[IvHistoryService] Recorded iv_close={Iv} for {Symbol} on {Date}", ivClose, symbol, today);
     }

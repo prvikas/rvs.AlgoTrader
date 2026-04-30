@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using NodaTime;
 using rvs.AlgoTrader.Brokers.Abstractions;
 using rvs.AlgoTrader.Brokers.Zerodha.Auth;
+using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Brokers.Zerodha;
 
@@ -130,7 +131,7 @@ public class ZerodhaClient(
                 item.TryGetProperty("price", out var p) ? (decimal?)p.GetDecimal() : null,
                 item.TryGetProperty("trigger_price", out var tp) && tp.GetDecimal() > 0 ? (decimal?)tp.GetDecimal() : null,
                 item.GetProperty("status").GetString()!,
-                clock.GetCurrentInstant().ToDateTimeOffset()
+                clock.NowInstant().ToDateTimeOffset()
             ));
         }
         return orders;
@@ -143,7 +144,7 @@ public class ZerodhaClient(
         var json = await response.Content.ReadAsStringAsync(ct);
         var doc = JsonDocument.Parse(json);
         var d = doc.RootElement.GetProperty("data").GetProperty($"NSE:{brokerToken}");
-        var now = clock.GetCurrentInstant().InZone(_ist);
+        var now = clock.NowInstant().InZone(_ist);
         return new BrokerQuote(brokerToken, d.GetProperty("last_price").GetDecimal(),
             d.GetProperty("ohlc").GetProperty("open").GetDecimal(),
             d.GetProperty("ohlc").GetProperty("high").GetDecimal(),
@@ -240,7 +241,7 @@ public class ZerodhaClient(
             equity.GetProperty("available").GetProperty("cash").GetDecimal(),
             equity.GetProperty("utilised").GetProperty("debits").GetDecimal(),
             equity.GetProperty("net").GetDecimal(),
-            clock.GetCurrentInstant().InZone(_ist));
+            clock.NowInstant().InZone(_ist));
     }
 
     public async Task<IReadOnlyList<BrokerPosition>> GetPositionsAsync(CancellationToken ct)
@@ -344,7 +345,7 @@ public class ZerodhaClient(
 
             var packetCount = (frame[0] << 8) | frame[1];
             var offset      = 2;
-            var now         = clock.GetCurrentInstant().InZone(_ist);
+            var now         = clock.NowInstant().InZone(_ist);
 
             for (int i = 0; i < packetCount; i++)
             {
@@ -394,7 +395,7 @@ public class ZerodhaClient(
         samples.Sort();
         return new LatencyReport("Zerodha",
             samples[samples.Count / 2], samples[(int)(samples.Count * 0.95)], samples[^1],
-            samples.Count, clock.GetCurrentInstant().InZone(_ist));
+            samples.Count, clock.NowInstant().InZone(_ist));
     }
 
     // ── Instrument Master ─────────────────────────────────────────────────────

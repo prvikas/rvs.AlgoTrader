@@ -8,6 +8,8 @@ using rvs.AlgoTrader.Application.DTOs.Backtest;
 using rvs.AlgoTrader.Application.DTOs.Common;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Enums;
+// Alias resolves IClock to the domain interface (not NodaTime.IClock) — consistent with AP-001
+using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.API.Controllers;
 
@@ -143,7 +145,7 @@ public class McpController(
         return Ok(ApiResponse<McpKillSwitchResponseDto>.Ok(new McpKillSwitchResponseDto(
             Scope:     "global",
             Active:    request.Active,
-            AppliedAt: clock.GetCurrentInstant().ToDateTimeOffset(),
+            AppliedAt: clock.NowInstant().ToDateTimeOffset(),
             AuditId:   Guid.NewGuid())));
     }
 

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using MassTransit;
 using NodaTime;
 using rvs.AlgoTrader.Domain.Events;
+using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Brokers.Abstractions;
 
@@ -135,7 +136,7 @@ public class ReconnectingBrokerStreamClient(
                 "CONNECTION_LOST",
                 attempt + 1,
                 Guid.NewGuid().ToString(),
-                clock.GetCurrentInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
+                clock.NowInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
 
             await Task.Delay(TimeSpan.FromSeconds(delaySeconds), ct);
             attempt++;
@@ -148,7 +149,7 @@ public class ReconnectingBrokerStreamClient(
                     delaySeconds * attempt,
                     _subscribedTokens.ToList().AsReadOnly(),
                     Guid.NewGuid().ToString(),
-                    clock.GetCurrentInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
+                    clock.NowInstant().InZone(DateTimeZoneProviders.Tzdb["Asia/Kolkata"])), ct);
             }
             catch (Exception ex)
             {

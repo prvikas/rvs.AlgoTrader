@@ -34,7 +34,7 @@ public class MarketBreadthService(
     {
         var iso = date.ToString("yyyy-MM-dd", null);
         var row = await db.Database
-            .SqlQueryRaw<BreadthRow>(BreadthSelectSql + $" WHERE snapshot_date = '{iso}'")
+            .SqlQueryRaw<BreadthRow>(BreadthSelectSql + " WHERE snapshot_date = {0}::date", iso)
             .FirstOrDefaultAsync(ct);
         return row is null ? null : ToDto(row);
     }
@@ -42,7 +42,7 @@ public class MarketBreadthService(
     public async Task<IReadOnlyList<MarketBreadthDto>> GetHistoryAsync(int days = 30, CancellationToken ct = default)
     {
         var rows = await db.Database
-            .SqlQueryRaw<BreadthRow>(BreadthSelectSql + $" ORDER BY snapshot_date DESC LIMIT {days}")
+            .SqlQueryRaw<BreadthRow>(BreadthSelectSql + " ORDER BY snapshot_date DESC LIMIT {0}", days)
             .ToListAsync(ct);
         return rows.Select(ToDto).ToList();
     }

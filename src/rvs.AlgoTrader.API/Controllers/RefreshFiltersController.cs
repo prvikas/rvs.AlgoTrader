@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using rvs.AlgoTrader.Application.Commands.Instruments;
 using rvs.AlgoTrader.Application.DTOs.Common;
@@ -20,6 +21,7 @@ namespace rvs.AlgoTrader.API.Controllers;
 /// </summary>
 [Route("api/refresh-filters")]
 [ApiController]
+[Authorize]
 public class RefreshFiltersController(IAppConfigService config) : ControllerBase
 {
     // ── Defaults ──────────────────────────────────────────────────────────────
