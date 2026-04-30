@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { apiClient, ApiResponse } from '../../api/client'
+import { C, BRAND } from '../../styles/tokens'
 
 interface BrokerAuthResult {
   success: boolean
@@ -17,18 +18,18 @@ interface Props {
 
 // Shared input style
 const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '10px 12px', background: '#1e1e2e',
-  border: '1px solid #3d3d5c', borderRadius: 6, color: '#e2e8f0',
+  width: '100%', padding: '10px 12px', background: 'var(--c-surface)',
+  border: `1px solid var(--c-border2)`, borderRadius: 6, color: 'var(--c-text)',
   fontSize: 14, outline: 'none', boxSizing: 'border-box',
 }
-const labelStyle: React.CSSProperties = { fontSize: 12, color: '#94a3b8', marginBottom: 4, display: 'block' }
-const errStyle: React.CSSProperties = { color: '#f87171', fontSize: 13, marginTop: 8 }
+const labelStyle: React.CSSProperties = { fontSize: 12, color: 'var(--c-textSub)', marginBottom: 4, display: 'block' }
+const errStyle: React.CSSProperties = { color: 'var(--c-red)', fontSize: 13, marginTop: 8 }
 const btnPrimary: React.CSSProperties = {
-  background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6,
+  background: 'var(--c-blue)', color: 'white', border: 'none', borderRadius: 6,
   padding: '10px 20px', fontSize: 14, fontWeight: 600, cursor: 'pointer', width: '100%',
 }
 const btnSecondary: React.CSSProperties = {
-  ...btnPrimary, background: '#2d2d3f', color: '#94a3b8',
+  ...btnPrimary, background: 'var(--c-surface3)', color: 'var(--c-textSub)',
 }
 
 // ── mStock Form ───────────────────────────────────────────────────────────────
@@ -82,7 +83,7 @@ function MStockForm({ apiKey, onSuccess, onError }: {
           value={totp} onChange={e => setTotp(e.target.value.replace(/\D/g, '').slice(0, 6))}
           placeholder="000000" maxLength={6} inputMode="numeric" pattern="\d{6}"
           autoComplete="one-time-code" required />
-        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
           Expires every 30 seconds — enter immediately after clicking Login
         </div>
       </div>
@@ -130,7 +131,7 @@ function ZerodhaForm({ onSuccess, onError }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: '#1a2744', border: '1px solid #1e40af', borderRadius: 6, padding: 12, fontSize: 13, color: '#93c5fd' }}>
+      <div style={{ background: C.blueBg, border: `1px solid ${C.blue}`, borderRadius: 6, padding: 12, fontSize: 13, color: C.textSub }}>
         Zerodha uses OAuth. Click below to open Kite Login in a new tab. After successful login,
         Zerodha will redirect you to a URL containing <code>?request_token=xxxxx</code>. Paste that token below.
       </div>
@@ -177,7 +178,7 @@ function UpstoxForm({ onSuccess, onError }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: '#1a2744', border: '1px solid #1e40af', borderRadius: 6, padding: 12, fontSize: 13, color: '#93c5fd' }}>
+      <div style={{ background: C.blueBg, border: `1px solid ${C.blue}`, borderRadius: 6, padding: 12, fontSize: 13, color: C.textSub }}>
         Upstox uses OAuth2. Click below to open the authorization page.
         After you approve, Upstox will automatically redirect back to this app with your access token.
         Token expires at 3:30 AM IST daily.
@@ -201,10 +202,11 @@ function UpstoxForm({ onSuccess, onError }: {
 export function BrokerLoginModal({ broker, apiKey, onSuccess, onClose }: Props) {
   const [error, setError] = useState<string | null>(null)
 
+  // Broker accent colors from BRAND tokens (AP-020)
   const brokerColors: Record<string, string> = {
-    MStock: '#f59e0b', Zerodha: '#e11d48', Upstox: '#7c3aed',
+    MStock: BRAND.mstock, Zerodha: BRAND.zerodha, Upstox: BRAND.upstox,
   }
-  const color = brokerColors[broker] ?? '#3b82f6'
+  const color = brokerColors[broker] ?? C.blue
 
   return (
     <div style={{
@@ -212,27 +214,27 @@ export function BrokerLoginModal({ broker, apiKey, onSuccess, onClose }: Props) 
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
     }}>
       <div style={{
-        background: '#14141f', border: `1px solid ${color}44`, borderRadius: 12,
+        background: C.surface, border: `1px solid ${color}44`, borderRadius: 12,
         width: 420, maxWidth: '95vw', padding: 24, boxShadow: `0 0 40px ${color}22`,
       }}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0' }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>
               <span style={{ color }}>{broker}</span> Login
             </div>
-            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>
               {broker === 'MStock' && 'Type B API — direct credentials'}
               {broker === 'Zerodha' && 'Kite Connect — OAuth'}
               {broker === 'Upstox' && 'Upstox API v2 — OAuth2'}
             </div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#6b7280', fontSize: 20, cursor: 'pointer' }}>×</button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: C.textMuted, fontSize: 20, cursor: 'pointer' }}>×</button>
         </div>
 
         {/* Error banner */}
         {error && (
-          <div style={{ background: '#3f1111', border: '1px solid #f87171', borderRadius: 6, padding: '10px 14px', marginBottom: 16 }}>
+          <div style={{ background: C.redBg, border: `1px solid ${C.red}`, borderRadius: 6, padding: '10px 14px', marginBottom: 16 }}>
             <span style={errStyle}>{error}</span>
           </div>
         )}

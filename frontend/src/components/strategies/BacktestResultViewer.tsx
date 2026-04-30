@@ -11,7 +11,7 @@ import {
   BacktestJobStatus,
 } from '../../api/client'
 import { Scenario, ScenarioStatus, Strategy } from '../../types/strategy'
-import { C, F, SP } from '../../styles/tokens'
+import { C, F, SP, CHART } from '../../styles/tokens'
 
 // NSE session: 9:15 AM – 3:30 PM = 375 minutes per day
 const TF_MINUTES: Record<string, number> = {
@@ -122,18 +122,28 @@ export function BacktestResultViewer({
 
   const trades: BacktestTradeResult[] = result?.trades ?? []
 
-  // Switch to chart tab when a run starts (live chart) or finishes (signal review)
+  // Switch to chart tab when a run starts (live chart) or finishes (signal review).
+  // Clear the previously-loaded result when a NEW run starts so it cannot shadow
+  // the fresh result once the run completes and jobProgress is cleared to null.
   const prevIsRunning = useRef(isRunning)
   useEffect(() => {
-    if (!prevIsRunning.current && isRunning) setTab('chart')          // run started
-    if (prevIsRunning.current && !isRunning && result) setTab('chart') // run finished
+    if (!prevIsRunning.current && isRunning) {
+      setTab('chart')
+      setLoadedResult(null) // evict stale result so re-fetch fires after completion
+    }
+    if (prevIsRunning.current && !isRunning) setTab('chart') // run finished (result loads async)
     prevIsRunning.current = isRunning
   }, [isRunning, !!result]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load result from API for already-Backtested scenarios
+  // Load result from API for already-Backtested scenarios (or after a re-run completes).
+  // Guard: skip when running, when the current result is already fresh (loadedResult set
+  // from this effect), or while another load is in flight.
   useEffect(() => {
-    if (isRunning || result || loading) return
+    if (isRunning || loading) return
     if (scenario.status !== ScenarioStatus.Backtested) return
+    // After a re-run: jobProgress was cleared → result is null (loadedResult was evicted
+    // above). Re-fetch the latest run for this scenario.
+    if (result && result === loadedResult) return // already loaded the latest for this scenario
     setLoading(true)
     backtestApi
       .byDefinition(strategy.id)
@@ -146,7 +156,7 @@ export function BacktestResultViewer({
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [scenario.id, scenario.status]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scenario.id, scenario.status, isRunning]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleStop() {
     if (!activeJobId) return
@@ -511,7 +521,7 @@ function OverviewTab({ result, scenario, equityCurve, isRunning, jobProgress }: 
 
 // ── Candlestick chart with zoom/pan ───────────────────────────────────────────
 
-const IND_COLORS = ['#60a5fa', '#f59e0b', '#a78bfa', '#34d399', '#fb923c', '#e879f9']
+const IND_COLORS = CHART.palette
 
 function CandlestickChart({ bars, maximized, onToggleMaximize }: {
   bars: BacktestChartBar[]
@@ -759,7 +769,7 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
           {visible.map((b, i) => {
             const x       = toX(i)
             const isGreen = b.close >= b.open
-            const col     = isGreen ? '#00d07a' : '#ff4757'
+            const col     = isGreen ? C.green : C.red
             const yOpen   = toY(b.open)
             const yClose  = toY(b.close)
             const bodyTop = Math.min(yOpen, yClose)
@@ -772,17 +782,17 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
                   fill={col} opacity={0.82} />
                 {b.stopLoss != null && b.stopLoss > 0 && (
                   <line x1={x - bodyW} y1={toY(b.stopLoss)} x2={x + bodyW} y2={toY(b.stopLoss)}
-                    stroke="#ff4757" strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
+                    stroke={C.red} strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
                 )}
                 {b.takeProfit != null && b.takeProfit > 0 && (
                   <line x1={x - bodyW} y1={toY(b.takeProfit)} x2={x + bodyW} y2={toY(b.takeProfit)}
-                    stroke="#00d07a" strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
+                    stroke={C.green} strokeWidth={0.8} strokeDasharray="2 2" opacity={0.6} />
                 )}
                 {b.signal === 'BUY' && (() => {
                   const ty = toY(b.low) + 14
                   return (
                     <polygon points={`${x},${ty - 8} ${x - 5},${ty + 2} ${x + 5},${ty + 2}`}
-                      fill="#00d07a" stroke="#003820" strokeWidth={0.5}>
+                      fill={C.green} stroke={C.greenBg} strokeWidth={0.5}>
                       <title>Entry ▲ ₹{(b.signalPrice ?? b.close).toFixed(2)}</title>
                     </polygon>
                   )
@@ -791,7 +801,7 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
                   const ty = toY(b.high) - 14
                   return (
                     <polygon points={`${x},${ty + 8} ${x - 5},${ty - 2} ${x + 5},${ty - 2}`}
-                      fill="#ff4757" stroke="#380000" strokeWidth={0.5}>
+                      fill={C.red} stroke={C.redBg} strokeWidth={0.5}>
                       <title>Exit ▼ ₹{(b.signalPrice ?? b.close).toFixed(2)}</title>
                     </polygon>
                   )
@@ -838,10 +848,10 @@ function CandlestickChart({ bars, maximized, onToggleMaximize }: {
           </span>
         ))}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 16, fontSize: 10, color: C.textDim }}>
-          <span style={{ color: '#00d07a' }}>▲ Entry</span>
-          <span style={{ color: '#ff4757' }}>▼ Exit</span>
-          <span style={{ color: '#ff475788' }}>— — SL</span>
-          <span style={{ color: '#00d07a88' }}>— — TP</span>
+          <span style={{ color: C.green }}>▲ Entry</span>
+          <span style={{ color: C.red }}>▼ Exit</span>
+          <span style={{ color: C.red88 }}>— — SL</span>
+          <span style={{ color: C.green88 }}>— — TP</span>
         </span>
       </div>
     </div>

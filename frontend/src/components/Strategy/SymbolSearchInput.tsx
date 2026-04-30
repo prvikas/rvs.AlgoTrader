@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { instrumentsApi, Instrument } from '../../api/client'
+import { C } from '../../styles/tokens'
 
 interface Props {
   value: string
@@ -70,10 +71,10 @@ export function SymbolSearchInput({ value, onChange, placeholder = 'e.g. NSE:BAN
   const inputStyle: React.CSSProperties = {
     width: '100%',
     padding: '8px 10px',
-    background: '#0f0f1a',
-    border: `1px solid ${selected ? '#22c55e' : '#2d2d3f'}`,
+    background: C.bg,
+    border: `1px solid ${selected ? C.green : C.border2}`,
     borderRadius: 6,
-    color: '#e2e8f0',
+    color: C.text,
     fontSize: 13,
     boxSizing: 'border-box',
   }
@@ -92,12 +93,12 @@ export function SymbolSearchInput({ value, onChange, placeholder = 'e.g. NSE:BAN
           autoComplete="off"
         />
         {loading && (
-          <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: '#64748b' }}>
+          <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 11, color: C.textMuted }}>
             ⟳
           </span>
         )}
         {selected && !loading && (
-          <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#22c55e', fontSize: 13 }}>
+          <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: C.green, fontSize: 13 }}>
             ✓
           </span>
         )}
@@ -110,8 +111,8 @@ export function SymbolSearchInput({ value, onChange, placeholder = 'e.g. NSE:BAN
           top: '100%',
           left: 0,
           right: 0,
-          background: '#1e1e2e',
-          border: '1px solid #3b82f6',
+          background: C.surface,
+          border: `1px solid ${C.blue}`,
           borderRadius: 6,
           maxHeight: 220,
           overflowY: 'auto',
@@ -125,24 +126,24 @@ export function SymbolSearchInput({ value, onChange, placeholder = 'e.g. NSE:BAN
               style={{
                 padding: '8px 12px',
                 cursor: 'pointer',
-                borderBottom: '1px solid #2d2d3f',
+                borderBottom: `1px solid ${C.border2}`,
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#2d2d4f')}
+              onMouseEnter={e => (e.currentTarget.style.background = C.surface3)}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
               <div>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#93c5fd' }}>{inst.tradingSymbol}</span>
-                <span style={{ fontSize: 11, color: '#64748b', marginLeft: 8 }}>{inst.internalSymbol}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: C.textSub }}>{inst.tradingSymbol}</span>
+                <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{inst.internalSymbol}</span>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#1e3a5f', color: '#60a5fa' }}>
+                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: C.blueBg, color: C.blue }}>
                   {inst.exchange}
                 </span>
                 {inst.instrumentType && (
-                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#1e3355', color: '#818cf8' }}>
+                  <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: C.surface3, color: C.textSub }}>
                     {inst.instrumentType}
                   </span>
                 )}
@@ -155,8 +156,8 @@ export function SymbolSearchInput({ value, onChange, placeholder = 'e.g. NSE:BAN
       {open && results.length === 0 && !loading && query.length >= 2 && (
         <div style={{
           position: 'absolute', zIndex: 200, top: '100%', left: 0, right: 0,
-          background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 6,
-          padding: '10px 12px', fontSize: 12, color: '#64748b', marginTop: 2,
+          background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 6,
+          padding: '10px 12px', fontSize: 12, color: C.textMuted, marginTop: 2,
         }}>
           No instruments found for "{query}" — try a shorter query or refresh master data.
         </div>

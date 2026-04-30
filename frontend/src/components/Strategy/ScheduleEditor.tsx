@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { C } from '../../styles/tokens'
 
 /** Mirrors schedule_json DB column — CLAUDE.md Rule #15 (IST only for trading schedule). */
 export interface ScheduleConfig {
@@ -33,17 +34,17 @@ interface Props {
 
 const inp: React.CSSProperties = {
   padding: '6px 10px',
-  background: '#0f0f1a',
-  border: '1px solid #2d2d3f',
+  background: 'var(--c-bg)',
+  border: `1px solid var(--c-border)`,
   borderRadius: 6,
-  color: '#e2e8f0',
+  color: 'var(--c-text)',
   fontSize: 13,
 }
 
 const label12: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#94a3b8',
+  color: 'var(--c-textSub)',
   display: 'block',
   marginBottom: 6,
 }
@@ -102,16 +103,16 @@ export function ScheduleEditor({ value, onChange }: Props) {
 
   return (
     <div style={{
-      background: '#161628',
-      border: '1px solid #2d2d3f',
+      background: C.surface2,
+      border: `1px solid ${C.border}`,
       borderRadius: 8,
       padding: 16,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <h4 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#93c5fd' }}>
+        <h4 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.textSub }}>
           Trading Schedule
         </h4>
-        <span style={{ fontSize: 11, color: '#64748b' }}>All times in IST (Asia/Kolkata)</span>
+        <span style={{ fontSize: 11, color: C.textMuted }}>All times in IST (Asia/Kolkata)</span>
       </div>
 
       {/* Days of week */}
@@ -136,11 +137,11 @@ export function ScheduleEditor({ value, onChange }: Props) {
                   cursor: 'pointer',
                   transition: 'all 0.15s',
                   outline: 'none',
-                  borderColor: active ? '#3b82f6' : '#2d2d3f',
-                  background: active ? '#1e3a5f' : '#0f0f1a',
-                  color: active ? '#93c5fd' : '#475569',
+                  borderColor: active ? C.blue : C.border,
+                  background: active ? C.blueBg : 'var(--c-bg)',
+                  color: active ? C.textSub : C.textSub,
                 }}
-                onFocus={e => (e.currentTarget.style.boxShadow = '0 0 0 2px #3b82f660')}
+                onFocus={e => (e.currentTarget.style.boxShadow = `0 0 0 2px ${C.blue66}`)}
                 onBlur={e => (e.currentTarget.style.boxShadow = '')}
               >
                 {DAY_LABELS[day]}
@@ -161,7 +162,7 @@ export function ScheduleEditor({ value, onChange }: Props) {
             onChange={e => update({ session_start: e.target.value })}
             style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
           />
-          <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
+          <span style={{ fontSize: 11, color: C.textMuted, marginTop: 4, display: 'block' }}>
             {istToLocal(cfg.session_start)} {localTz}
           </span>
         </div>
@@ -174,7 +175,7 @@ export function ScheduleEditor({ value, onChange }: Props) {
             onChange={e => update({ session_stop: e.target.value })}
             style={{ ...inp, width: '100%', boxSizing: 'border-box' }}
           />
-          <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
+          <span style={{ fontSize: 11, color: C.textMuted, marginTop: 4, display: 'block' }}>
             {istToLocal(cfg.session_stop)} {localTz}
           </span>
         </div>
@@ -187,14 +188,14 @@ export function ScheduleEditor({ value, onChange }: Props) {
           hint={`Closes all open trades automatically at ${cfg.session_stop} IST`}
           checked={cfg.force_exit_on_session_end}
           onChange={v => update({ force_exit_on_session_end: v })}
-          accent="#f87171"
+          accent={C.red}
         />
         <ToggleRow
           label="Auto-resume on system restart"
           hint="Off = instance stays paused after restart and needs a manual Start (safer for live trading)"
           checked={cfg.auto_resume_on_restart}
           onChange={v => update({ auto_resume_on_restart: v })}
-          accent="#fbbf24"
+          accent={C.amber}
         />
         <div>
           <label style={label12} htmlFor="missed-session">
@@ -216,13 +217,13 @@ export function ScheduleEditor({ value, onChange }: Props) {
       <div style={{
         marginTop: 14,
         padding: '8px 12px',
-        background: '#0f172a',
+        background: C.surface,
         borderRadius: 6,
         fontSize: 12,
-        color: '#64748b',
+        color: C.textMuted,
         lineHeight: 1.6,
       }}>
-        <strong style={{ color: '#94a3b8' }}>Summary: </strong>
+        <strong style={{ color: C.textSub }}>Summary: </strong>
         {formatDaysSummary(cfg.days)}
         {' · '}
         {cfg.session_start}–{cfg.session_stop} IST
@@ -236,7 +237,7 @@ export function ScheduleEditor({ value, onChange }: Props) {
 }
 
 function ToggleRow({
-  label, hint, checked, onChange, accent = '#3b82f6',
+  label, hint, checked, onChange, accent = C.blue,
 }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void; accent?: string }) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -261,19 +262,19 @@ function ToggleRow({
         }}
         onClick={() => onChange(!checked)}
         onKeyDown={handleKeyDown}
-        onFocus={e => (e.currentTarget.style.boxShadow = '0 0 0 2px #3b82f640')}
+        onFocus={e => (e.currentTarget.style.boxShadow = `0 0 0 2px ${C.blue44}`)}
         onBlur={e => (e.currentTarget.style.boxShadow = '')}
       >
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{label}</div>
-          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{hint}</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{label}</div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{hint}</div>
         </div>
         {/* Toggle pill */}
         <div
           aria-hidden="true"
           style={{
             width: 40, height: 22, borderRadius: 11,
-            background: checked ? accent : '#2d2d3f',
+            background: checked ? accent : C.border,
             position: 'relative',
             transition: 'background 0.2s',
             flexShrink: 0,
@@ -285,7 +286,7 @@ function ToggleRow({
             top: 3, left: checked ? 21 : 3,
             width: 16, height: 16,
             borderRadius: '50%',
-            background: '#fff',
+            background: 'white',
             transition: 'left 0.2s',
             boxShadow: '0 1px 3px rgba(0,0,0,0.4)',
           }} />

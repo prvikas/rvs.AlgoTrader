@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { brokerApi } from '../../api/client'
 import { useFeatures } from '../../context/FeaturesContext'
 import { BrokerLoginModal } from './BrokerLoginModal'
+import { C } from '../../styles/tokens'
 
 const BROKER_API_KEYS: Record<string, string> = {
   MStock: import.meta.env.VITE_MSTOCK_API_KEY ?? '',
@@ -64,7 +65,7 @@ export function BrokerStatusBar() {
   return (
     <>
       <div
-        style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}
+        style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'nowrap' }}
         role="list"
         aria-label="Broker connection status"
       >
@@ -84,10 +85,10 @@ export function BrokerStatusBar() {
                   width: 10,
                   height: 10,
                   borderRadius: '50%',
-                  background: connected ? '#16a34a' : '#6b7280',
+                  background: connected ? C.green : C.textMuted,
                   display: 'inline-block',
                   flexShrink: 0,
-                  boxShadow: connected ? '0 0 0 2px #16a34a30' : 'none',
+                  boxShadow: connected ? `0 0 0 2px ${C.green30}` : 'none',
                 }}
                 aria-hidden="true"
                 title={connected ? `${name}: connected` : `${name}: not connected`}
@@ -95,7 +96,7 @@ export function BrokerStatusBar() {
               <span style={{
                 fontSize: 13,
                 fontWeight: 600,
-                color: connected ? '#e2e8f0' : '#64748b',
+                color: connected ? C.text : C.textMuted,
               }}>
                 {name}
               </span>
@@ -107,9 +108,9 @@ export function BrokerStatusBar() {
                   aria-label={`Logout from ${name}`}
                   style={{
                     ...btnBase,
-                    background: '#27272a',
-                    borderColor: '#3f3f46',
-                    color: '#a1a1aa',
+                    background: C.surface3,
+                    borderColor: C.border2,
+                    color: C.textSub,
                   }}
                   onMouseEnter={e => (e.currentTarget.style.opacity = '0.75')}
                   onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
@@ -123,9 +124,9 @@ export function BrokerStatusBar() {
                   aria-label={`Login to ${name}`}
                   style={{
                     ...btnBase,
-                    background: '#1e3a5f',
-                    borderColor: '#1d4ed8',
-                    color: '#93c5fd',
+                    background: C.blueBg,
+                    borderColor: C.blue,
+                    color: C.textSub,
                   }}
                   onMouseEnter={e => (e.currentTarget.style.opacity = '0.75')}
                   onMouseLeave={e => (e.currentTarget.style.opacity = '1')}

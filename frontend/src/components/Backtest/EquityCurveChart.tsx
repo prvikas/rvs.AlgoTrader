@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { BacktestTradeResult } from '../../api/client'
+import { C, CHART } from '../../styles/tokens'
 import { formatInr } from '../../utils/datetime'
 import { formatInTimeZone } from 'date-fns-tz'
 
@@ -22,14 +23,14 @@ interface CurvePoint {
 function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
   if (!active || !payload?.length) return null
   const d = payload[0].payload as CurvePoint
-  const color = d.pnl >= 0 ? '#10b981' : '#ef4444'
+  const color = d.pnl >= 0 ? C.green : C.red
   return (
     <div style={{
-      background: '#1e1e2e', border: '1px solid #2d2d3f',
+      background: CHART.tooltip.bg, border: `1px solid ${CHART.tooltip.border}`,
       borderRadius: 6, padding: '8px 12px', fontSize: 12,
     }}>
-      <div style={{ color: '#8b8b9f', marginBottom: 4 }}>{d.label}</div>
-      <div style={{ color: '#e2e8f0', fontWeight: 700 }}>Equity: {formatInr(d.equity)}</div>
+      <div style={{ color: C.textMuted, marginBottom: 4 }}>{d.label}</div>
+      <div style={{ color: C.text, fontWeight: 700 }}>Equity: {formatInr(d.equity)}</div>
       <div style={{ color, fontWeight: 600 }}>P&amp;L: {d.pnl >= 0 ? '+' : ''}{formatInr(d.pnl)}</div>
     </div>
   )
@@ -60,36 +61,36 @@ export function EquityCurveChart({ trades, initialCapital }: Props) {
         <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
           <defs>
             <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor="#3b82f6" stopOpacity={0.25} />
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.02} />
+              <stop offset="5%"  stopColor={CHART.equityLine} stopOpacity={0.25} />
+              <stop offset="95%" stopColor={CHART.equityLine} stopOpacity={0.02} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2d2d3f" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fill: '#64748b', fontSize: 10 }}
+            tick={{ fill: CHART.axisText, fontSize: 10 }}
             tickLine={false}
             axisLine={false}
             interval="preserveStartEnd"
           />
           <YAxis
             domain={[minEquity - padding, maxEquity + padding]}
-            tick={{ fill: '#64748b', fontSize: 10 }}
+            tick={{ fill: CHART.axisText, fontSize: 10 }}
             tickLine={false}
             axisLine={false}
             tickFormatter={v => `₹${(v / 1000).toFixed(0)}k`}
             width={52}
           />
           <Tooltip content={<ChartTooltip />} />
-          <ReferenceLine y={initialCapital} stroke="#475569" strokeDasharray="4 2" />
+          <ReferenceLine y={initialCapital} stroke={CHART.refLine} strokeDasharray="4 2" />
           <Area
             type="monotone"
             dataKey="equity"
-            stroke="#3b82f6"
+            stroke={CHART.equityLine}
             strokeWidth={2}
             fill="url(#equityGrad)"
             dot={false}
-            activeDot={{ r: 4, fill: '#3b82f6' }}
+            activeDot={{ r: 4, fill: CHART.equityLine }}
           />
         </AreaChart>
       </ResponsiveContainer>

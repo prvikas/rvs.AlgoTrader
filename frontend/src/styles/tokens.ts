@@ -88,3 +88,58 @@ export const TABLE_HEADER_CELL = '6px 10px'
 export const CARD_PAD          = '10px 14px'
 export const CONTENT_PAD       = '12px 16px'
 export const NAV_HEIGHT        = 36
+
+// ── Brand / vendor colors (AP-020 exempt) ────────────────────────────────────
+// These hex values intentionally stay as literals — they represent external
+// brand identities (OAuth providers, brokers) that must not shift with theme.
+export const BRAND = {
+  // OAuth provider styles (must match official brand guidelines)
+  google:    { bg: '#fff',    text: '#3c4043', border: '#dadce0' },
+  microsoft: { bg: '#2f2f2f', text: '#fff',    border: '#444'    },
+  apple:     { bg: '#000',    text: '#fff',    border: '#333'    },
+  // Broker accent colors (login modal borders / glows)
+  mstock:  '#f59e0b',  // amber — intentionally brand-specific
+  zerodha: '#e11d48',  // rose-red (Zerodha brand)
+  upstox:  '#7c3aed',  // violet  (Upstox brand)
+} as const
+
+// ── Chart color palette (AP-020) ──────────────────────────────────────────────
+// All chart lines/fills reference these tokens so ThemeContext can adapt them.
+// CSS custom properties work in SVG (Recharts, Recharts SVG, lightweight-charts).
+export const CHART = {
+  // EMA / SMA indicator lines
+  ema5:        'var(--c-amber)',      // short EMAs → amber
+  ema9:        'var(--c-amber)',
+  ema20:       'var(--c-blue)',       // medium EMAs → blue
+  ema21:       'var(--c-blue)',
+  ema50:       '#8b5cf6',             // mid-term → purple (no theme token yet)
+  ema200:      '#ec4899',             // long-term → pink (no theme token yet)
+  sma20:       'var(--c-blue)',
+  sma50:       '#8b5cf6',
+  // P&L / equity
+  equityLine:  'var(--c-blue)',
+  profit:      'var(--c-green)',
+  loss:        'var(--c-red)',
+  // Chart chrome
+  grid:        'var(--c-border)',
+  axisText:    'var(--c-textMuted)',
+  refLine:     'var(--c-border3)',
+  tooltip:     { bg: 'var(--c-surface)', border: 'var(--c-border)' },
+  // Candlestick
+  bullCandle:  'var(--c-green)',
+  bearCandle:  'var(--c-red)',
+  // Misc indicator lines
+  bbUpper:     'var(--c-blue)',
+  bbLower:     'var(--c-blue)',
+  bbMid:       'var(--c-blue)',
+  vwap:        'var(--c-amber)',
+  volume:      'var(--c-border3)',
+  // Chart-specific extra colors (no semantic CSS var yet — chart-only use)
+  violet:    '#8b5cf6',   // purple/violet series
+  violetBg:  '#8b5cf611', // 7% opacity violet background
+  pink:      '#f472b6',   // pink series
+  // Fallback palette for dynamic indicator series (up to 5)
+  palette: ['#e879f9', '#38bdf8', '#fb923c', '#a3e635', '#f472b6'] as string[],
+  // Comparison series colors: first 3 semantic, then chart-specific extras
+  series: ['var(--c-blue)', 'var(--c-green)', 'var(--c-amber)', '#8b5cf6', '#f97316'] as string[],
+} as const

@@ -7,12 +7,12 @@ import ScenariosPanel from './ScenariosPanel'
 import { PayoffChart, buildPayoffData, SpreadType as PayoffSpreadType } from './PayoffChart'
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
-  Draft:     { bg: '#1e293b', text: C.textSub,  dot: C.textSub  },
-  Running:   { bg: '#14532d', text: '#86efac',   dot: '#16a34a'  },
-  Paused:    { bg: '#422006', text: '#fde68a',   dot: C.amber    },
-  Stopped:   { bg: '#1c1c1c', text: '#6b7280',   dot: '#6b7280'  },
-  Scheduled: { bg: '#1e3a5f', text: '#93c5fd',   dot: C.blue     },
-  Error:     { bg: '#450a0a', text: '#fca5a5',   dot: '#dc2626'  },
+  Draft:     { bg: C.surface3, text: C.textSub,  dot: C.textSub  },
+  Running:   { bg: C.greenBg,  text: C.green,    dot: C.green    },
+  Paused:    { bg: C.amberBg,  text: C.amber,    dot: C.amber    },
+  Stopped:   { bg: C.surface,  text: C.textMuted, dot: C.textMuted },
+  Scheduled: { bg: C.blueBg,   text: C.textSub,  dot: C.blue     },
+  Error:     { bg: C.redBg,    text: C.red,      dot: C.red      },
 }
 
 interface Props {
@@ -59,7 +59,7 @@ function ActionButton({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        background: disabled ? '#374151' : hovered ? `${color}cc` : color,
+        background: disabled ? C.surface3 : hovered ? `${color}cc` : color,
         color: 'white', border: 'none', borderRadius: 5,
         padding: '6px 14px', cursor: disabled ? 'not-allowed' : 'pointer',
         fontSize: 12, fontWeight: 700, transition: 'background 0.15s, transform 0.1s',
@@ -74,14 +74,15 @@ function ActionButton({
 }
 
 function SmallButton({
-  onClick, color, bg, children, title,
-}: { onClick: () => void; color: string; bg: string; children: React.ReactNode; title?: string }) {
+  onClick, color, bg, children, title, borderColor,
+}: { onClick: () => void; color: string; bg: string; children: React.ReactNode; title?: string; borderColor?: string }) {
   return (
     <button
       onClick={onClick}
       title={title}
       style={{
-        padding: '4px 10px', background: bg, color, border: `1px solid ${color}44`,
+        padding: '4px 10px', background: bg, color,
+        border: `1px solid ${borderColor ?? `${color}44`}`,
         borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700,
       }}
     >
@@ -184,13 +185,13 @@ function EditDrawer({ instance, onClose }: { instance: StrategyInstance; onClose
         </div>
 
         {instance.status === 'Running' && (
-          <div style={{ background: C.amberBg, border: `1px solid ${C.amber44}`, borderRadius: 4, padding: '8px 12px', fontSize: 11, color: '#fde68a' }}>
+          <div style={{ background: C.amberBg, border: `1px solid ${C.amber44}`, borderRadius: 4, padding: '8px 12px', fontSize: 11, color: C.amber }}>
             Stop or pause the strategy before editing.
           </div>
         )}
 
         {errorMsg && (
-          <div style={{ background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 4, padding: '8px 12px', fontSize: 12, color: '#fca5a5' }}>
+          <div style={{ background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 4, padding: '8px 12px', fontSize: 12, color: C.red }}>
             {errorMsg}
           </div>
         )}
@@ -266,7 +267,7 @@ function EditDrawer({ instance, onClose }: { instance: StrategyInstance; onClose
             onClick={() => updateMutation.mutate()}
             disabled={updateMutation.isPending || instance.status === 'Running'}
             style={{
-              flex: 1, padding: '8px', background: C.blue, color: '#fff',
+              flex: 1, padding: '8px', background: C.blue, color: 'white',
               border: 'none', borderRadius: 4, cursor: updateMutation.isPending || instance.status === 'Running' ? 'not-allowed' : 'pointer',
               fontSize: 12, fontWeight: 700, opacity: updateMutation.isPending || instance.status === 'Running' ? 0.6 : 1,
             }}
@@ -295,13 +296,13 @@ function LiveConfirmModal({
         backgroundColor: C.surface, border: `2px solid ${C.red}`, borderRadius: 10,
         padding: 28, maxWidth: 440, width: '90%',
       }}>
-        <h3 style={{ color: '#fca5a5', fontSize: 18, fontWeight: 700, marginTop: 0, marginBottom: 8 }}>
+        <h3 style={{ color: C.red, fontSize: 18, fontWeight: 700, marginTop: 0, marginBottom: 8 }}>
           Start Live Trading
         </h3>
         <p style={{ color: C.text, fontSize: 14, lineHeight: 1.6, marginBottom: 8 }}>
           You are about to start <strong>{instance.name}</strong> in <strong>Live mode</strong>.
         </p>
-        <p style={{ color: '#fca5a5', fontSize: 13, lineHeight: 1.6, marginBottom: 20 }}>
+        <p style={{ color: C.red, fontSize: 13, lineHeight: 1.6, marginBottom: 20 }}>
           This will place <strong>real orders</strong> on <strong>{instance.brokerName}</strong> using up to{' '}
           <strong>{formatInr(instance.allocatedCapital ?? 0)}</strong> of capital. Losses are real.
         </p>
@@ -315,7 +316,7 @@ function LiveConfirmModal({
           <button
             onClick={onConfirm}
             disabled={isPending}
-            style={{ padding: '8px 18px', background: C.red, color: '#fff', border: 'none', borderRadius: 6, cursor: isPending ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 700 }}
+            style={{ padding: '8px 18px', background: C.red, color: 'white', border: 'none', borderRadius: 6, cursor: isPending ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 700 }}
           >
             {isPending ? 'Starting…' : 'Yes, Start Live'}
           </button>
@@ -383,8 +384,8 @@ function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onC
 
         {/* Current status */}
         {activeApproval ? (
-          <div style={{ background: '#14532d', border: `1px solid #16a34a44`, borderRadius: 6, padding: '10px 14px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#86efac', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+          <div style={{ background: C.greenBg, border: `1px solid ${C.green44}`, borderRadius: 6, padding: '10px 14px' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.green, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
               Active Approval
             </div>
             <div style={{ fontSize: 12, color: C.text }}>
@@ -396,7 +397,7 @@ function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onC
             )}
           </div>
         ) : (
-          <div style={{ background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 6, padding: '10px 14px', fontSize: 12, color: '#fca5a5' }}>
+          <div style={{ background: C.redBg, border: `1px solid ${C.red44}`, borderRadius: 6, padding: '10px 14px', fontSize: 12, color: C.red }}>
             No active approval. This strategy will NOT place real orders until approved.
           </div>
         )}
@@ -450,7 +451,7 @@ function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onC
               onClick={() => revokeMutation.mutate()}
               disabled={revokeMutation.isPending || !revokeReason.trim()}
               style={{
-                padding: '9px', background: C.red, color: '#fff',
+                padding: '9px', background: C.red, color: 'white',
                 border: 'none', borderRadius: 4, cursor: revokeMutation.isPending || !revokeReason.trim() ? 'not-allowed' : 'pointer',
                 fontSize: 12, fontWeight: 700, opacity: !revokeReason.trim() ? 0.5 : 1,
               }}
@@ -474,7 +475,7 @@ function ApprovalDrawer({ instance, onClose }: { instance: StrategyInstance; onC
               onClick={() => approveMutation.mutate()}
               disabled={approveMutation.isPending}
               style={{
-                padding: '9px', background: C.green, color: '#fff',
+                padding: '9px', background: C.green, color: 'white',
                 border: 'none', borderRadius: 4, cursor: approveMutation.isPending ? 'not-allowed' : 'pointer',
                 fontSize: 12, fontWeight: 700,
               }}
@@ -595,21 +596,21 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
             <span style={{ fontSize: 11, color: C.amber, fontWeight: 600 }}>LIVE — Real money orders</span>
             <span style={{
               fontSize: 10, fontWeight: 700, borderRadius: 3, padding: '2px 7px',
-              background: approvalStatus ? '#14532d' : C.redBg,
-              color: approvalStatus ? '#86efac' : C.red,
-              border: `1px solid ${approvalStatus ? '#16a34a44' : C.red44}`,
+              background: approvalStatus ? C.greenBg : C.redBg,
+              color: approvalStatus ? C.green : C.red,
+              border: `1px solid ${approvalStatus ? C.green44 : C.red44}`,
             }}>
               {approvalStatus ? 'APPROVED' : 'NO APPROVAL'}
             </span>
           </div>
         )}
         {isForward && (
-          <div style={{ background: C.blueBg, borderRadius: 4, padding: '4px 10px', fontSize: 11, color: '#93c5fd', fontWeight: 600 }}>
+          <div style={{ background: C.blueBg, borderRadius: 4, padding: '4px 10px', fontSize: 11, color: C.textSub, fontWeight: 600 }}>
             FORWARD TEST — Paper trading
           </div>
         )}
         {isBacktest && (
-          <div style={{ background: C.amberBg, borderRadius: 4, padding: '4px 10px', fontSize: 11, color: '#fde68a', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ background: C.amberBg, borderRadius: 4, padding: '4px 10px', fontSize: 11, color: C.amber, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <span>STEP 1 — Run backtest</span>
             <span style={{ color: C.textSub, fontWeight: 400 }}>→</span>
             <span style={{ color: C.textSub, fontWeight: 400 }}>STEP 2 — Promote to Forward Test</span>
@@ -718,7 +719,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
               <ActionButton
                 onClick={() => isLive ? setLiveConfirmOpen(true) : startMutation.mutate()}
                 disabled={startMutation.isPending || !hasScenarios}
-                color={isLive ? '#dc2626' : '#16a34a'}
+                color={isLive ? C.red : C.green}
                 ariaLabel={`Start strategy ${instance.name}`}
               >
                 {startMutation.isPending ? 'Starting…' : '▶ Start'}
@@ -729,7 +730,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
             <ActionButton
               onClick={() => pauseMutation.mutate()}
               disabled={pauseMutation.isPending}
-              color="#d97706"
+              color={C.amber}
               ariaLabel={`Pause strategy ${instance.name}`}
             >
               {pauseMutation.isPending ? 'Pausing…' : '⏸ Pause'}
@@ -739,7 +740,7 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
             <ActionButton
               onClick={() => stopMutation.mutate()}
               disabled={stopMutation.isPending}
-              color="#dc2626"
+              color={C.red}
               ariaLabel={`Stop strategy ${instance.name}`}
             >
               {stopMutation.isPending ? 'Stopping…' : '■ Stop'}
@@ -774,8 +775,9 @@ export function StrategyCard({ instance, onPromoteToForward, onScenarioJobStarte
           {isLive && (
             <SmallButton
               onClick={() => setApprovalOpen(true)}
-              color={approvalStatus ? '#86efac' : C.red}
-              bg={approvalStatus ? '#14532d' : C.redBg}
+              color={approvalStatus ? C.green : C.red}
+              bg={approvalStatus ? C.greenBg : C.redBg}
+              borderColor={approvalStatus ? C.green44 : C.red44}
               title={approvalStatus ? 'View or revoke live-trading approval' : 'Approve this strategy for live trading'}
             >
               {approvalStatus ? 'Approved' : 'Approve'}

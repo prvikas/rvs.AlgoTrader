@@ -198,7 +198,7 @@ export default function ScenariosPanel({
           <button key={v} onClick={() => setView(v as 'list' | 'compare')} style={{
             padding: '4px 12px', borderRadius: 5, fontSize: 12, cursor: 'pointer',
             background: view === v ? C.blue : C.surface2,
-            color: view === v ? '#fff' : C.textSub,
+            color: view === v ? 'white' : C.textSub,
             border: `1px solid ${view === v ? C.blue : C.border}`,
           }}>
             {v === 'list' ? 'Scenarios' : 'Compare'}
@@ -206,7 +206,7 @@ export default function ScenariosPanel({
         ))}
         <button onClick={() => { setEditingScenario(undefined); setDrawerOpen(true) }} style={{
           padding: '4px 14px', background: C.green, border: 'none',
-          borderRadius: 5, color: '#000', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+          borderRadius: 5, color: 'black', fontSize: 12, fontWeight: 600, cursor: 'pointer',
         }}>
           + New Scenario
         </button>
@@ -260,7 +260,7 @@ export default function ScenariosPanel({
                 disabled={!canRun || runMut.isPending || Object.keys(runningJobs).length > 0}
                 style={{
                   padding: '5px 16px', background: C.blue, border: 'none', borderRadius: 5,
-                  color: '#fff', fontSize: 12, fontWeight: 600,
+                  color: 'white', fontSize: 12, fontWeight: 600,
                   cursor: !canRun || runMut.isPending ? 'not-allowed' : 'pointer',
                   opacity: !canRun || runMut.isPending ? 0.5 : 1,
                 }}
@@ -274,7 +274,7 @@ export default function ScenariosPanel({
             disabled={!canRun || runMut.isPending || Object.keys(runningJobs).length > 0}
             style={{
               padding: '5px 16px', background: C.blue, border: 'none', borderRadius: 5,
-              color: '#fff', fontSize: 12, fontWeight: 600,
+              color: 'white', fontSize: 12, fontWeight: 600,
               cursor: !canRun || runMut.isPending ? 'not-allowed' : 'pointer',
               opacity: !canRun || runMut.isPending ? 0.5 : 1,
             }}

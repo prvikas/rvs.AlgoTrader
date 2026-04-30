@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { instrumentsApi, historicalApi, dataManagerApi, brokerApi, DataQualityReport, Instrument } from '../api/client'
+import { C, CHART } from '../styles/tokens'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -23,10 +24,10 @@ const PAGE_SIZE = 50
 
 const inp: React.CSSProperties = {
   padding: '7px 10px',
-  background: '#0f0f1a',
-  border: '1px solid #2d2d3f',
+  background: C.bg,
+  border: `1px solid ${C.border2}`,
   borderRadius: 6,
-  color: '#e2e8f0',
+  color: C.text,
   fontSize: 13,
 }
 
@@ -156,9 +157,6 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
   const totalPages     = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
   // ── Duplicate detection + merge (same tradingSymbol+exchange from multiple broker refreshes) ──
-  // Different brokers assign different internal codes to the same underlying script.
-  // When mergeDuplicates=true (default) combine all broker tokens onto one row so the user
-  // sees a single entry with all broker availability dots populated correctly.
   const tradingSymbolCounts: Record<string, number> = {}
   for (const inst of rawInstruments) {
     const key = `${inst.exchange}:${inst.tradingSymbol}`
@@ -168,8 +166,6 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
 
   const instruments: Instrument[] = mergeDuplicates
     ? (() => {
-        // Merge: group by tradingSymbol+exchange, union all brokerTokens.
-        // Prefer the MStock row as the "primary" (for internalSymbol display), then Zerodha, then first seen.
         const groups = new Map<string, Instrument[]>()
         for (const inst of rawInstruments) {
           const key = `${inst.exchange}:${inst.tradingSymbol}`
@@ -178,12 +174,10 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
           groups.set(key, g)
         }
         return Array.from(groups.values()).map(rows => {
-          // Pick primary row: prefer MStock, else Zerodha, else first
           const primary =
             rows.find(r => 'MStock'  in r.brokerTokens) ??
             rows.find(r => 'Zerodha' in r.brokerTokens) ??
             rows[0]
-          // Merge all broker tokens into the primary
           const mergedTokens = Object.assign({}, ...rows.map(r => r.brokerTokens))
           return { ...primary, brokerTokens: mergedTokens }
         })
@@ -191,7 +185,6 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
     : rawInstruments
 
   // ── Sync connected broker into modal default when modal opens ────────────
-  // (runs whenever downloadTarget changes from null → instrument)
   useEffect(() => {
     if (downloadTarget) {
       setDownloadForm(f => ({ ...f, brokerName: connectedBroker }))
@@ -236,10 +229,10 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Instruments</h2>
-          <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 0 0' }}>
+          <p style={{ fontSize: 12, color: C.textMuted, margin: '4px 0 0 0' }}>
             Unified symbol master — NSE, BSE, NFO, BFO, CDS, MCX.
             {totalCount > 0 && (
-              <> <strong style={{ color: '#60a5fa' }}>{totalCount.toLocaleString()} symbols</strong> match current filters.</>
+              <> <strong style={{ color: C.blue }}>{totalCount.toLocaleString()} symbols</strong> match current filters.</>
             )}
           </p>
         </div>
@@ -248,8 +241,8 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
           onClick={onGoToRefresh}
           style={{
             padding: '8px 18px',
-            background: '#6366f1',
-            color: '#fff', border: 'none', borderRadius: 6,
+            background: C.blue,
+            color: 'white', border: 'none', borderRadius: 6,
             fontSize: 13, fontWeight: 600,
             cursor: 'pointer',
             display: 'flex', alignItems: 'center', gap: 7,
@@ -261,7 +254,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
 
       {/* ── Filter bar ───────────────────────────────────────────────────────── */}
       <div style={{
-        background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8,
+        background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 8,
         padding: '12px 16px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center',
       }}>
         <input
@@ -281,7 +274,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
           {INSTRUMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#94a3b8', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.textSub, cursor: 'pointer', whiteSpace: 'nowrap' }}>
           <input type="checkbox" checked={activeOnly} onChange={e => changeActiveOnly(e.target.checked)} />
           Active only
         </label>
@@ -298,9 +291,9 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
             />
             <span style={{
               padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-              background: mergeDuplicates ? '#14532d22' : '#7c2d1222',
-              color: mergeDuplicates ? '#10b981' : '#f97316',
-              border: `1px solid ${mergeDuplicates ? '#14532d44' : '#7c2d1244'}`,
+              background: mergeDuplicates ? C.green18 : C.amberBg,
+              color: mergeDuplicates ? C.green : C.amber,
+              border: `1px solid ${mergeDuplicates ? C.green44 : C.amber44}`,
             }}>
               {mergeDuplicates
                 ? `✓ ${duplicateGroupCount} scripts merged (multi-broker)`
@@ -310,24 +303,24 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
         )}
 
         {!isLoading && totalCount > 0 && (
-          <span style={{ fontSize: 12, color: '#475569', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
+          <span style={{ fontSize: 12, color: C.textMuted, whiteSpace: 'nowrap', marginLeft: 'auto' }}>
             {instruments.length.toLocaleString()} of {totalCount.toLocaleString()} shown
             {mergeDuplicates && instruments.length < rawInstruments.length && (
-              <span style={{ color: '#10b981' }}> ({rawInstruments.length - instruments.length} merged)</span>
+              <span style={{ color: C.green }}> ({rawInstruments.length - instruments.length} merged)</span>
             )}
           </span>
         )}
       </div>
 
       {/* ── Instruments table ─────────────────────────────────────────────────── */}
-      <div style={{ background: '#1e1e2e', border: '1px solid #2d2d3f', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 8, overflow: 'hidden' }}>
 
         {/* Sortable header */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: gridCols,
-          background: '#161628',
-          borderBottom: '1px solid #2d2d3f',
+          background: C.surface2,
+          borderBottom: `1px solid ${C.border2}`,
           padding: '8px 16px',
         }}>
           {COLUMNS.map(col => (
@@ -337,7 +330,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
               disabled={!col.sortKey}
               style={{
                 background: 'none', border: 'none', padding: 0,
-                fontSize: 11, fontWeight: 700, color: sortBy === col.sortKey ? '#818cf8' : '#64748b',
+                fontSize: 11, fontWeight: 700, color: sortBy === col.sortKey ? C.textSub : C.textMuted,
                 textTransform: 'uppercase', letterSpacing: '0.05em',
                 cursor: col.sortKey ? 'pointer' : 'default',
                 textAlign: 'left', display: 'flex', alignItems: 'center', gap: 4,
@@ -355,16 +348,16 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
 
         {/* Loading overlay — show spinner row when fetching */}
         {(isLoading || isFetching) && instruments.length === 0 && (
-          <div style={{ padding: 32, textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+          <div style={{ padding: 32, textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
             <SpinIcon /> Loading instruments…
           </div>
         )}
 
         {/* Empty state */}
         {!isLoading && !isFetching && instruments.length === 0 && (
-          <div style={{ padding: 32, textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+          <div style={{ padding: 32, textAlign: 'center', color: C.textMuted, fontSize: 13 }}>
             {totalCount === 0
-              ? <>No instruments found. Click <strong style={{ color: '#e2e8f0' }}>↻ Refresh Master Data</strong> to download from your brokers.</>
+              ? <>No instruments found. Click <strong style={{ color: C.text }}>↻ Refresh Master Data</strong> to download from your brokers.</>
               : 'No instruments match the current filters.'}
           </div>
         )}
@@ -396,16 +389,16 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
           {/* Page number pills */}
           {pageRange(page, totalPages).map((p, i) =>
             p === '…' ? (
-              <span key={`ellipsis-${i}`} style={{ color: '#4b5563', fontSize: 12, padding: '0 4px' }}>…</span>
+              <span key={`ellipsis-${i}`} style={{ color: C.textMuted, fontSize: 12, padding: '0 4px' }}>…</span>
             ) : (
               <button
                 key={p}
                 onClick={() => setPage(Number(p))}
                 style={{
                   padding: '5px 10px', borderRadius: 6,
-                  border: `1px solid ${p === page ? '#6366f1' : '#2d2d3f'}`,
-                  background: p === page ? '#312e81' : '#1a1a2e',
-                  color: p === page ? '#a5b4fc' : '#64748b',
+                  border: `1px solid ${p === page ? C.blue : C.border2}`,
+                  background: p === page ? C.blueBg : C.surface,
+                  color: p === page ? C.textSub : C.textMuted,
                   fontSize: 12, cursor: 'pointer',
                 }}
               >
@@ -421,7 +414,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
             »
           </button>
 
-          <span style={{ fontSize: 12, color: '#475569', marginLeft: 4 }}>
+          <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 4 }}>
             {((page - 1) * PAGE_SIZE + 1).toLocaleString()}–{Math.min(page * PAGE_SIZE, totalCount).toLocaleString()} of {totalCount.toLocaleString()}
           </span>
         </div>
@@ -434,19 +427,19 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
-            background: '#1e1e2e', border: '1px solid #3b82f6', borderRadius: 10,
+            background: C.surface, border: `1px solid ${C.blue}`, borderRadius: 10,
             padding: 28, width: 420, maxWidth: '95vw',
           }}>
             <h3 style={{ margin: '0 0 4px 0', fontSize: 15, fontWeight: 700 }}>↓ Download Historical Data</h3>
-            <p style={{ fontSize: 12, color: '#64748b', margin: '0 0 20px 0' }}>
+            <p style={{ fontSize: 12, color: C.textMuted, margin: '0 0 20px 0' }}>
               Queues a Hangfire job to fetch candle data from your broker and store in TimescaleDB.
             </p>
 
-            <div style={{ background: '#0f172a', borderRadius: 6, padding: '8px 12px', marginBottom: 16 }}>
-              <span style={{ fontSize: 12, color: '#94a3b8' }}>Instrument: </span>
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#93c5fd' }}>{downloadTarget.internalSymbol}</span>
+            <div style={{ background: C.bg, borderRadius: 6, padding: '8px 12px', marginBottom: 16 }}>
+              <span style={{ fontSize: 12, color: C.textSub }}>Instrument: </span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.textSub }}>{downloadTarget.internalSymbol}</span>
               {downloadTarget.name && (
-                <span style={{ fontSize: 11, color: '#64748b', marginLeft: 8 }}>{downloadTarget.name}</span>
+                <span style={{ fontSize: 11, color: C.textMuted, marginLeft: 8 }}>{downloadTarget.name}</span>
               )}
             </div>
 
@@ -456,7 +449,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>Timeframe</label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textSub, display: 'block', marginBottom: 6 }}>Timeframe</label>
                 <select
                   value={downloadForm.timeframe}
                   onChange={e => setDownloadForm({ ...downloadForm, timeframe: e.target.value })}
@@ -466,10 +459,10 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textSub, display: 'block', marginBottom: 6 }}>
                   Broker
                   {connectedBroker && (
-                    <span style={{ marginLeft: 6, fontSize: 10, color: '#10b981', fontWeight: 400 }}>
+                    <span style={{ marginLeft: 6, fontSize: 10, color: C.green, fontWeight: 400 }}>
                       ● {connectedBroker} connected
                     </span>
                   )}
@@ -494,7 +487,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>From Date</label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textSub, display: 'block', marginBottom: 6 }}>From Date</label>
                 <input
                   type="date"
                   value={downloadForm.fromDate}
@@ -503,7 +496,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
                 />
               </div>
               <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#94a3b8', display: 'block', marginBottom: 6 }}>To Date</label>
+                <label style={{ fontSize: 12, fontWeight: 600, color: C.textSub, display: 'block', marginBottom: 6 }}>To Date</label>
                 <input
                   type="date"
                   value={downloadForm.toDate}
@@ -513,7 +506,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
               </div>
             </div>
 
-            <p style={{ fontSize: 11, color: '#64748b', marginBottom: 16, lineHeight: 1.5 }}>
+            <p style={{ fontSize: 11, color: C.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
               Broker API rate limits apply. The system automatically chunks the date range and
               respects per-broker limits. Large ranges may take a few minutes in the background.
             </p>
@@ -521,7 +514,7 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button
                 onClick={() => { setDownloadTarget(null); setDownloadMsg(null) }}
-                style={{ padding: '8px 16px', background: '#2d2d3f', color: '#e2e8f0', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer' }}
+                style={{ padding: '8px 16px', background: C.surface3, color: C.text, border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer' }}
               >
                 Cancel
               </button>
@@ -530,8 +523,8 @@ export function InstrumentsPage({ onGoToRefresh }: { onGoToRefresh?: () => void 
                 disabled={downloadPending || !downloadForm.fromDate || !downloadForm.toDate || !downloadForm.brokerName}
                 style={{
                   padding: '8px 20px',
-                  background: downloadPending ? '#4b5563' : '#3b82f6',
-                  color: '#fff', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                  background: downloadPending ? C.surface3 : C.blue,
+                  color: 'white', border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600,
                   cursor: downloadPending ? 'not-allowed' : 'pointer',
                 }}
               >
@@ -565,25 +558,25 @@ function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
       display: 'grid',
       gridTemplateColumns: gridCols,
       padding: '5px 16px',
-      borderBottom: '1px solid #1e1e2e',
-      background: even ? '#1a1a2e' : '#1c1c2e',
+      borderBottom: `1px solid ${C.surface}`,
+      background: even ? C.surface : C.surface2,
       alignItems: 'center',
     }}>
       {/* Internal symbol */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', fontFamily: 'monospace' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: 'monospace' }}>
         {inst.internalSymbol}
       </div>
 
       {/* Name */}
       <div
-        style={{ fontSize: 12, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 12, color: C.textSub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         title={inst.name}
       >
         {inst.name || inst.tradingSymbol}
       </div>
 
       {/* Trading symbol */}
-      <div style={{ fontSize: 12, color: '#64748b', fontFamily: 'monospace' }}>{inst.tradingSymbol}</div>
+      <div style={{ fontSize: 12, color: C.textMuted, fontFamily: 'monospace' }}>{inst.tradingSymbol}</div>
 
       {/* Exchange badge */}
       <div>
@@ -596,13 +589,13 @@ function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
       </div>
 
       {/* Instrument type */}
-      <div style={{ fontSize: 11, color: '#818cf8' }}>{inst.instrumentType || '—'}</div>
+      <div style={{ fontSize: 11, color: CHART.violet }}>{inst.instrumentType || '—'}</div>
 
       {/* Broker availability dots */}
       <div style={{ display: 'flex', gap: 4 }}>
-        <BrokerDot label="Z" active={'Zerodha' in inst.brokerTokens} color="#3b82f6" />
-        <BrokerDot label="U" active={'Upstox'  in inst.brokerTokens} color="#f59e0b" />
-        <BrokerDot label="M" active={'MStock'  in inst.brokerTokens} color="#10b981" />
+        <BrokerDot label="Z" active={'Zerodha' in inst.brokerTokens} color={C.blue}  alphaBg={C.blue33}  alphaBorder={C.blue44}  />
+        <BrokerDot label="U" active={'Upstox'  in inst.brokerTokens} color={C.amber} alphaBg={C.amber33} alphaBorder={C.amber44} />
+        <BrokerDot label="M" active={'MStock'  in inst.brokerTokens} color={C.green} alphaBg={C.green33} alphaBorder={C.green44} />
       </div>
 
       {/* Data Through (history downloaded) */}
@@ -610,12 +603,12 @@ function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
         {quality?.hasData ? (
           <span
             title={`${quality.totalCandles.toLocaleString()} candles · ${quality.gapCount} gaps · from ${quality.firstCandle}`}
-            style={{ fontSize: 11, color: '#10b981', fontFamily: 'monospace', cursor: 'help' }}
+            style={{ fontSize: 11, color: C.green, fontFamily: 'monospace', cursor: 'help' }}
           >
             {quality.lastCandle}
           </span>
         ) : (
-          <span style={{ fontSize: 11, color: '#374151' }}>No data</span>
+          <span style={{ fontSize: 11, color: C.textMuted }}>No data</span>
         )}
       </div>
 
@@ -623,8 +616,8 @@ function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
       <div>
         <span style={{
           fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-          background: inst.isActive ? '#14532d' : '#2d1a1a',
-          color: inst.isActive ? '#86efac' : '#fca5a5',
+          background: inst.isActive ? C.greenBg : C.redBg,
+          color: inst.isActive ? C.green : C.red,
         }}>
           {inst.isActive ? 'Active' : 'Inactive'}
         </span>
@@ -636,9 +629,9 @@ function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
           onClick={onDownload}
           style={{
             padding: '4px 10px',
-            background: quality?.hasData ? '#14353a' : '#1e3a5f',
-            color:      quality?.hasData ? '#34d399'  : '#60a5fa',
-            border: `1px solid ${quality?.hasData ? '#1e5a4f' : '#1e4a7f'}`,
+            background: quality?.hasData ? C.greenBg : C.blueBg,
+            color:      quality?.hasData ? C.green   : C.blue,
+            border: `1px solid ${quality?.hasData ? C.green44 : C.blue44}`,
             borderRadius: 4, fontSize: 11,
             fontWeight: 600, cursor: 'pointer',
           }}
@@ -653,16 +646,18 @@ function InstrumentRow({ instrument: inst, even, quality, onDownload }: {
 
 // ─── Broker availability dot ──────────────────────────────────────────────────
 
-function BrokerDot({ label, active, color }: { label: string; active: boolean; color: string }) {
+function BrokerDot({ label, active, color, alphaBg, alphaBorder }: {
+  label: string; active: boolean; color: string; alphaBg: string; alphaBorder: string
+}) {
   return (
     <span
       title={active ? `${label === 'Z' ? 'Zerodha' : label === 'U' ? 'Upstox' : 'MStock'} token available` : 'No token'}
       style={{
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         width: 18, height: 18, borderRadius: '50%', fontSize: 9, fontWeight: 700,
-        background: active ? color + '33' : '#1a1a2e',
-        color: active ? color : '#374151',
-        border: `1px solid ${active ? color + '66' : '#2d2d3f'}`,
+        background: active ? alphaBg : C.surface,
+        color: active ? color : C.textMuted,
+        border: `1px solid ${active ? alphaBorder : C.border2}`,
       }}
     >
       {label}
@@ -674,25 +669,25 @@ function BrokerDot({ label, active, color }: { label: string; active: boolean; c
 
 function exchangeBg(ex: string): string {
   switch (ex?.toUpperCase()) {
-    case 'NSE': return '#0f3460'
-    case 'BSE': return '#1a1a4e'
-    case 'NFO': return '#1e3a2f'
-    case 'BFO': return '#3b1f00'
-    case 'CDS': return '#2d1a40'
-    case 'MCX': return '#3b2200'
-    default:    return '#1e2d3f'
+    case 'NSE': return C.blueBg
+    case 'BSE': return C.blueBg
+    case 'NFO': return C.greenBg
+    case 'BFO': return C.amberBg
+    case 'CDS': return C.surface3
+    case 'MCX': return C.amberBg
+    default:    return C.surface2
   }
 }
 
 function exchangeFg(ex: string): string {
   switch (ex?.toUpperCase()) {
-    case 'NSE': return '#60a5fa'
-    case 'BSE': return '#818cf8'
-    case 'NFO': return '#34d399'
-    case 'BFO': return '#fb923c'
-    case 'CDS': return '#c084fc'
-    case 'MCX': return '#fbbf24'
-    default:    return '#94a3b8'
+    case 'NSE': return C.blue
+    case 'BSE': return CHART.violet
+    case 'NFO': return C.green
+    case 'BFO': return C.amber
+    case 'CDS': return CHART.violet
+    case 'MCX': return C.amber
+    default:    return C.textSub
   }
 }
 
@@ -723,9 +718,9 @@ function Msg({ type, text, onClose }: { type: 'ok' | 'err'; text: string; onClos
   return (
     <div style={{
       padding: '10px 14px', borderRadius: 6, fontSize: 12, lineHeight: 1.5, marginBottom: 8,
-      background: ok ? '#14532d' : '#7f1d1d',
-      border: `1px solid ${ok ? '#16a34a' : '#dc2626'}`,
-      color: ok ? '#86efac' : '#fca5a5',
+      background: ok ? C.greenBg : C.redBg,
+      border: `1px solid ${ok ? C.green : C.red}`,
+      color: ok ? C.green : C.red,
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     }}>
       <span>{ok ? '✓' : '✕'} {text}</span>
@@ -736,9 +731,9 @@ function Msg({ type, text, onClose }: { type: 'ok' | 'err'; text: string; onClos
 
 function pageBtnStyle(enabled: boolean): React.CSSProperties {
   return {
-    padding: '5px 10px', borderRadius: 6, border: '1px solid #2d2d3f',
-    background: enabled ? '#1e3a5f' : '#1a1a2e',
-    color: enabled ? '#93c5fd' : '#4b5563',
+    padding: '5px 10px', borderRadius: 6, border: `1px solid ${C.border2}`,
+    background: enabled ? C.blueBg : C.surface,
+    color: enabled ? C.textSub : C.textMuted,
     fontSize: 12, cursor: enabled ? 'pointer' : 'not-allowed',
   }
 }

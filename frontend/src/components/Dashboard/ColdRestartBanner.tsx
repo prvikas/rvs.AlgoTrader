@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { strategiesApi } from '../../api/client'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { C } from '../../styles/tokens'
 
 interface ColdRestartItem {
   instanceId: string
@@ -32,8 +33,8 @@ export function ColdRestartBanner({ coldRestartPaused }: Props) {
       role="alert"
       aria-live="polite"
       style={{
-        background: '#1e3a5f',
-        borderBottom: '1px solid #1d4ed8',
+        background: C.blueBg,
+        borderBottom: `1px solid ${C.blue44}`,
         padding: '10px 24px',
       }}
     >
@@ -45,10 +46,10 @@ export function ColdRestartBanner({ coldRestartPaused }: Props) {
         marginBottom: 8,
       }}>
         <span style={{ fontSize: 14 }} aria-hidden="true">ℹ️</span>
-        <span style={{ fontWeight: 700, fontSize: 13, color: '#bfdbfe' }}>
+        <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
           System restarted — {visible.length} instance{visible.length !== 1 ? 's' : ''} paused
         </span>
-        <span style={{ fontSize: 12, color: '#60a5fa', fontWeight: 400 }}>
+        <span style={{ fontSize: 12, color: C.textSub, fontWeight: 400 }}>
           (auto-resume was disabled; manual start required)
         </span>
       </div>
@@ -61,8 +62,8 @@ export function ColdRestartBanner({ coldRestartPaused }: Props) {
             <div
               key={p.instanceId}
               style={{
-                background: '#0f2a50',
-                border: '1px solid #1d4ed8',
+                background: C.surface,
+                border: `1px solid ${C.blue}`,
                 borderRadius: 6,
                 padding: '5px 10px',
                 display: 'flex',
@@ -72,7 +73,7 @@ export function ColdRestartBanner({ coldRestartPaused }: Props) {
               }}
             >
               <span style={{
-                color: '#bfdbfe',
+                color: C.text,
                 fontWeight: 600,
                 maxWidth: 180,
                 overflow: 'hidden',
@@ -88,7 +89,7 @@ export function ColdRestartBanner({ coldRestartPaused }: Props) {
                 disabled={isResuming}
                 aria-label={`Start ${p.strategyName}`}
                 style={{
-                  background: isResuming ? '#166534' : '#16a34a',
+                  background: isResuming ? C.greenBg : C.green,
                   color: 'white',
                   border: 'none',
                   borderRadius: 4,
@@ -108,11 +109,11 @@ export function ColdRestartBanner({ coldRestartPaused }: Props) {
                 title="Dismiss"
                 style={{
                   background: 'none',
-                  border: '1px solid #1d4ed8',
+                  border: `1px solid ${C.blue}`,
                   borderRadius: 3,
                   cursor: 'pointer',
                   fontSize: 11,
-                  color: '#60a5fa',
+                  color: C.textSub,
                   padding: '2px 5px',
                   lineHeight: 1,
                   flexShrink: 0,

@@ -45,10 +45,10 @@ function deriveDailyReturns(bt: BacktestResult): number[] {
 
 function corrColor(r: number): string {
   // −1 → red, 0 → neutral surface, +1 → green
-  if (r >= 0.7)  return '#1a1f12'   // high positive — muted green tint
-  if (r >= 0.4)  return '#141a14'
-  if (r <= -0.7) return '#1f1212'   // high negative — muted red tint
-  if (r <= -0.4) return '#1a1414'
+  if (r >= 0.7)  return C.greenBg    // high positive — muted green tint
+  if (r >= 0.4)  return C.greenBg
+  if (r <= -0.7) return C.redBg      // high negative — muted red tint
+  if (r <= -0.4) return C.redBg
   return C.surface2
 }
 
@@ -236,7 +236,7 @@ export function CorrelationPage() {
           style={{
             marginLeft: 'auto', padding: '5px 16px', fontSize: 12, fontWeight: 700,
             background: canRun && !isBusy ? C.blue : C.surface2,
-            color: canRun && !isBusy ? '#fff' : C.textMuted,
+            color: canRun && !isBusy ? 'white' : C.textMuted,
             border: `1px solid ${canRun && !isBusy ? C.blue : C.border}`,
             borderRadius: 6, cursor: canRun && !isBusy ? 'pointer' : 'default',
             transition: 'background 0.1s',

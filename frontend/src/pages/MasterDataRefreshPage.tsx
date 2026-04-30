@@ -7,6 +7,7 @@ import {
   RefreshCommitResult,
   ExchangePreviewGroup,
 } from '../api/client'
+import { C, CHART } from '../styles/tokens'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -16,12 +17,12 @@ type Phase = 'idle' | 'downloading' | 'select' | 'saving' | 'done' | 'error'
 
 const BUCKET_ORDER = ['Equity', 'Index', 'Futures', 'Options', 'Other']
 
-const BUCKET_META: Record<string, { icon: string; desc: string; color: string }> = {
-  Equity:  { icon: '📈', desc: 'Stocks (EQ / STK)', color: '#3b82f6' },
-  Index:   { icon: '🏦', desc: 'Nifty 50, Sensex, VIX, …', color: '#8b5cf6' },
-  Futures: { icon: '📊', desc: 'FUT / FUTIDX / FUTSTK / MCX', color: '#f59e0b' },
-  Options: { icon: '🎯', desc: 'CE / PE options', color: '#10b981' },
-  Other:   { icon: '📦', desc: 'ETF, bonds, other', color: '#6b7280' },
+const BUCKET_META: Record<string, { icon: string; desc: string; color: string; alphaBg: string }> = {
+  Equity:  { icon: '📈', desc: 'Stocks (EQ / STK)',           color: C.blue,        alphaBg: C.blue22      },
+  Index:   { icon: '🏦', desc: 'Nifty 50, Sensex, VIX, …',  color: CHART.violet,  alphaBg: CHART.violetBg },
+  Futures: { icon: '📊', desc: 'FUT / FUTIDX / FUTSTK / MCX', color: C.amber,       alphaBg: C.amber11     },
+  Options: { icon: '🎯', desc: 'CE / PE options',             color: C.green,       alphaBg: C.green18     },
+  Other:   { icon: '📦', desc: 'ETF, bonds, other',           color: C.textMuted,   alphaBg: C.surface3    },
 }
 
 const CATEGORY_META: Record<string, { icon: string; desc: string }> = {
@@ -67,8 +68,6 @@ export function MasterDataRefreshPage() {
     onSuccess: (res) => {
       const p = res.data.data!
       setPreview(p)
-
-      // Default: all exchanges + types + categories selected
       setSelExchanges(new Set(p.exchanges.map(e => e.exchange)))
       setSelTypes(
         new Set(
@@ -157,7 +156,7 @@ export function MasterDataRefreshPage() {
       {phase === 'idle' && (
         <div style={S.card}>
           <h2 style={S.cardTitle}>Choose broker and download</h2>
-          <p style={{ fontSize: 13, color: '#8b8b9f', marginBottom: 20 }}>
+          <p style={{ fontSize: 13, color: C.textSub, marginBottom: 20 }}>
             This will fetch the full scrip master from the selected broker (no data is saved yet).
             You will then choose what to include before anything is written to the database.
           </p>
@@ -178,7 +177,7 @@ export function MasterDataRefreshPage() {
             </button>
           </div>
           {availableBrokers.length === 0 && (
-            <p style={{ marginTop: 12, fontSize: 12, color: '#f59e0b' }}>
+            <p style={{ marginTop: 12, fontSize: 12, color: C.amber }}>
               ⚠ No authenticated brokers found. Log in via the Broker panel first.
             </p>
           )}
@@ -189,10 +188,10 @@ export function MasterDataRefreshPage() {
       {phase === 'downloading' && (
         <div style={{ ...S.card, textAlign: 'center', padding: '48px 32px' }}>
           <div style={S.spinner} />
-          <p style={{ marginTop: 20, color: '#94a3b8', fontSize: 14 }}>
-            Downloading instrument master from <strong style={{ color: '#e2e8f0' }}>{selectedBroker}</strong>…
+          <p style={{ marginTop: 20, color: C.textSub, fontSize: 14 }}>
+            Downloading instrument master from <strong style={{ color: C.text }}>{selectedBroker}</strong>…
           </p>
-          <p style={{ fontSize: 12, color: '#6b7280', marginTop: 8 }}>
+          <p style={{ fontSize: 12, color: C.textMuted, marginTop: 8 }}>
             This usually takes 5–15 seconds. Nothing is saved yet.
           </p>
         </div>
@@ -222,7 +221,8 @@ export function MasterDataRefreshPage() {
                   count={eg.total}
                   active={selExchanges.has(eg.exchange)}
                   onToggle={() => toggle(selExchanges, eg.exchange, setSelExchanges)}
-                  color="#3b82f6"
+                  color={C.blue}
+                  alphaBg={C.blue22}
                 />
               ))}
             </div>
@@ -241,7 +241,7 @@ export function MasterDataRefreshPage() {
                     .filter(e => selExchanges.has(e.exchange))
                     .flatMap(e => e.types.filter(t => t.bucket === bucket))
                     .reduce((s, t) => s + t.count, 0)
-                  const meta = BUCKET_META[bucket] ?? { icon: '📦', desc: bucket, color: '#6b7280' }
+                  const meta = BUCKET_META[bucket] ?? { icon: '📦', desc: bucket, color: C.textMuted, alphaBg: C.surface3 }
                   return (
                     <FilterChip
                       key={bucket}
@@ -251,6 +251,7 @@ export function MasterDataRefreshPage() {
                       active={selTypes.has(bucket)}
                       onToggle={() => toggle(selTypes, bucket, setSelTypes)}
                       color={meta.color}
+                      alphaBg={meta.alphaBg}
                       icon={meta.icon}
                     />
                   )
@@ -266,12 +267,12 @@ export function MasterDataRefreshPage() {
               title="3 · Equity Universe Categories (reference)"
               subtitle="All NSE / BSE equities are saved in passthrough mode — these categories show which symbols are in your trading universe"
             >
-              <p style={{ fontSize: 12, color: '#10b981', marginBottom: 12, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 12, color: C.green, marginBottom: 12, lineHeight: 1.5 }}>
                 ✓ Passthrough mode active — <strong>all equities</strong> from the selected exchanges will be saved regardless of universe membership.
                 The counts below show how many downloaded symbols match each universe category.
               </p>
               {preview.equityCategories.every(c => c.matchCount === 0) ? (
-                <p style={{ fontSize: 13, color: '#f59e0b', lineHeight: 1.5 }}>
+                <p style={{ fontSize: 13, color: C.amber, lineHeight: 1.5 }}>
                   ⚠ No downloaded symbols match any Universe category yet.
                   Go to the <strong>Universe</strong> page to add symbols with their category (Large-cap, Mid-cap, etc.).
                 </p>
@@ -287,7 +288,8 @@ export function MasterDataRefreshPage() {
                         count={cat.matchCount}
                         active
                         onToggle={() => {/* informational only */}}
-                        color="#6366f1"
+                        color={CHART.violet}
+                        alphaBg={CHART.violetBg}
                         icon={meta.icon}
                       />
                     )
@@ -312,7 +314,7 @@ export function MasterDataRefreshPage() {
 
           {/* ── Save bar ── */}
           <div style={S.saveBar}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: '#e2e8f0' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>
               {estimatedCount.toLocaleString()} instruments will be saved
               {userEdited
                 ? ` (${(preview.totalDownloaded - estimatedCount).toLocaleString()} skipped)`
@@ -341,8 +343,8 @@ export function MasterDataRefreshPage() {
       {phase === 'saving' && (
         <div style={{ ...S.card, textAlign: 'center', padding: '48px 32px' }}>
           <div style={S.spinner} />
-          <p style={{ marginTop: 20, color: '#94a3b8', fontSize: 14 }}>
-            Saving <strong style={{ color: '#e2e8f0' }}>{estimatedCount.toLocaleString()}</strong> instruments to the database…
+          <p style={{ marginTop: 20, color: C.textSub, fontSize: 14 }}>
+            Saving <strong style={{ color: C.text }}>{estimatedCount.toLocaleString()}</strong> instruments to the database…
           </p>
         </div>
       )}
@@ -353,16 +355,16 @@ export function MasterDataRefreshPage() {
           <div style={{ fontSize: 22, marginBottom: 16 }}>✅ Saved successfully</div>
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
             {[
-              { label: 'Total saved',    value: result.saved,        color: '#10b981' },
-              { label: 'New entries',    value: result.newCount,     color: '#3b82f6' },
-              { label: 'Updated',        value: result.updatedCount, color: '#6366f1' },
-              { label: 'Skipped',        value: result.skipped,      color: '#6b7280' },
+              { label: 'Total saved',    value: result.saved,        color: C.green       },
+              { label: 'New entries',    value: result.newCount,     color: C.blue        },
+              { label: 'Updated',        value: result.updatedCount, color: CHART.violet  },
+              { label: 'Skipped',        value: result.skipped,      color: C.textMuted   },
             ].map(s => (
               <div key={s.label} style={S.statBox}>
                 <div style={{ fontSize: 26, fontWeight: 700, color: s.color }}>
                   {s.value.toLocaleString()}
                 </div>
-                <div style={{ fontSize: 12, color: '#8b8b9f', marginTop: 2 }}>{s.label}</div>
+                <div style={{ fontSize: 12, color: C.textSub, marginTop: 2 }}>{s.label}</div>
               </div>
             ))}
           </div>
@@ -374,11 +376,11 @@ export function MasterDataRefreshPage() {
 
       {/* ── PHASE: error ──────────────────────────────────────────────────── */}
       {phase === 'error' && (
-        <div style={{ ...S.card, borderColor: '#7f1d1d' }}>
-          <div style={{ fontSize: 16, fontWeight: 600, color: '#ef4444', marginBottom: 8 }}>
+        <div style={{ ...S.card, borderColor: C.red44 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: C.red, marginBottom: 8 }}>
             ❌ Error
           </div>
-          <p style={{ fontSize: 13, color: '#fca5a5', marginBottom: 16 }}>{errorMsg}</p>
+          <p style={{ fontSize: 13, color: C.red, marginBottom: 16 }}>{errorMsg}</p>
           <button style={S.btn('ghost')} onClick={reset}>Try again</button>
         </div>
       )}
@@ -403,15 +405,15 @@ function StepBar({ phase }: { phase: Phase }) {
         <div key={step} style={{ display: 'flex', alignItems: 'center', flex: i < steps.length - 1 ? 1 : 0 }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
-            color: i <= activeIdx ? '#e2e8f0' : '#4b5563',
+            color: i <= activeIdx ? C.text : C.textMuted,
           }}>
             <div style={{
               width: 28, height: 28, borderRadius: '50%', display: 'flex',
               alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 700,
-              background: i < activeIdx ? '#10b981'
-                : i === activeIdx ? '#3b82f6'
-                : '#1e1e2e',
-              border: `2px solid ${i <= activeIdx ? (i < activeIdx ? '#10b981' : '#3b82f6') : '#2d2d3f'}`,
+              background: i < activeIdx ? C.green
+                : i === activeIdx ? C.blue
+                : C.surface,
+              border: `2px solid ${i <= activeIdx ? (i < activeIdx ? C.green : C.blue) : C.border2}`,
             }}>
               {i < activeIdx ? '✓' : i + 1}
             </div>
@@ -420,7 +422,7 @@ function StepBar({ phase }: { phase: Phase }) {
           {i < steps.length - 1 && (
             <div style={{
               flex: 1, height: 2, margin: '0 12px',
-              background: i < activeIdx ? '#10b981' : '#2d2d3f',
+              background: i < activeIdx ? C.green : C.border2,
             }} />
           )}
         </div>
@@ -447,10 +449,10 @@ function SectionCard({
       >
         <div>
           <h2 style={S.cardTitle}>{title}</h2>
-          {subtitle && <p style={{ fontSize: 12, color: '#8b8b9f', marginTop: 2 }}>{subtitle}</p>}
+          {subtitle && <p style={{ fontSize: 12, color: C.textSub, marginTop: 2 }}>{subtitle}</p>}
         </div>
         {collapsible && (
-          <span style={{ color: '#6b7280', fontSize: 12 }}>{open ? '▲ hide' : '▼ show'}</span>
+          <span style={{ color: C.textMuted, fontSize: 12 }}>{open ? '▲ hide' : '▼ show'}</span>
         )}
       </div>
       {open && children}
@@ -459,10 +461,10 @@ function SectionCard({
 }
 
 function FilterChip({
-  label, sublabel, count, active, onToggle, color, icon,
+  label, sublabel, count, active, onToggle, color, alphaBg, icon,
 }: {
   label: string; sublabel?: string; count: number
-  active: boolean; onToggle: () => void; color: string; icon?: string
+  active: boolean; onToggle: () => void; color: string; alphaBg: string; icon?: string
 }) {
   return (
     <button
@@ -470,9 +472,9 @@ function FilterChip({
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
         padding: '10px 14px', borderRadius: 8, cursor: 'pointer',
-        border: `2px solid ${active ? color : '#2d2d3f'}`,
-        background: active ? `${color}1a` : '#0f0f1a',
-        color: active ? '#e2e8f0' : '#6b7280',
+        border: `2px solid ${active ? color : C.border2}`,
+        background: active ? alphaBg : C.bg,
+        color: active ? C.text : C.textMuted,
         transition: 'all 0.15s', minWidth: 110,
       }}
     >
@@ -482,12 +484,12 @@ function FilterChip({
         {active && <span style={{ fontSize: 10, color, fontWeight: 700 }}>✓</span>}
       </div>
       <div style={{
-        fontSize: 18, fontWeight: 700, color: active ? color : '#4b5563', lineHeight: 1,
+        fontSize: 18, fontWeight: 700, color: active ? color : C.textMuted, lineHeight: 1,
       }}>
         {count.toLocaleString()}
       </div>
       {sublabel && (
-        <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4, lineHeight: 1.3 }}>
+        <div style={{ fontSize: 10, color: C.textMuted, marginTop: 4, lineHeight: 1.3 }}>
           {sublabel}
         </div>
       )}
@@ -515,7 +517,7 @@ function BreakdownTable({
             {allBuckets.map(b => (
               <th key={b} style={{
                 ...S.th, textAlign: 'right',
-                color: selTypes.has(b) ? '#e2e8f0' : '#4b5563',
+                color: selTypes.has(b) ? C.text : C.textMuted,
               }}>
                 {b}
               </th>
@@ -535,7 +537,7 @@ function BreakdownTable({
                 <td style={S.td}>
                   <span style={{
                     fontWeight: 700, fontSize: 12,
-                    color: selExchanges.has(eg.exchange) ? '#e2e8f0' : '#4b5563',
+                    color: selExchanges.has(eg.exchange) ? C.text : C.textMuted,
                   }}>
                     {eg.exchange}
                   </span>
@@ -544,12 +546,12 @@ function BreakdownTable({
                   const row = eg.types.find(t => t.bucket === bucket)
                   const dim = !selTypes.has(bucket) || rowDimmed
                   return (
-                    <td key={bucket} style={{ ...S.td, textAlign: 'right', color: dim ? '#4b5563' : '#94a3b8' }}>
+                    <td key={bucket} style={{ ...S.td, textAlign: 'right', color: dim ? C.textMuted : C.textSub }}>
                       {row ? row.count.toLocaleString() : '—'}
                     </td>
                   )
                 })}
-                <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: '#10b981' }}>
+                <td style={{ ...S.td, textAlign: 'right', fontWeight: 700, color: C.green }}>
                   {rowTotal > 0 ? rowTotal.toLocaleString() : '—'}
                 </td>
               </tr>
@@ -566,7 +568,7 @@ function BreakdownTable({
 const S = {
   page: {
     padding: '24px',
-    color: '#e2e8f0',
+    color: C.text,
     maxWidth: 900,
     overflowY: 'auto' as const,
   },
@@ -579,10 +581,10 @@ const S = {
     gap: 12,
   },
   title: { fontSize: 22, fontWeight: 700, margin: 0 },
-  subtitle: { fontSize: 13, color: '#8b8b9f', marginTop: 4 },
+  subtitle: { fontSize: 13, color: C.textSub, marginTop: 4 },
   card: {
-    background: '#1e1e2e',
-    border: '1px solid #2d2d3f',
+    background: C.surface,
+    border: `1px solid ${C.border2}`,
     borderRadius: 10,
     padding: '20px 24px',
     marginBottom: 16,
@@ -597,19 +599,19 @@ const S = {
     display: 'flex',
     alignItems: 'center',
     gap: 12,
-    background: '#0f2a1e',
-    border: '1px solid #10b981',
+    background: C.greenBg,
+    border: `1px solid ${C.green}`,
     borderRadius: 8,
     padding: '12px 16px',
     marginBottom: 16,
     fontSize: 13,
-    color: '#a7f3d0',
+    color: C.green,
   },
   saveBar: {
     position: 'sticky' as const,
     bottom: 0,
-    background: '#13131e',
-    border: '1px solid #2d2d3f',
+    background: C.bg,
+    border: `1px solid ${C.border2}`,
     borderRadius: 10,
     padding: '16px 24px',
     display: 'flex',
@@ -620,16 +622,16 @@ const S = {
     marginTop: 8,
   },
   statBox: {
-    background: '#0f0f1a',
-    border: '1px solid #2d2d3f',
+    background: C.bg,
+    border: `1px solid ${C.border2}`,
     borderRadius: 8,
     padding: '12px 20px',
     minWidth: 110,
   },
   select: {
-    background: '#0f0f1a',
-    border: '1px solid #2d2d3f',
-    color: '#e2e8f0',
+    background: C.bg,
+    border: `1px solid ${C.border2}`,
+    color: C.text,
     borderRadius: 6,
     padding: '8px 12px',
     fontSize: 14,
@@ -639,27 +641,27 @@ const S = {
     padding: '8px 18px',
     fontSize: 13,
     borderRadius: 6,
-    border: variant === 'ghost' ? '1px solid #2d2d3f' : 'none',
+    border: variant === 'ghost' ? `1px solid ${C.border2}` : 'none',
     cursor: 'pointer',
     fontWeight: 600,
-    background: variant === 'primary' ? '#3b82f6'
-      : variant === 'success' ? '#10b981'
+    background: variant === 'primary' ? C.blue
+      : variant === 'success' ? C.green
       : 'transparent',
-    color: variant === 'ghost' ? '#8b8b9f' : '#fff',
+    color: variant === 'ghost' ? C.textSub : 'white',
     opacity: 1,
   } as React.CSSProperties),
   spinner: {
     width: 40, height: 40,
-    border: '3px solid #2d2d3f',
-    borderTop: '3px solid #3b82f6',
+    border: `3px solid ${C.border2}`,
+    borderTop: `3px solid ${C.blue}`,
     borderRadius: '50%',
     margin: '0 auto',
     animation: 'spin 0.8s linear infinite',
   },
   th: {
     padding: '8px 10px',
-    color: '#6b7280',
-    borderBottom: '1px solid #2d2d3f',
+    color: C.textMuted,
+    borderBottom: `1px solid ${C.border2}`,
     fontWeight: 600,
     fontSize: 11,
     textTransform: 'uppercase' as const,
@@ -667,7 +669,7 @@ const S = {
   },
   td: {
     padding: '6px 10px',
-    borderBottom: '1px solid #1a1a2a',
-    color: '#94a3b8',
+    borderBottom: `1px solid ${C.surface}`,
+    color: C.textSub,
   },
 }

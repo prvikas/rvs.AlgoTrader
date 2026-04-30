@@ -4,6 +4,7 @@
  */
 
 import { BacktestSnapshot, ForwardTestSession } from '../../api/client'
+import { C } from '../../styles/tokens'
 import { formatInr } from '../../utils/datetime'
 
 interface Props {
@@ -72,10 +73,10 @@ function buildRows(session: ForwardTestSession, source: BacktestSnapshot): Compa
 }
 
 function deltaColor(row: ComparisonRow): string {
-  if (row.delta === '—') return '#64748b'
+  if (row.delta === '—') return C.textMuted
   const better = row.fwdRaw > row.btRaw
   const good = row.deltaGoodWhenPositive ? better : !better
-  return good ? '#10b981' : row.fwdRaw === row.btRaw ? '#64748b' : '#ef4444'
+  return good ? C.green : row.fwdRaw === row.btRaw ? C.textMuted : C.red
 }
 
 export function BacktestComparisonPanel({ session, source }: Props) {
@@ -83,25 +84,25 @@ export function BacktestComparisonPanel({ session, source }: Props) {
 
   return (
     <div style={{ marginTop: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
         vs Source Backtest
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #2d2d3f' }}>
-              <th style={{ padding: '6px 10px', textAlign: 'left', color: '#475569', fontWeight: 600 }}>Metric</th>
-              <th style={{ padding: '6px 10px', textAlign: 'right', color: '#3b82f6', fontWeight: 600 }}>Backtest</th>
-              <th style={{ padding: '6px 10px', textAlign: 'right', color: '#10b981', fontWeight: 600 }}>Forward</th>
-              <th style={{ padding: '6px 10px', textAlign: 'right', color: '#8b8b9f', fontWeight: 600 }}>Δ</th>
+            <tr style={{ borderBottom: `1px solid ${C.border2}` }}>
+              <th style={{ padding: '6px 10px', textAlign: 'left', color: C.textMuted, fontWeight: 600 }}>Metric</th>
+              <th style={{ padding: '6px 10px', textAlign: 'right', color: C.blue, fontWeight: 600 }}>Backtest</th>
+              <th style={{ padding: '6px 10px', textAlign: 'right', color: C.green, fontWeight: 600 }}>Forward</th>
+              <th style={{ padding: '6px 10px', textAlign: 'right', color: C.textSub, fontWeight: 600 }}>Δ</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(row => (
-              <tr key={row.label} style={{ borderBottom: '1px solid #1a1a2e' }}>
-                <td style={{ padding: '7px 10px', color: '#94a3b8' }}>{row.label}</td>
-                <td style={{ padding: '7px 10px', textAlign: 'right', color: '#93c5fd' }}>{row.bt}</td>
-                <td style={{ padding: '7px 10px', textAlign: 'right', color: '#6ee7b7' }}>{row.fwd}</td>
+              <tr key={row.label} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: '7px 10px', color: C.textSub }}>{row.label}</td>
+                <td style={{ padding: '7px 10px', textAlign: 'right', color: C.textSub }}>{row.bt}</td>
+                <td style={{ padding: '7px 10px', textAlign: 'right', color: C.text }}>{row.fwd}</td>
                 <td style={{ padding: '7px 10px', textAlign: 'right', color: deltaColor(row), fontWeight: 700 }}>{row.delta}</td>
               </tr>
             ))}

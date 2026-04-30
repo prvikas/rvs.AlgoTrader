@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { backtestApi, strategyDomainApi } from '../../api/client'
 import { RunMetrics, RunMode, RunResult, Scenario } from '../../types/strategy'
-import { C, F, SP } from '../../styles/tokens'
+import { C, F, SP, CHART } from '../../styles/tokens'
 import { EquityCurveChart } from '../Backtest/EquityCurveChart'
 
 interface Props {
@@ -83,11 +83,14 @@ function robustnessChip(row: RobustnessRow, v: number | undefined) {
   if (v === undefined) return <span style={{ color: C.textMuted }}>—</span>
   const color = robustnessColor(row, v)
   const icon = color === C.green ? '✓' : color === C.amber ? '⚠' : '✗'
+  // Use discrete alpha tokens — cannot append hex suffix to CSS custom properties
+  const border = color === C.green ? C.green44 : color === C.amber ? C.amber44 : C.red44
+  const bg     = color === C.green ? C.green18 : color === C.amber ? C.amber11 : C.red18
   return (
     <span style={{
       fontSize: 10, fontWeight: 700, color,
       padding: '1px 5px', borderRadius: 3,
-      border: `1px solid ${color}44`, background: `${color}11`,
+      border: `1px solid ${border}`, background: bg,
     }}>
       {icon}
     </span>
@@ -134,7 +137,7 @@ export function CompareTab({ strategyId }: Props) {
     }
   }
 
-  const colors = [C.blue, C.green, C.amber, '#a78bfa', '#f97316']
+  const colors = CHART.series
 
   return (
     <div style={{ display: 'flex', gap: SP.lg, minHeight: 400 }}>

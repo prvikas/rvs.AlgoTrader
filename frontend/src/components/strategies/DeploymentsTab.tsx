@@ -304,7 +304,7 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = { padding: TABLE_CELL, fontSize: 12, color: C.text }
 
 const primaryBtnStyle: React.CSSProperties = {
-  flex: 1, background: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44',
+  flex: 1, background: C.blueBg, color: C.textSub, border: `1px solid ${C.blue44}`,
   borderRadius: 5, padding: '7px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
 }
 

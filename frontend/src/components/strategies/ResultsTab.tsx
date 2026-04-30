@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { backtestApi, BacktestTradeLeg, BacktestTradeResult, strategyDomainApi } from '../../api/client'
 import { RunMode, TradeRecord } from '../../types/strategy'
-import { C, F, SP, TABLE_CELL } from '../../styles/tokens'
+import { C, CHART, F, SP, TABLE_CELL } from '../../styles/tokens'
 import { useEnums } from '../../context/EnumsContext'
 
 const TF_MINUTES: Record<string, number> = {
@@ -259,8 +259,8 @@ function StreakAnalysis({ trades }: { trades: TradeRecord[] }) {
 function ExitReasonDonut({ trades }: { trades: TradeRecord[] }) {
   if (trades.length === 0) return <EmptyChartState label="Exit Reason Donut" />
 
-  const reasons: TradeRecord['exitReason'][] = ['StopHit', 'TargetHit', 'TrailingStop', 'SessionEnd', 'Strategy', 'Manual']
-  const colors = [C.red, C.green, C.amber, C.blue, '#a78bfa', C.textSub]
+  const reasons: TradeRecord['exitReason'][] = ['StopHit', 'TargetHit', 'TrailingStop', 'SessionEnd', 'Strategy', 'PartialClose', 'Manual']
+  const colors = [C.red, C.green, C.amber, C.blue, CHART.violet, CHART.pink, C.textSub]
   const counts = reasons.map(r => trades.filter(t => t.exitReason === r).length)
   const total = counts.reduce((a, b) => a + b, 0)
   const R = 50, cx = 80, cy = 65
@@ -358,7 +358,7 @@ function TradesTable({ trades }: { trades: BacktestTradeResult[] }) {
   const pnlColor = (v: number) => v >= 0 ? C.green : C.red
 
   const rColor = (r?: number) =>
-    r == null ? C.textMuted : r >= 2 ? C.green : r >= 0 ? '#f0b429' : C.red
+    r == null ? C.textMuted : r >= 2 ? C.green : r >= 0 ? C.amber : C.red
 
   const fmt = (v: number, dec = 2) => v.toLocaleString('en-IN', { maximumFractionDigits: dec, minimumFractionDigits: dec })
   const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
@@ -572,9 +572,8 @@ function TradeAnalysisSection({ strategyId: _strategyId, scenarioId, runId, prim
     if (r === 'TRAIL_STOP') return 'TrailingStop'
     if (r === 'TAKE_PROFIT') return 'TargetHit'
     if (r === 'END_OF_DATA' || r === 'SESSION_END') return 'SessionEnd'
-    // VCP and other strategies exit via ExitLong/ExitShort signal → "STRATEGY_EXIT:..."
     if (r.startsWith('STRATEGY_EXIT') || r === 'SIGNAL_EXIT') return 'Strategy'
-    // Manual close via UI
+    if (r.startsWith('PROFIT_BOOKING')) return 'PartialClose'
     return 'Manual'
   }
   const chartTrades: TradeRecord[] = btTrades.map((t, i) => ({

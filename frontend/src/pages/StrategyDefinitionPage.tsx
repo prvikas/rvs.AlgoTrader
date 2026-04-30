@@ -26,7 +26,7 @@ import { HelpTooltip } from '../components/ui/HelpTooltip'
 interface Props {
   strategyId?: string
   initialData?: Strategy
-  onSaved?: (s: Strategy) => void
+  onSaved?: (s: Strategy, goToScenarios?: boolean) => void
   onCancel?: () => void
   strategyKind?: 'equity' | 'options'
 }
@@ -218,18 +218,15 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
     }
   }
 
-  function save() {
+  function save(goToScenarios = false) {
     if (!validate()) return
     setSaveStatus('idle')
     const payload = buildPayload()
+    const handleSuccess = (s: Strategy) => onSaved?.(s, goToScenarios)
     if (strategyId) {
-      updateMut.mutate(payload, {
-        onSuccess: (s: Strategy) => onSaved?.(s),
-      })
+      updateMut.mutate(payload, { onSuccess: handleSuccess })
     } else {
-      createMut.mutate(payload, {
-        onSuccess: (s: Strategy) => onSaved?.(s),
-      })
+      createMut.mutate(payload, { onSuccess: handleSuccess })
     }
   }
 
@@ -1428,10 +1425,10 @@ export function StrategyDefinitionPage({ strategyId, initialData, onSaved, onCan
           )
         })()}
         <button onClick={() => onCancel?.()} style={cancelBtnStyle}>Cancel</button>
-        <button onClick={save} disabled={isPending} style={secondaryBtnStyle}>
+        <button onClick={() => save(false)} disabled={isPending} style={secondaryBtnStyle}>
           {isPending ? '…' : 'Save Strategy'}
         </button>
-        <button onClick={save} disabled={isPending} style={primaryBtnStyle}>
+        <button onClick={() => save(true)} disabled={isPending} style={primaryBtnStyle}>
           {isPending ? '…' : 'Save & Go to Scenarios'}
         </button>
       </div>

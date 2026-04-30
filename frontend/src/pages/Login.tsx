@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../stores/appStore'
 import { useFeatures } from '../context/FeaturesContext'
-import { C } from '../styles/tokens'
+import { C, BRAND } from '../styles/tokens'
 
 interface ProviderInfo {
   name: string
@@ -10,11 +10,11 @@ interface ProviderInfo {
   iconKey: string
 }
 
-// ── Provider brand colours ─────────────────────────────────────────────────────
+// ── Provider brand colours (from BRAND tokens — AP-020) ───────────────────────
 const PROVIDER_STYLES: Record<string, { bg: string; text: string; border: string }> = {
-  google:    { bg: '#fff',    text: '#3c4043', border: '#dadce0' },
-  microsoft: { bg: '#2f2f2f', text: '#fff',    border: '#444'    },
-  apple:     { bg: '#000',    text: '#fff',    border: '#333'    },
+  google:    BRAND.google,
+  microsoft: BRAND.microsoft,
+  apple:     BRAND.apple,
 }
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ export function Login() {
   return (
     <div style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%)',
+      background: `linear-gradient(135deg, ${C.bg} 0%, ${C.surface} 100%)`,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: 'Inter, sans-serif', color: C.text,
     }}>
@@ -142,7 +142,7 @@ export function Login() {
         {/* ── Error banner ───────────────────────────────────────────────── */}
         {error && (
           <div style={{
-            background: '#7f1d1d', border: '1px solid #991b1b', color: '#fca5a5',
+            background: C.redBg, border: `1px solid ${C.red44}`, color: C.red,
             borderRadius: 8, padding: 12, marginBottom: 24, fontSize: 13,
           }}>
             {error}
@@ -228,8 +228,8 @@ export function Login() {
             disabled={loading || !localUser || !localPass}
             style={{
               width: '100%', padding: '10px 16px',
-              background: loading || !localUser || !localPass ? '#4b5563' : C.blue,
-              color: '#fff', border: 'none', borderRadius: 6,
+              background: loading || !localUser || !localPass ? C.surface3 : C.blue,
+              color: 'white', border: 'none', borderRadius: 6,
               fontSize: 13, fontWeight: 600,
               cursor: loading || !localUser || !localPass ? 'not-allowed' : 'pointer',
               transition: 'background 0.2s',
@@ -245,6 +245,6 @@ export function Login() {
 
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '10px 12px',
-  background: '#0f0f1a', border: '1px solid #2d2d3f',
-  borderRadius: 6, color: '#e2e8f0', fontSize: 13, boxSizing: 'border-box',
+  background: 'var(--c-bg)', border: `1px solid var(--c-border)`,
+  borderRadius: 6, color: 'var(--c-text)', fontSize: 13, boxSizing: 'border-box',
 }

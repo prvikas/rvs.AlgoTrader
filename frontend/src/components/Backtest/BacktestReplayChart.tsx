@@ -32,24 +32,24 @@ import {
   Time,
 } from 'lightweight-charts'
 import { BacktestChartBar } from '../../api/client'
-import { C } from '../../styles/tokens'
+import { C, CHART } from '../../styles/tokens'
 
 // ── Colour palette ───────────────────────────────────────────────────────────
 const INDICATOR_COLORS: Record<string, string> = {
-  ema5:      '#f59e0b',
-  ema9:      '#f59e0b',
-  ema20:     '#3b82f6',
-  ema21:     '#3b82f6',
-  ema50:     '#8b5cf6',
-  vwap:      C.green,
-  bbUpper:   C.red,
-  bbMid:     '#3b82f6',
-  bbLower:   C.red,
-  atr:       '#94a3b8',
+  ema5:      CHART.ema5,
+  ema9:      CHART.ema9,
+  ema20:     CHART.ema20,
+  ema21:     CHART.ema21,
+  ema50:     CHART.ema50,
+  vwap:      CHART.vwap,
+  bbUpper:   CHART.bbUpper,
+  bbMid:     CHART.bbMid,
+  bbLower:   CHART.bbLower,
+  atr:       C.textSub,
   rangeHigh: C.green,
   rangeLow:  C.red,
 }
-const FALLBACK_COLORS = ['#e879f9', '#38bdf8', '#fb923c', '#a3e635', '#f472b6']
+const FALLBACK_COLORS = CHART.palette
 
 function indicatorColor(key: string, idx: number) {
   return INDICATOR_COLORS[key] ?? FALLBACK_COLORS[idx % FALLBACK_COLORS.length]

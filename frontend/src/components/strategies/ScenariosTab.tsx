@@ -1105,13 +1105,13 @@ function DeployLiveModal({ scenario, onConfirm, onCancel, isLoading, result }: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
   }
   const box: React.CSSProperties = {
-    background: '#0d0d17', border: `1px solid #2a2a3a`, borderRadius: 8,
+    background: C.bg, border: `1px solid ${C.border2}`, borderRadius: 8,
     padding: 28, width: 480, maxWidth: '90vw',
   }
-  const label: React.CSSProperties = { fontSize: 11, color: '#888', marginBottom: 4, display: 'block' }
+  const label: React.CSSProperties = { fontSize: 11, color: C.textMuted, marginBottom: 4, display: 'block' }
   const input: React.CSSProperties = {
-    width: '100%', background: '#12121e', border: '1px solid #2a2a3a', borderRadius: 4,
-    color: '#e0e0e0', fontSize: 13, padding: '6px 10px', boxSizing: 'border-box',
+    width: '100%', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 4,
+    color: C.text, fontSize: 13, padding: '6px 10px', boxSizing: 'border-box',
   }
 
   return (
@@ -1126,20 +1126,20 @@ function DeployLiveModal({ scenario, onConfirm, onCancel, isLoading, result }: {
           <div style={{ marginBottom: 16 }}>
             {result.checks.map(c => (
               <div key={c.name} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
-                <span style={{ color: c.passed ? '#00d07a' : '#ff4757', fontSize: 13, minWidth: 14 }}>
+                <span style={{ color: c.passed ? C.green : C.red, fontSize: 13, minWidth: 14 }}>
                   {c.passed ? '✓' : '✗'}
                 </span>
                 <div>
-                  <span style={{ fontSize: 12, color: c.passed ? '#e0e0e0' : '#ff4757' }}>{c.name}</span>
-                  {c.reason && <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{c.reason}</div>}
+                  <span style={{ fontSize: 12, color: c.passed ? C.text : C.red }}>{c.name}</span>
+                  {c.reason && <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>{c.reason}</div>}
                 </div>
               </div>
             ))}
             {result.error && (
-              <div style={{ color: '#ff4757', fontSize: 12, marginTop: 8 }}>{result.error}</div>
+              <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{result.error}</div>
             )}
             {result.success && (
-              <div style={{ color: '#00d07a', fontSize: 13, marginTop: 8, fontWeight: 600 }}>
+              <div style={{ color: C.green, fontSize: 13, marginTop: 8, fontWeight: 600 }}>
                 ✓ Live instance created — strategy is now deployed.
               </div>
             )}
@@ -1168,14 +1168,14 @@ function DeployLiveModal({ scenario, onConfirm, onCancel, isLoading, result }: {
         )}
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} style={{ padding: '6px 16px', background: 'transparent', border: '1px solid #2a2a3a', borderRadius: 4, color: '#888', cursor: 'pointer', fontSize: 13 }}>
+          <button onClick={onCancel} style={{ padding: '6px 16px', background: 'transparent', border: `1px solid ${C.border2}`, borderRadius: 4, color: C.textMuted, cursor: 'pointer', fontSize: 13 }}>
             {result?.success ? 'Close' : 'Cancel'}
           </button>
           {!result?.success && (
             <button
               onClick={() => onConfirm(broker, capital)}
               disabled={isLoading || capital <= 0}
-              style={{ padding: '6px 16px', background: '#00d07a22', border: '1px solid #00d07a', borderRadius: 4, color: '#00d07a', cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: 13, opacity: isLoading ? 0.5 : 1 }}
+              style={{ padding: '6px 16px', background: C.green18, border: `1px solid ${C.green}`, borderRadius: 4, color: C.green, cursor: isLoading ? 'not-allowed' : 'pointer', fontSize: 13, opacity: isLoading ? 0.5 : 1 }}
             >
               {isLoading ? 'Running checks…' : 'Run Pre-flight & Deploy'}
             </button>
@@ -1245,7 +1245,7 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = { padding: TABLE_CELL, fontSize: 12, color: C.text }
 
 const primaryBtnStyle: React.CSSProperties = {
-  background: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44',
+  background: C.blueBg, color: C.textSub, border: `1px solid ${C.blue44}`,
   borderRadius: 5, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
 }
 

@@ -1,3 +1,5 @@
+import { C } from '../../styles/tokens'
+
 /**
  * FailureBehaviorEditor — inline editor for the failure_behavior_json column.
  *
@@ -46,17 +48,17 @@ const ACTIONS_TIMEOUT = ['LOG_AND_SKIP', 'PAUSE_INSTANCE', 'STOP_INSTANCE']
 
 // Color-coded severity of each action choice
 function actionColor(action: string): string {
-  if (action === 'STOP_INSTANCE') return '#ef4444'
-  if (action === 'PAUSE_INSTANCE') return '#f59e0b'
-  if (action === 'PAUSE_NEW_SIGNALS') return '#f59e0b'
-  return '#6b7280'
+  if (action === 'STOP_INSTANCE') return C.red
+  if (action === 'PAUSE_INSTANCE') return C.amber
+  if (action === 'PAUSE_NEW_SIGNALS') return C.amber
+  return C.textMuted
 }
 
 const selectStyle: React.CSSProperties = {
-  background: '#13131f',
-  border: '1px solid #2d2d3f',
+  background: C.bg,
+  border: `1px solid ${C.border2}`,
   borderRadius: 4,
-  color: '#e2e8f0',
+  color: C.text,
   padding: '6px 10px',
   fontSize: 13,
   width: '100%',
@@ -65,7 +67,7 @@ const selectStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   display: 'block',
   fontSize: 12,
-  color: '#64748b',
+  color: C.textMuted,
   marginBottom: 4,
   fontWeight: 600,
 }
@@ -95,7 +97,7 @@ function FieldSelect({
           <option key={opt} value={opt} style={{ color: actionColor(opt) }}>{opt}</option>
         ))}
       </select>
-      {hint && <p style={{ color: '#475569', fontSize: 11, marginTop: 3 }}>{hint}</p>}
+      {hint && <p style={{ color: C.textMuted, fontSize: 11, marginTop: 3 }}>{hint}</p>}
     </div>
   )
 }
@@ -106,17 +108,17 @@ export function FailureBehaviorEditor({ value, onChange }: Props) {
 
   return (
     <div style={{
-      background: '#13131f',
-      border: '1px solid #2d2d3f',
+      background: C.bg,
+      border: `1px solid ${C.border2}`,
       borderRadius: 6,
       padding: '14px 16px',
     }}>
-      <p style={{ color: '#64748b', fontSize: 12, marginTop: 0, marginBottom: 12 }}>
+      <p style={{ color: C.textMuted, fontSize: 12, marginTop: 0, marginBottom: 12 }}>
         Controls what happens when each type of fault occurs. Conservative defaults are pre-filled.
         <br />
-        <strong style={{ color: '#ef4444' }}>STOP_INSTANCE</strong> = full stop + requires manual restart.{' '}
-        <strong style={{ color: '#f59e0b' }}>PAUSE_INSTANCE</strong> = signals paused, positions still managed.{' '}
-        <strong style={{ color: '#6b7280' }}>LOG_AND_SKIP</strong> = warn + skip this cycle.
+        <strong style={{ color: C.red }}>STOP_INSTANCE</strong> = full stop + requires manual restart.{' '}
+        <strong style={{ color: C.amber }}>PAUSE_INSTANCE</strong> = signals paused, positions still managed.{' '}
+        <strong style={{ color: C.textMuted }}>LOG_AND_SKIP</strong> = warn + skip this cycle.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 20px' }}>
@@ -149,9 +151,9 @@ export function FailureBehaviorEditor({ value, onChange }: Props) {
             max={60}
             value={value.DataStalenessThresholdMinutes}
             onChange={e => set('DataStalenessThresholdMinutes')(parseInt(e.target.value) || 5)}
-            style={{ ...selectStyle, color: '#e2e8f0' }}
+            style={{ ...selectStyle, color: C.text }}
           />
-          <p style={{ color: '#475569', fontSize: 11, marginTop: 3 }}>Minutes without a new bar before triggering OnDataStale</p>
+          <p style={{ color: C.textMuted, fontSize: 11, marginTop: 3 }}>Minutes without a new bar before triggering OnDataStale</p>
         </div>
         <FieldSelect
           label="On Risk Limit Breached"

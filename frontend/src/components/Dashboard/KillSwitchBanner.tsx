@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { killSwitchApi } from '../../api/client'
 import { useAppStore } from '../../stores/appStore'
+import { C } from '../../styles/tokens'
 
 export function KillSwitchBanner() {
   const { killSwitchActive, setKillSwitchActive } = useAppStore()
@@ -33,9 +34,9 @@ export function KillSwitchBanner() {
       role="alert"
       aria-live="assertive"
       style={{
-        background: '#991b1b',
-        borderBottom: '3px solid #7f1d1d',
-        color: 'white',
+        background: C.redBg,
+        borderBottom: `3px solid ${C.red44}`,
+        color: C.text,
         padding: '10px 24px',
         display: 'flex',
         alignItems: 'center',
@@ -52,13 +53,13 @@ export function KillSwitchBanner() {
           width: 10,
           height: 10,
           borderRadius: '50%',
-          background: '#fca5a5',
-          boxShadow: '0 0 0 3px rgba(252,165,165,0.3)',
+          background: C.red,
+          boxShadow: `0 0 0 3px ${C.red30}`,
           flexShrink: 0,
         }} aria-hidden="true" />
         <span>
           KILL SWITCH ACTIVE
-          <span style={{ fontWeight: 400, marginLeft: 8, color: '#fecaca' }}>
+          <span style={{ fontWeight: 400, marginLeft: 8, color: C.textSub }}>
             — All new orders are blocked
           </span>
         </span>
@@ -70,8 +71,8 @@ export function KillSwitchBanner() {
         aria-label="Deactivate kill switch and resume trading"
         aria-disabled={deactivateMutation.isPending}
         style={{
-          background: 'white',
-          color: '#991b1b',
+          background: C.text,
+          color: C.redBg,
           border: 'none',
           padding: '6px 18px',
           borderRadius: '4px',

@@ -207,9 +207,9 @@ export function ScenarioDrawer({ strategy, scenarioId, onClose }: Props) {
             {(['flat', 'pct'] as const).map(t => (
               <button key={t} onClick={() => setBrokerage(b => ({ ...b, type: t }))} style={{
                 flex: 1, padding: '5px 8px', fontSize: 11, borderRadius: 4, cursor: 'pointer',
-                background: brokerage.type === t ? '#1e3a5f' : C.surface3,
-                color:      brokerage.type === t ? '#93c5fd' : C.textMuted,
-                border: `1px solid ${brokerage.type === t ? '#2563eb44' : C.border}`,
+                background: brokerage.type === t ? C.blueBg : C.surface3,
+                color:      brokerage.type === t ? C.textSub : C.textMuted,
+                border: `1px solid ${brokerage.type === t ? C.blue44 : C.border}`,
               }}>
                 {t === 'flat' ? 'Flat ₹/order' : '% of turnover'}
               </button>
@@ -447,7 +447,7 @@ const thStyle: React.CSSProperties = {
 const tdStyle: React.CSSProperties = { padding: '5px 8px', fontSize: 11, color: C.text }
 
 const primaryBtnStyle: React.CSSProperties = {
-  flex: 1, background: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44',
+  flex: 1, background: C.blueBg, color: C.textSub, border: `1px solid ${C.blue44}`,
   borderRadius: 5, padding: '7px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
 }
 

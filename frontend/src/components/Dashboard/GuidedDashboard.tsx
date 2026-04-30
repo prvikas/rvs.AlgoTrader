@@ -39,25 +39,27 @@ interface BreadthData {
   newLows?: number
 }
 
-function deriveMarketTrend(breadth?: BreadthData): { trend: string; color: string; desc: string } {
-  if (!breadth) return { trend: 'Unknown', color: C.textMuted, desc: 'Market breadth data unavailable.' }
+type TrendInfo = { trend: string; color: string; alphaBg: string; alphaBorder: string; alphaIcon: string; desc: string }
+
+function deriveMarketTrend(breadth?: BreadthData): TrendInfo {
+  if (!breadth) return { trend: 'Unknown', color: C.textMuted, alphaBg: C.border, alphaBorder: C.border2, alphaIcon: C.border, desc: 'Market breadth data unavailable.' }
   const { pct200Sma = 50, advanceDeclineRatio = 1 } = breadth
-  if (pct200Sma >= 60 && advanceDeclineRatio >= 1.5) return { trend: 'Bullish', color: C.green, desc: 'Most stocks are above their 200-day average and advances outnumber declines. A healthy bull market.' }
-  if (pct200Sma <= 35 || advanceDeclineRatio <= 0.6) return { trend: 'Bearish', color: C.red, desc: 'Many stocks are in downtrends. Proceed with caution.' }
-  if (pct200Sma >= 45 && pct200Sma < 60) return { trend: 'Neutral', color: C.blue, desc: 'Markets are mixed — some sectors strong, others weak. Selective approach recommended.' }
-  return { trend: 'Volatile', color: C.amber, desc: 'Market breadth is choppy. Higher volatility means higher risk.' }
+  if (pct200Sma >= 60 && advanceDeclineRatio >= 1.5) return { trend: 'Bullish', color: C.green, alphaBg: C.green18, alphaBorder: C.green33, alphaIcon: C.green30, desc: 'Most stocks are above their 200-day average and advances outnumber declines. A healthy bull market.' }
+  if (pct200Sma <= 35 || advanceDeclineRatio <= 0.6) return { trend: 'Bearish', color: C.red, alphaBg: C.red18, alphaBorder: C.red30, alphaIcon: C.red18, desc: 'Many stocks are in downtrends. Proceed with caution.' }
+  if (pct200Sma >= 45 && pct200Sma < 60) return { trend: 'Neutral', color: C.blue, alphaBg: C.blue11, alphaBorder: C.blue33, alphaIcon: C.blue22, desc: 'Markets are mixed — some sectors strong, others weak. Selective approach recommended.' }
+  return { trend: 'Volatile', color: C.amber, alphaBg: C.amber11, alphaBorder: C.amber33, alphaIcon: C.amber22, desc: 'Market breadth is choppy. Higher volatility means higher risk.' }
 }
 
-function MarketTrendBadge({ trend, color, desc }: { trend: string; color: string; desc: string }) {
+function MarketTrendBadge({ trend, color, alphaBg, alphaBorder, alphaIcon, desc }: TrendInfo) {
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 12,
-      padding: '12px 16px', background: color + '11',
-      border: `1px solid ${color}33`, borderRadius: 10,
+      padding: '12px 16px', background: alphaBg,
+      border: `1px solid ${alphaBorder}`, borderRadius: 10,
     }}>
       <div style={{
         width: 44, height: 44, flexShrink: 0,
-        background: color + '22', borderRadius: '50%',
+        background: alphaIcon, borderRadius: '50%',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 20, fontWeight: 800, color,
       }}>
@@ -226,7 +228,7 @@ export function GuidedDashboard({ onNavigate }: GuidedDashboardProps) {
         <button
           onClick={() => onNavigate('strategies')}
           style={{
-            padding: '9px 20px', background: C.blue, color: '#fff',
+            padding: '9px 20px', background: C.blue, color: 'white',
             border: 'none', borderRadius: 7, cursor: 'pointer',
             fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0,
           }}

@@ -106,7 +106,7 @@ export function IndicatorIntelligenceCardView({ card, onSaved }: CardProps) {
             onClick={() => save.mutate()}
             disabled={save.isPending}
             style={{
-              background: C.blue, color: '#fff', border: 'none', borderRadius: 5,
+              background: C.blue, color: 'white', border: 'none', borderRadius: 5,
               padding: '6px 18px', fontWeight: 700, fontSize: 13, cursor: 'pointer',
             }}
           >

@@ -62,7 +62,7 @@ export function AuthCallbackPage() {
           <button
             onClick={() => navigate('/login', { replace: true })}
             style={{
-              padding: '10px 24px', background: C.blue, color: '#fff',
+              padding: '10px 24px', background: C.blue, color: 'white',
               border: 'none', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
             }}
           >

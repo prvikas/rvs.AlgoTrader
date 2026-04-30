@@ -284,7 +284,7 @@ function SectionHeader({ title }: { title: string }) {
 function Pill({ on }: { on: boolean }) {
   return (
     <div style={{ width: 40, height: 20, borderRadius: 10, background: on ? C.blue : C.border, position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
-      <div style={{ position: 'absolute', top: 2, left: on ? 22 : 2, width: 16, height: 16, borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+      <div style={{ position: 'absolute', top: 2, left: on ? 22 : 2, width: 16, height: 16, borderRadius: '50%', background: 'white', transition: 'left 0.2s' }} />
     </div>
   )
 }

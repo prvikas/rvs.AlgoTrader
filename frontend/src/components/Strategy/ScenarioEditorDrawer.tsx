@@ -345,7 +345,7 @@ export default function ScenarioEditorDrawer({
           <button onClick={handleSave} disabled={saving || !name.trim()} style={{
             padding: '7px 18px', background: C.blue,
             border: 'none', borderRadius: 6,
-            color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13,
+            color: 'white', cursor: saving ? 'not-allowed' : 'pointer', fontSize: 13,
             opacity: saving ? 0.7 : 1,
           }}>
             {saving ? 'Saving…' : scenario ? 'Save Changes' : 'Create Scenario'}

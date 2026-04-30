@@ -272,8 +272,8 @@ export function Dashboard() {
               title="Login to broker"
               style={{
                 fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 4,
-                cursor: 'pointer', background: '#1e3a5f',
-                color: '#93c5fd', border: '1px solid #1d4ed8',
+                cursor: 'pointer', background: C.blueBg,
+                color: C.textSub, border: `1px solid ${C.blue}`,
               }}
             >
               🔑 Broker
@@ -282,7 +282,7 @@ export function Dashboard() {
               <div
                 style={{
                   position: 'absolute', top: '110%', right: 0, zIndex: 200,
-                  background: '#1a1a2e', border: `1px solid #2a2a40`,
+                  background: C.surface, border: `1px solid ${C.border2}`,
                   borderRadius: 6, padding: '4px 0', minWidth: 130,
                   boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
                 }}
@@ -295,9 +295,9 @@ export function Dashboard() {
                     style={{
                       display: 'block', width: '100%', textAlign: 'left',
                       padding: '7px 14px', background: 'none', border: 'none',
-                      color: '#93c5fd', cursor: 'pointer', fontSize: 12,
+                      color: C.textSub, cursor: 'pointer', fontSize: 12,
                     }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#1e3a5f')}
+                    onMouseEnter={e => (e.currentTarget.style.background = C.blueBg)}
                     onMouseLeave={e => (e.currentTarget.style.background = 'none')}
                   >
                     {b}
@@ -315,9 +315,9 @@ export function Dashboard() {
             style={{
               fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 4,
               cursor: killSwitchMut.isPending ? 'not-allowed' : 'pointer',
-              background: killSwitchStatus ? '#7f1d1d' : 'transparent',
-              color: killSwitchStatus ? '#fca5a5' : '#6b7280',
-              border: `1px solid ${killSwitchStatus ? '#991b1b' : '#3f3f46'}`,
+              background: killSwitchStatus ? C.redBg : 'transparent',
+              color: killSwitchStatus ? C.red : C.textMuted,
+              border: `1px solid ${killSwitchStatus ? C.red44 : C.border2}`,
               opacity: killSwitchMut.isPending ? 0.6 : 1,
               transition: 'background 0.15s, color 0.15s, border-color 0.15s',
             }}
@@ -726,7 +726,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
           style={{
             padding: '6px 12px',
             backgroundColor: C.blue,
-            color: '#fff',
+            color: 'white',
             border: 'none',
             borderRadius: 4,
             cursor: 'pointer',
@@ -997,7 +997,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
                 flex: 1,
                 padding: '8px 12px',
                 backgroundColor: C.blue,
-                color: '#fff',
+                color: 'white',
                 border: 'none',
                 borderRadius: 4,
                 cursor: (startMutation.isPending || !!activeJobId) ? 'not-allowed' : 'pointer',
@@ -1016,20 +1016,20 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
 
       {/* Async progress bar */}
       {jobStatus && (jobStatus.status === 'Queued' || jobStatus.status === 'Running' || jobStatus.status === 'Downloading') && (
-        <div style={{ marginTop: 12, padding: '14px 16px', background: '#0d1b2e', border: '1px solid #2563eb44', borderRadius: 6 }}>
+        <div style={{ marginTop: 12, padding: '14px 16px', background: C.blueBg, border: `1px solid ${C.blue44}`, borderRadius: 6 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: '#93c5fd', fontWeight: 600 }}>
+            <span style={{ fontSize: 12, color: C.textSub, fontWeight: 600 }}>
               {jobStatus.status === 'Downloading' ? '⬇ Downloading history…' : jobStatus.status === 'Queued' ? '⏳ Queued…' : '⟳ Running backtest…'}
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 11, color: C.textMuted, fontFamily: 'monospace' }}>
                 {jobStatus.status === 'Running' && jobStatus.totalBars > 0
                   ? `Bar ${jobStatus.currentBar.toLocaleString()} / ${jobStatus.totalBars.toLocaleString()} · ${jobStatus.tradesSoFar} trades`
                   : ''}
               </span>
               <button
                 onClick={handleCancelJob}
-                style={{ padding: '2px 8px', background: '#450a0a', color: '#fca5a5', border: '1px solid #7f1d1d', borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}
+                style={{ padding: '2px 8px', background: C.redBg, color: C.red, border: `1px solid ${C.red44}`, borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}
               >
                 Cancel
               </button>
@@ -1046,9 +1046,9 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
             }} />
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
-            <span style={{ fontSize: 10, color: '#64748b' }}>{jobStatus.progressPct.toFixed(0)}% complete</span>
+            <span style={{ fontSize: 10, color: C.textMuted }}>{jobStatus.progressPct.toFixed(0)}% complete</span>
             {jobStatus.currentEquity > 0 && (
-              <span style={{ fontSize: 10, color: '#64748b', fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'monospace' }}>
                 Equity: {formatInr(jobStatus.currentEquity)}
               </span>
             )}
@@ -1060,8 +1060,8 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
       {runResult && !activeJobId && (
         <div style={{
           marginTop: 12, padding: '14px 16px',
-          background: runResult.circuitBreakerHit ? '#2d1500' : runResult.error ? '#450a0a' : '#0a2a1a',
-          border: `1px solid ${runResult.circuitBreakerHit ? '#f97316' : runResult.error ? C.red : C.green}44`,
+          background: runResult.circuitBreakerHit ? C.amberBg : runResult.error ? C.redBg : C.greenBg,
+          border: `1px solid ${runResult.circuitBreakerHit ? C.amber44 : runResult.error ? C.red44 : C.green44}`,
           borderRadius: 6,
         }}>
           {runResult.error && !runResult.circuitBreakerHit ? (
@@ -1072,15 +1072,15 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
               {runResult.circuitBreakerHit && (
                 <div style={{
                   marginBottom: 10, padding: '8px 12px',
-                  background: '#431407', border: '1px solid #f9731644',
+                  background: C.amberBg, border: `1px solid ${C.amber44}`,
                   borderRadius: 4, display: 'flex', alignItems: 'flex-start', gap: 8,
                 }}>
                   <span style={{ fontSize: 16, flexShrink: 0 }}>⚡</span>
                   <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#fb923c', marginBottom: 2 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.amber, marginBottom: 2 }}>
                       CIRCUIT BREAKER — Loss-making strategy
                     </div>
-                    <div style={{ fontSize: 11, color: '#fdba74', lineHeight: 1.5 }}>
+                    <div style={{ fontSize: 11, color: C.amber, lineHeight: 1.5 }}>
                       {runResult.circuitBreakerReason ?? 'Backtest stopped early: equity fell below the circuit breaker threshold.'}
                     </div>
                   </div>
@@ -1105,7 +1105,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
               {runResult.id && (
                 <button
                   onClick={() => setPromoteBacktest(runResult)}
-                  style={{ marginTop: 10, padding: '5px 12px', background: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44', borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}
+                  style={{ marginTop: 10, padding: '5px 12px', background: C.blueBg, color: C.textSub, border: `1px solid ${C.blue44}`, borderRadius: 4, cursor: 'pointer', fontSize: 11, fontWeight: 700 }}
                 >
                   Start Forward Test with this result
                 </button>
@@ -1221,7 +1221,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
                             onClick={() => handleOpenChart(result)}
                             disabled={loadingChartId === result.id}
                             title="View replay chart"
-                            style={{ padding: '3px 7px', backgroundColor: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44', borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600, opacity: loadingChartId === result.id ? 0.6 : 1 }}
+                            style={{ padding: '3px 7px', backgroundColor: C.blueBg, color: C.textSub, border: `1px solid ${C.blue44}`, borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600, opacity: loadingChartId === result.id ? 0.6 : 1 }}
                           >
                             {loadingChartId === result.id ? '…' : 'Chart'}
                           </button>
@@ -1240,7 +1240,7 @@ function BacktestPage({ backtestResults, preset, onPresetConsumed, initialJobId,
                             <button
                               onClick={() => handleDownloadPdf(result.id!)}
                               title="Download PDF report"
-                              style={{ padding: '3px 7px', backgroundColor: C.blue, color: '#fff', border: 'none', borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}
+                              style={{ padding: '3px 7px', backgroundColor: C.blue, color: 'white', border: 'none', borderRadius: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600 }}
                             >
                               ↓ PDF
                             </button>
@@ -1382,7 +1382,7 @@ function BacktestDetailPanel({ result }: { result: BacktestResult }) {
               </thead>
               <tbody>
                 {yearly.map(y => (
-                  <tr key={y.year} style={{ borderBottom: `1px solid ${C.border2}`, background: y.pnl > 0 ? '#00200f' : y.pnl < 0 ? '#1a0000' : 'transparent' }}>
+                  <tr key={y.year} style={{ borderBottom: `1px solid ${C.border2}`, background: y.pnl > 0 ? C.greenBg : y.pnl < 0 ? C.redBg : 'transparent' }}>
                     <td style={{ padding: '3px 8px', color: C.text, fontWeight: 700, fontFamily: 'monospace' }}>{y.year}</td>
                     <td style={{ padding: '3px 8px', color: y.pnl >= 0 ? C.green : C.red, fontWeight: 600, fontFamily: 'monospace' }}>{y.pnl >= 0 ? '+' : ''}{formatInr(y.pnl)}</td>
                     <td style={{ padding: '3px 8px', color: y.return >= 0 ? C.green : C.red, fontFamily: 'monospace' }}>{(y.return * 100).toFixed(1)}%</td>
@@ -1518,10 +1518,10 @@ function SettingsPage() {
   const settings = loadedSettings
 
   const inputStyle: React.CSSProperties = {
-    background: '#13131f',
-    border: '1px solid #2d2d3f',
+    background: C.bg,
+    border: `1px solid ${C.border2}`,
     borderRadius: 4,
-    color: '#e2e8f0',
+    color: C.text,
     padding: '8px 12px',
     fontSize: 13,
     width: '100%',
@@ -1530,7 +1530,7 @@ function SettingsPage() {
 
   const labelStyle: React.CSSProperties = {
     display: 'block',
-    color: '#94a3b8',
+    color: C.textSub,
     fontSize: 12,
     marginBottom: 6,
     fontWeight: 600,
@@ -1797,7 +1797,7 @@ function FormField({
 }) {
   return (
     <div style={{ marginBottom: '16px' }}>
-      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '4px', color: '#8b8b9f' }}>
+      <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '4px', color: C.textSub }}>
         {label}
       </label>
       {type === 'select' ? (
@@ -1807,9 +1807,9 @@ function FormField({
           style={{
             width: '100%',
             padding: '8px 12px',
-            backgroundColor: '#2d2d3f',
-            color: '#e2e8f0',
-            border: '1px solid #3b3b4f',
+            backgroundColor: C.surface3,
+            color: C.text,
+            border: `1px solid ${C.border2}`,
             borderRadius: '6px',
             fontSize: '13px',
           }}
@@ -1827,9 +1827,9 @@ function FormField({
           style={{
             width: '100%',
             padding: '8px 12px',
-            backgroundColor: '#2d2d3f',
-            color: '#e2e8f0',
-            border: '1px solid #3b3b4f',
+            backgroundColor: C.surface3,
+            color: C.text,
+            border: `1px solid ${C.border2}`,
             borderRadius: '6px',
             fontSize: '13px',
             boxSizing: 'border-box',

@@ -203,8 +203,8 @@ export function IndicatorModal({
           {/* Base Parameters (hidden for context-backed types) */}
           {isContextBacked ? (
             <div style={{
-              background: '#0d1f3c', border: '1px solid #2563eb44',
-              borderRadius: 5, padding: '8px 12px', fontSize: 11, color: '#93c5fd',
+              background: C.blueBg, border: `1px solid ${C.blue44}`,
+              borderRadius: 5, padding: '8px 12px', fontSize: 11, color: C.textSub,
               lineHeight: 1.5,
             }}>
               <strong>Context-backed indicator</strong><br />
@@ -265,7 +265,7 @@ const inputStyle: React.CSSProperties = {
 }
 
 const primaryBtnStyle: React.CSSProperties = {
-  background: '#1e3a5f', color: '#93c5fd', border: '1px solid #2563eb44',
+  background: C.blueBg, color: C.textSub, border: `1px solid ${C.blue44}`,
   borderRadius: 5, padding: '6px 16px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
 }
 
