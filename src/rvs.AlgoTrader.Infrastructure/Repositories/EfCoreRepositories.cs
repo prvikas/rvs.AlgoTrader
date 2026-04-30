@@ -34,16 +34,19 @@ public class EfAuditLogRepository(AlgoTraderDbContext db) : IAuditLogRepository
     public async Task<IReadOnlyList<AuditLogEntry>> GetPagedAsync(
         int page, int pageSize, string? entityType, string? actor, CancellationToken ct)
     {
-        // Raw SQL for performance on a large append-only table
+        // Parameterized SQL — {0}/{1} become PostgreSQL $1/$2 parameters (never string-concatenated).
+        // The IS NULL OR col = param pattern lets us pass null to mean "no filter" without
+        // building a dynamic WHERE clause, which avoids any SQL injection vector.
         var offset = (page - 1) * pageSize;
-        var conditions = new System.Text.StringBuilder("WHERE 1=1");
-        if (entityType is not null) conditions.Append($" AND entity_type = '{entityType.Replace("'", "''")}'");
-        if (actor      is not null) conditions.Append($" AND actor = '{actor.Replace("'", "''")}'");
-
         var rows = await db.Database
             .SqlQueryRaw<AuditLogRow>(
-                $"SELECT id, event_type AS action, actor, entity_type, entity_id, details::text AS details_json, correlation_id, occurred_at " +
-                $"FROM audit_log {conditions} ORDER BY occurred_at DESC LIMIT {pageSize} OFFSET {offset}")
+                "SELECT id, event_type AS action, actor, entity_type, entity_id, " +
+                "details::text AS details_json, correlation_id, occurred_at " +
+                "FROM audit_log " +
+                "WHERE ({0}::text IS NULL OR entity_type = {0}) " +
+                "  AND ({1}::text IS NULL OR actor = {1}) " +
+                "ORDER BY occurred_at DESC LIMIT {2} OFFSET {3}",
+                entityType ?? (object)DBNull.Value, actor ?? (object)DBNull.Value, pageSize, offset)
             .ToListAsync(ct);
 
         return rows.Select(r => new AuditLogEntry(
@@ -198,26 +201,45 @@ public class EfSignalJournalRepository(AlgoTraderDbContext db) : ISignalJournalR
         Guid? strategyId, string? symbol, string? signal, string? skippedReason,
         int page, int pageSize, CancellationToken ct)
     {
-        var offset = (page - 1) * pageSize;
-        var wb = new System.Text.StringBuilder("WHERE 1=1");
-        if (strategyId.HasValue)         wb.Append($" AND strategy_instance_id = '{strategyId}'");
-        if (!string.IsNullOrEmpty(symbol))  wb.Append($" AND internal_symbol = '{symbol.Replace("'", "''")}'");
-        if (!string.IsNullOrEmpty(signal))  wb.Append($" AND signal = '{signal.Replace("'", "''")}'");
-        if (skippedReason is not null)      wb.Append($" AND skipped_reason IS NOT NULL");
-        var where = wb.ToString();
+        // All optional filters use {N}::type IS NULL OR col = {N} so a single parameterized query
+        // covers all combinations — no string concatenation, no Esc() helpers (AP-SQL).
+        // skippedReason is used as a presence flag (filter to non-null rows when provided).
+        var offset       = (page - 1) * pageSize;
+        var strategyIdStr = strategyId?.ToString();
+
+        const string SelectSql =
+            "SELECT id, strategy_instance_id, internal_symbol, evaluated_at, timeframe, signal, " +
+            "entry_price, stop_loss, take_profit, reason, diagnostics_json, acted_on, skipped_reason " +
+            "FROM signal_journal_entries " +
+            "WHERE ({0}::uuid IS NULL OR strategy_instance_id = {0}::uuid) " +
+            "  AND ({1}::text IS NULL OR internal_symbol = {1}) " +
+            "  AND ({2}::text IS NULL OR signal = {2}) " +
+            "  AND ({3}::text IS NULL OR skipped_reason IS NOT NULL) " +
+            "ORDER BY evaluated_at DESC LIMIT {4} OFFSET {5}";
+
+        const string CountSql =
+            "SELECT COUNT(*)::int AS value FROM signal_journal_entries " +
+            "WHERE ({0}::uuid IS NULL OR strategy_instance_id = {0}::uuid) " +
+            "  AND ({1}::text IS NULL OR internal_symbol = {1}) " +
+            "  AND ({2}::text IS NULL OR signal = {2}) " +
+            "  AND ({3}::text IS NULL OR skipped_reason IS NOT NULL)";
 
         var rows = await db.Database
-            .SqlQueryRaw<SignalJournalRow>(
-                $"SELECT id, strategy_instance_id, internal_symbol, evaluated_at, timeframe, signal, " +
-                $"entry_price, stop_loss, take_profit, reason, diagnostics_json, acted_on, skipped_reason " +
-                $"FROM signal_journal_entries {where} ORDER BY evaluated_at DESC LIMIT {pageSize} OFFSET {offset}")
+            .SqlQueryRaw<SignalJournalRow>(SelectSql,
+                strategyIdStr ?? (object)DBNull.Value,
+                symbol        ?? (object)DBNull.Value,
+                signal        ?? (object)DBNull.Value,
+                skippedReason ?? (object)DBNull.Value,
+                pageSize, offset)
             .ToListAsync(ct);
 
-#pragma warning disable EF1002 // dynamic WHERE clause — all inputs sanitised via string.Replace
         var totalRows = await db.Database
-            .SqlQueryRaw<CountRow>($"SELECT COUNT(*)::int AS value FROM signal_journal_entries {where}")
+            .SqlQueryRaw<CountRow>(CountSql,
+                strategyIdStr ?? (object)DBNull.Value,
+                symbol        ?? (object)DBNull.Value,
+                signal        ?? (object)DBNull.Value,
+                skippedReason ?? (object)DBNull.Value)
             .FirstOrDefaultAsync(ct);
-#pragma warning restore EF1002
 
         var items = rows.Select(r => new SignalJournalEntryDto(
             r.Id, r.StrategyInstanceId, r.InternalSymbol, r.EvaluatedAt,
@@ -652,7 +674,10 @@ public class EfUserRepository(AlgoTraderDbContext db) : IUserRepository
                 u => u.Username != null && u.Username.ToLower() == username.ToLower() && u.IsActive, ct);
 
     public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken ct)
-        => await db.Users.AsNoTracking().Where(u => u.IsActive).OrderBy(u => u.Username).ToListAsync(ct);
+        // OAuth-only users have null Username — sort by DisplayName then Email as fallback (AP-001 compliant)
+        => await db.Users.AsNoTracking().Where(u => u.IsActive)
+            .OrderBy(u => u.DisplayName ?? u.Email ?? u.Username)
+            .ToListAsync(ct);
 
     public async Task<Guid> CreateAsync(User user, CancellationToken ct)
     {

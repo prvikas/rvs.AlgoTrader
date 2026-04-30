@@ -21,8 +21,10 @@ public class User
     public string? PasswordHash { get; set; }
     public string  Role         { get; set; } = "Analyst";  // Admin | Trader | Analyst | RiskManager | SuperAdmin
     public bool    IsActive     { get; set; } = true;
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Set by the caller using IClock — never defaults to UtcNow (AP-001).</summary>
+    public DateTimeOffset CreatedAt { get; set; }
+    /// <summary>Set by the caller using IClock — never defaults to UtcNow (AP-001).</summary>
+    public DateTimeOffset UpdatedAt { get; set; }
 
     public ICollection<UserBrokerAccount>  BrokerAccounts { get; set; } = [];
     public ICollection<UserExternalLogin>  ExternalLogins { get; set; } = [];

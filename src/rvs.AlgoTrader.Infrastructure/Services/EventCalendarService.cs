@@ -11,14 +11,19 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// <summary>
 /// EF Core + raw SQL implementation of <see cref="IEventCalendarService"/>.
 /// Events are stored in the <c>market_events</c> table (migration 011).
+/// All queries use {N} positional parameters so EF Core / Npgsql generates
+/// proper $1/$2 placeholders — no string concatenation of user input.
 /// </summary>
 public class EventCalendarService(AlgoTraderDbContext db, IClock clock) : IEventCalendarService
 {
     public async Task<IReadOnlyList<MarketEventDto>> GetByDateAsync(LocalDate date, CancellationToken ct = default)
     {
+        // date comes from LocalDate (strongly typed) — safe to format directly
         var iso = date.ToString("yyyy-MM-dd", null);
         var rows = await db.Database
-            .SqlQueryRaw<EventRow>(EventSelectSql + $" WHERE event_date = '{iso}' ORDER BY event_time NULLS LAST")
+            .SqlQueryRaw<EventRow>(
+                EventSelectSql + " WHERE event_date = {0}::date ORDER BY event_time NULLS LAST",
+                iso)
             .ToListAsync(ct);
         return rows.Select(ToDto).ToList();
     }
@@ -29,12 +34,17 @@ public class EventCalendarService(AlgoTraderDbContext db, IClock clock) : IEvent
     {
         var isoFrom = from.ToString("yyyy-MM-dd", null);
         var isoTo   = to.ToString("yyyy-MM-dd", null);
-        var where   = $"WHERE event_date >= '{isoFrom}' AND event_date <= '{isoTo}'";
-        if (eventType is not null) where += $" AND event_type = '{Esc(eventType)}'";
-        if (symbol    is not null) where += $" AND (symbol = '{Esc(symbol)}' OR symbol IS NULL)";
 
+        // Optional filters use the IS NULL OR col = param pattern so a single
+        // parameterized query covers all four filter combinations.
         var rows = await db.Database
-            .SqlQueryRaw<EventRow>(EventSelectSql + $" {where} ORDER BY event_date, event_time NULLS LAST")
+            .SqlQueryRaw<EventRow>(
+                EventSelectSql +
+                " WHERE event_date >= {0}::date AND event_date <= {1}::date" +
+                " AND ({2}::text IS NULL OR event_type = {2})" +
+                " AND ({3}::text IS NULL OR symbol = {3} OR symbol IS NULL)" +
+                " ORDER BY event_date, event_time NULLS LAST",
+                isoFrom, isoTo, eventType ?? (object)DBNull.Value, symbol ?? (object)DBNull.Value)
             .ToListAsync(ct);
         return rows.Select(ToDto).ToList();
     }
@@ -44,17 +54,16 @@ public class EventCalendarService(AlgoTraderDbContext db, IClock clock) : IEvent
     {
         var isoFrom = date.PlusDays(-windowDays).ToString("yyyy-MM-dd", null);
         var isoTo   = date.PlusDays(windowDays).ToString("yyyy-MM-dd", null);
-        var symbolFilter = symbol is not null
-            ? $" AND (symbol = '{Esc(symbol)}' OR symbol IS NULL)"
-            : " AND symbol IS NULL";
 
-        var rows = await db.Database
+        var row = await db.Database
             .SqlQueryRaw<CountRow>(
-                $"SELECT COUNT(*)::int AS value FROM market_events " +
-                $"WHERE event_date >= '{isoFrom}' AND event_date <= '{isoTo}' " +
-                $"AND impact = 'High'{symbolFilter}")
+                "SELECT COUNT(*)::int AS value FROM market_events" +
+                " WHERE event_date >= {0}::date AND event_date <= {1}::date" +
+                " AND impact = 'High'" +
+                " AND ({2}::text IS NULL OR symbol = {2} OR symbol IS NULL)",
+                isoFrom, isoTo, symbol ?? (object)DBNull.Value)
             .FirstOrDefaultAsync(ct);
-        return (rows?.Value ?? 0) > 0;
+        return (row?.Value ?? 0) > 0;
     }
 
     public async Task<IReadOnlyList<MarketEventDto>> GetUpcomingAsync(int days = 7, CancellationToken ct = default)
@@ -82,70 +91,69 @@ public class EventCalendarService(AlgoTraderDbContext db, IClock clock) : IEvent
             eventTime, req.Description, req.Symbol, req.Source, req.IsRecurring,
             clock.NowInstant());
 
-        var isoDate = req.EventDate.ToString("yyyy-MM-dd", null);
-        var timeVal = eventTime.HasValue
-            ? $"'{eventTime.Value.ToString("HH:mm:ss", null)}'::time"
-            : "NULL";
-        var descVal   = evt.Description is null ? "NULL" : $"'{Esc(evt.Description)}'";
-        var symbolVal = evt.Symbol      is null ? "NULL" : $"'{Esc(evt.Symbol)}'";
-        var sourceVal = evt.Source      is null ? "NULL" : $"'{Esc(evt.Source)}'";
+        // All string values are passed as typed parameters — Npgsql handles type casting.
+        var isoDate   = req.EventDate.ToString("yyyy-MM-dd", null);
+        var timeStr   = eventTime.HasValue ? eventTime.Value.ToString("HH:mm:ss", null) : null;
+        var impactStr = evt.Impact.ToString();
+        var createdAt = evt.CreatedAt.ToDateTimeOffset();
 
-        await db.Database.ExecuteSqlRawAsync(
-            $"INSERT INTO market_events " +
-            $"(id, event_date, event_time, event_type, title, description, impact, symbol, source, is_recurring, created_at) " +
-            $"VALUES ('{evt.Id}', '{isoDate}'::date, {timeVal}, '{Esc(evt.EventType)}', '{Esc(evt.Title)}', " +
-            $"{descVal}, '{evt.Impact}', {symbolVal}, {sourceVal}, {evt.IsRecurring.ToString().ToLowerInvariant()}, " +
-            $"'{evt.CreatedAt.ToDateTimeOffset():O}')", ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO market_events
+              (id, event_date, event_time, event_type, title, description, impact, symbol, source, is_recurring, created_at)
+            VALUES
+              ({evt.Id}, {isoDate}::date, {timeStr}::time, {evt.EventType}, {evt.Title},
+               {evt.Description}, {impactStr}, {evt.Symbol}, {evt.Source}, {evt.IsRecurring}, {createdAt})
+            """, ct);
         return evt.Id;
     }
 
     public async Task UpdateAsync(Guid id, UpdateMarketEventRequest req, CancellationToken ct = default)
     {
-        var parts = new List<string>();
-        if (req.Title       is not null) parts.Add($"title = '{Esc(req.Title)}'");
-        if (req.Description is not null) parts.Add($"description = '{Esc(req.Description)}'");
-        if (req.Impact      is not null) parts.Add($"impact = '{Esc(req.Impact)}'");
-
-        if (parts.Count == 0) return;
-
-#pragma warning disable EF1002 // dynamic SET clause — all inputs sanitised via Esc()
-        await db.Database.ExecuteSqlRawAsync(
-            $"UPDATE market_events SET {string.Join(", ", parts)} WHERE id = '{id}'", ct);
-#pragma warning restore EF1002
+        // Each field is only updated when provided (partial update).
+        // Using separate ExecuteSqlInterpolated calls per field is simpler and fully safe —
+        // the field names come from code (not user input), and values are parameterized.
+        if (req.Title       is not null)
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE market_events SET title = {req.Title} WHERE id = {id}", ct);
+        if (req.Description is not null)
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE market_events SET description = {req.Description} WHERE id = {id}", ct);
+        if (req.Impact      is not null)
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE market_events SET impact = {req.Impact} WHERE id = {id}", ct);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken ct = default)
     {
-        // id is a Guid — no sanitisation needed; EF1002 suppressed for clarity
-#pragma warning disable EF1002
-        await db.Database.ExecuteSqlRawAsync($"DELETE FROM market_events WHERE id = '{id}'", ct);
-#pragma warning restore EF1002
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"DELETE FROM market_events WHERE id = {id}", ct);
     }
 
     public async Task SeedFnoExpiriesAsync(int year, CancellationToken ct = default)
     {
         // NSE weekly expiry = every Thursday; monthly expiry = last Thursday of month.
-        // Monthly expiry is higher impact; weekly is medium.
         var thursday = new LocalDate(year, 1, 1);
         while (thursday.DayOfWeek != IsoDayOfWeek.Thursday) thursday = thursday.PlusDays(1);
 
-        var events = new List<(LocalDate Date, EventImpact Impact, string Title)>();
         while (thursday.Year == year)
         {
             var isMonthlyExpiry = thursday.Month != thursday.PlusDays(7).Month;
-            events.Add((thursday,
-                isMonthlyExpiry ? EventImpact.High : EventImpact.Medium,
-                isMonthlyExpiry ? $"NSE Monthly F&O Expiry {thursday:MMM yyyy}" : $"NSE Weekly F&O Expiry {thursday:dd MMM}"));
-            thursday = thursday.PlusDays(7);
-        }
+            var isoDate = thursday.ToString("yyyy-MM-dd", null);
+            var title   = isMonthlyExpiry
+                ? $"NSE Monthly F&O Expiry {thursday:MMM yyyy}"
+                : $"NSE Weekly F&O Expiry {thursday:dd MMM}";
+            var impactStr = (isMonthlyExpiry ? EventImpact.High : EventImpact.Medium).ToString();
 
-        foreach (var (evtDate, impact, title) in events)
-        {
-            var iso = evtDate.ToString("yyyy-MM-dd", null);
-            await db.Database.ExecuteSqlRawAsync(
-                $"INSERT INTO market_events (id, event_date, event_type, title, impact, is_recurring, source) " +
-                $"VALUES (gen_random_uuid(), '{iso}'::date, 'FNO_EXPIRY', '{Esc(title)}', '{impact}', TRUE, 'NSE') " +
-                $"ON CONFLICT DO NOTHING", ct);
+            // title is generated by code (no user input) — safe to pass as parameter
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO market_events (id, event_date, event_type, title, impact, is_recurring, source)
+                VALUES (gen_random_uuid(), {isoDate}::date, 'FNO_EXPIRY', {title}, {impactStr}, TRUE, 'NSE')
+                ON CONFLICT DO NOTHING
+                """, ct);
+
+            thursday = thursday.PlusDays(7);
         }
     }
 
@@ -160,8 +168,6 @@ public class EventCalendarService(AlgoTraderDbContext db, IClock clock) : IEvent
         "is_recurring  AS \"IsRecurring\", " +
         "created_at    AS \"CreatedAt\" " +
         "FROM market_events";
-
-    private static string Esc(string s) => s.Replace("'", "''");
 
     private static MarketEventDto ToDto(EventRow r) => new(
         r.Id,

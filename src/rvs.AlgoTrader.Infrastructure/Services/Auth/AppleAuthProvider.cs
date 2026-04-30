@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using rvs.AlgoTrader.Application.Options;
 using rvs.AlgoTrader.Application.Services;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Infrastructure.Services.Auth;
 
@@ -26,11 +27,13 @@ public sealed class AppleAuthProvider : OAuthProviderBase, IExternalAuthProvider
 
     private readonly IHttpClientFactory     _httpFactory;
     private readonly IOptions<OAuthOptions> _opts;
+    private readonly IClock                 _clock;
 
-    public AppleAuthProvider(IHttpClientFactory httpFactory, IOptions<OAuthOptions> opts)
+    public AppleAuthProvider(IHttpClientFactory httpFactory, IOptions<OAuthOptions> opts, IClock clock)
     {
         _httpFactory = httpFactory;
         _opts        = opts;
+        _clock       = clock;
     }
 
     private AppleOAuthOptions Cfg => _opts.Value.Apple
@@ -119,7 +122,7 @@ public sealed class AppleAuthProvider : OAuthProviderBase, IExternalAuthProvider
         using var ecdsa = ECDsa.Create();
         ecdsa.ImportFromPem(Cfg.PrivateKeyPem);
 
-        var now     = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var now     = _clock.NowInstant().ToDateTimeOffset().ToUnixTimeSeconds();
         var exp     = now + 15_777_000;   // 6 months (Apple maximum)
         var header  = B64Url(JsonSerializer.SerializeToUtf8Bytes(new { alg = "ES256", kid = Cfg.KeyId }));
         var payload = B64Url(JsonSerializer.SerializeToUtf8Bytes(new

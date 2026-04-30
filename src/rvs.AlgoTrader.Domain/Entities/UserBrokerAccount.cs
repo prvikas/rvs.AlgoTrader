@@ -18,7 +18,8 @@ public class UserBrokerAccount
     /// <summary>Optional friendly label shown in the UI (e.g. "Zerodha - Trading").</summary>
     public string? DisplayName { get; set; }
     public bool   IsActive    { get; set; } = true;
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    /// <summary>Set by the caller using IClock — never defaults to UtcNow (AP-001).</summary>
+    public DateTimeOffset CreatedAt { get; set; }
 
     public User? User { get; set; }
 }

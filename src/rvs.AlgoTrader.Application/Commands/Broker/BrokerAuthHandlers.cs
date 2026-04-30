@@ -3,6 +3,7 @@ using rvs.AlgoTrader.Application.DTOs.Auth;
 using rvs.AlgoTrader.Application.DTOs.Broker;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
+using rvs.AlgoTrader.Domain.Interfaces;
 
 namespace rvs.AlgoTrader.Application.Commands.Broker;
 
@@ -46,7 +47,7 @@ public class ReconcileBrokerPositionsHandler(IPositionReconciliationService reco
 
 // ── User management ───────────────────────────────────────────────────────────
 
-public class RegisterUserHandler(IUserRepository users, IPasswordHasher hasher)
+public class RegisterUserHandler(IUserRepository users, IPasswordHasher hasher, IClock clock)
     : IRequestHandler<RegisterUserCommand, RegisterResultDto>
 {
     public async Task<RegisterResultDto> Handle(RegisterUserCommand cmd, CancellationToken ct)
@@ -55,12 +56,15 @@ public class RegisterUserHandler(IUserRepository users, IPasswordHasher hasher)
         if (existing != null)
             throw new InvalidOperationException($"Username '{cmd.Username}' is already taken.");
 
+        var now = clock.NowInstant().ToDateTimeOffset();
         var user = new User
         {
             Username     = cmd.Username,
             PasswordHash = hasher.Hash(cmd.Password),
             Role         = cmd.Role,
             IsActive     = true,
+            CreatedAt    = now,
+            UpdatedAt    = now,
         };
 
         var id = await users.CreateAsync(user, ct);
@@ -70,7 +74,8 @@ public class RegisterUserHandler(IUserRepository users, IPasswordHasher hasher)
 
 public class AddBrokerAccountHandler(
     IUserBrokerAccountRepository accounts,
-    ICurrentUser currentUser)
+    ICurrentUser currentUser,
+    IClock clock)
     : IRequestHandler<AddBrokerAccountCommand, UserBrokerAccountDto>
 {
     public async Task<UserBrokerAccountDto> Handle(AddBrokerAccountCommand cmd, CancellationToken ct)
@@ -82,6 +87,7 @@ public class AddBrokerAccountHandler(
             Market      = cmd.Market,
             DisplayName = cmd.DisplayName,
             IsActive    = true,
+            CreatedAt   = clock.NowInstant().ToDateTimeOffset(),
         };
         var id = await accounts.AddAsync(account, ct);
         return new UserBrokerAccountDto(id, account.BrokerName, account.Market,

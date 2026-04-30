@@ -110,6 +110,7 @@ public class StartupOrchestrator(
                     return;
                 }
 
+                var now  = clock.NowInstant().ToDateTimeOffset();
                 var user = new User
                 {
                     Id           = Guid.Parse(SystemUserId),
@@ -117,6 +118,8 @@ public class StartupOrchestrator(
                     PasswordHash = hash,
                     Role         = "Admin",
                     IsActive     = true,
+                    CreatedAt    = now,
+                    UpdatedAt    = now,
                 };
                 await userRepo.CreateAsync(user, ct);
                 logger.LogInformation("[Startup:Step0] System admin user '{Username}' seeded into users table", opts.Username);

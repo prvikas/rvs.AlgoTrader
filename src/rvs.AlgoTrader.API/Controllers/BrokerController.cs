@@ -99,7 +99,6 @@ public class BrokerController(
     /// Returns null for direct-credential brokers (MStock, Dhan, etc.) — no redirect needed.
     /// </summary>
     [HttpGet("{brokerName}/login-url")]
-    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<string?>>> GetLoginUrl(string brokerName, CancellationToken ct)
     {
         if (BrokerModeDisabledResult() is { } blocked) return blocked;
@@ -114,7 +113,6 @@ public class BrokerController(
     /// For ApiKey brokers: pass { apiKey, apiSecret }.
     /// </summary>
     [HttpPost("{brokerName}/connect")]
-    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<BrokerAuthResultDto>>> Connect(
         string brokerName,
         [FromBody] Dictionary<string, string> credentials,
