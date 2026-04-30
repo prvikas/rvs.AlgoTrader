@@ -85,8 +85,9 @@ public class EfAlertLogRepository(AlgoTraderDbContext db) : IAlertLogRepository
         var offset = (page - 1) * pageSize;
         var rows = await db.Database
             .SqlQueryRaw<AlertLogRow>(
-                $"SELECT id, alert_type, severity, message, occurred_at " +
-                $"FROM alert_log ORDER BY occurred_at DESC LIMIT {pageSize} OFFSET {offset}")
+                "SELECT id, alert_type, severity, message, occurred_at " +
+                "FROM alert_log ORDER BY occurred_at DESC LIMIT {0} OFFSET {1}",
+                pageSize, offset)
             .ToListAsync(ct);
 
         return rows.Select(r => new AlertLogEntry(r.Id, r.AlertType, r.Severity, r.Message, r.OccurredAt)).ToList();
