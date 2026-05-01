@@ -89,7 +89,20 @@ public class MarketBreadthSnapshot
 
 public enum MarketRegime
 {
-    Bull,
-    Neutral,
-    Bear,
+    Bull    = 0,
+    Neutral = 1,
+    Bear    = 2,
+
+    // ── Short Premium Velocity regime labels ──────────────────────────────────
+    // Start at 100 to avoid any future conflict with breadth-based values above.
+    /// <summary>India VIX &lt; 16, high trend R² — ideal short-premium environment.</summary>
+    VelocityLowVolCompression      = 100,
+    /// <summary>VIX 14–20, low trend R² — choppy, mean-reverting; tighter structures.</summary>
+    VelocityChoppyMeanReversion    = 101,
+    /// <summary>VIX 18–24 declining — post-panic normalisation; reduce size, collect theta.</summary>
+    VelocityPostPanicNormalization = 102,
+    /// <summary>VIX 20–28 rising rapidly — vol expansion; widen strikes, mandatory hedge.</summary>
+    VelocityHighVolExpansion       = 103,
+    /// <summary>VIX &gt; 28 or spot 1-day move &gt; 3σ — capital preservation only.</summary>
+    VelocityPanic                  = 104,
 }

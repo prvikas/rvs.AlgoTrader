@@ -1,4 +1,5 @@
 using rvs.AlgoTrader.Application.DTOs.QuantIntelligence;
+using rvs.AlgoTrader.Domain.ValueObjects;
 
 namespace rvs.AlgoTrader.Application.Services;
 
@@ -16,4 +17,15 @@ public interface IQuantRegimeService
     /// indicators inline. Degrades gracefully when IVP data is unavailable.
     /// </summary>
     Task<QuantRegimeDto> ClassifyAsync(string symbol, string timeframe, CancellationToken ct);
+
+    /// <summary>
+    /// Classify the current regime using the Short Premium Velocity five-label schema.
+    /// Returns a <see cref="VelocityRegimeState"/> with stability, tail-risk score,
+    /// vol-of-vol, and results-season flag required by the SPV engine components.
+    /// Inputs are computed from candle history + India VIX candles.
+    /// Classification is deterministic: same inputs always produce the same label.
+    /// </summary>
+    Task<VelocityRegimeState> ClassifyVelocityRegimeAsync(
+        string underlyingSymbol,
+        CancellationToken ct);
 }

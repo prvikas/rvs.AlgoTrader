@@ -28,6 +28,22 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
         builder.Property(p => p.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
         builder.Property(p => p.CloseReason).HasColumnName("close_reason").HasMaxLength(50);
 
+        // ── Short Premium Velocity — leg tagging ─────────────────────────────
+        builder.Property(p => p.LegType).HasColumnName("leg_type")
+            .HasConversion<string>().HasMaxLength(30);
+        builder.Property(p => p.HedgeType).HasColumnName("hedge_type")
+            .HasConversion<string>().HasMaxLength(30);
+        builder.Property(p => p.HedgeNetCost).HasColumnName("hedge_net_cost")
+            .HasPrecision(18, 4);
+        builder.Property(p => p.LinkedShortLegId).HasColumnName("linked_short_leg_id");
+
+        // Self-referencing FK: Hedge leg → ShortPremium leg (no cascade delete)
+        builder.HasOne<Position>()
+            .WithMany()
+            .HasForeignKey(p => p.LinkedShortLegId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // Ignore computed alias properties
         builder.Ignore(p => p.AveragePrice);
         builder.Ignore(p => p.LastPrice);

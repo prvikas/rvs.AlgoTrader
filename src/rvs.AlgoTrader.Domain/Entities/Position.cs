@@ -1,4 +1,5 @@
 using NodaTime;
+using rvs.AlgoTrader.Domain.Enums;
 
 namespace rvs.AlgoTrader.Domain.Entities;
 
@@ -18,6 +19,23 @@ public class Position
     public string CorrelationId { get; private set; } = string.Empty;
     public string ProductType { get; set; } = "MIS";
     public string? CloseReason { get; set; }
+
+    // ── Short Premium Velocity — leg tagging (AP: no separate hedge table) ────
+    /// <summary>Leg role within a multi-leg short-premium position. Null for plain equity/non-SPV positions.</summary>
+    public LegType? LegType { get; set; }
+
+    /// <summary>Identifies the protective purpose of a hedge leg. Null for ShortPremium / DeltaHedge legs.</summary>
+    public HedgeType? HedgeType { get; set; }
+
+    /// <summary>Cumulative net cost of all hedge executions paired to this leg (negative = debit paid).</summary>
+    public decimal? HedgeNetCost { get; set; }
+
+    /// <summary>
+    /// Self-referencing FK: for a Hedge leg, points to the ShortPremium Position it protects.
+    /// For a ShortPremium leg this is null. Enables roll and attribution logic without a join table.
+    /// </summary>
+    public Guid? LinkedShortLegId { get; set; }
+
     public decimal RealizedPnl { get; private set; }
     public decimal UnrealizedPnl { get; private set; }
     public Instant? OpenedAt { get; private set; }

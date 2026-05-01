@@ -25,7 +25,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// India VIX + IVP are sourced from IOptionIvRankService when available;
 /// gracefully degraded when data is absent.
 /// </summary>
-public sealed class QuantRegimeService(
+public sealed partial class QuantRegimeService(
     ICandleRepository       candles,
     IOptionIvRankService    ivRank,
     IClock                  clock,
