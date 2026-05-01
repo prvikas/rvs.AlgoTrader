@@ -1,13 +1,7 @@
 import { useState } from 'react'
-import { apiClient, ApiResponse } from '../../api/client'
+import { brokerApi } from '../../api/client'
 import { C, BRAND } from '../../styles/tokens'
 
-interface BrokerAuthResult {
-  success: boolean
-  brokerName: string
-  message?: string
-  expiresAt?: string
-}
 
 interface Props {
   broker: 'MStock' | 'Zerodha' | 'Upstox'
@@ -33,27 +27,26 @@ const btnSecondary: React.CSSProperties = {
 }
 
 // ── mStock Form ───────────────────────────────────────────────────────────────
-function MStockForm({ apiKey, onSuccess, onError }: {
+function MStockForm({ apiKey: apiKeyProp, onSuccess, onError }: {
   apiKey: string
   onSuccess: (broker: string) => void
   onError: (msg: string) => void
 }) {
+  const [apiKey, setApiKey]       = useState(apiKeyProp)
   const [clientCode, setClientCode] = useState('')
-  const [password, setPassword] = useState('')
-  const [totp, setTotp] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [password, setPassword]   = useState('')
+  const [totp, setTotp]           = useState('')
+  const [loading, setLoading]     = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!apiKey.trim()) { onError('API Key is required'); return }
     if (totp.length !== 6 || !/^\d{6}$/.test(totp)) {
       onError('TOTP must be exactly 6 digits'); return
     }
     setLoading(true)
     try {
-      const res = await apiClient.post<ApiResponse<BrokerAuthResult>>(
-        '/broker/mstock/login',
-        { apiKey, clientCode, password, totp }   // backend: MStockLoginRequest.ClientCode
-      )
+      const res = await brokerApi.connect('MStock', { apiKey: apiKey.trim(), clientCode, password, totp })
       if (res.data.success) onSuccess('MStock')
       else onError(res.data.error ?? 'Login failed')
     } catch (err: any) {
@@ -67,6 +60,15 @@ function MStockForm({ apiKey, onSuccess, onError }: {
 
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div>
+        <label style={labelStyle}>API Key</label>
+        <input style={{ ...inputStyle, fontFamily: 'monospace', fontSize: 13 }}
+          value={apiKey} onChange={e => setApiKey(e.target.value)}
+          placeholder="mStock Type B API key" autoComplete="off" required />
+        <div style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>
+          Obtain from mStock developer portal. Stored only for this session.
+        </div>
+      </div>
       <div>
         <label style={labelStyle}>User ID (Client Code)</label>
         <input style={inputStyle} value={clientCode} onChange={e => setClientCode(e.target.value)}
@@ -107,7 +109,7 @@ function ZerodhaForm({ onSuccess, onError }: {
   async function fetchLoginUrl() {
     setFetching(true)
     try {
-      const res = await apiClient.get<ApiResponse<string>>('/broker/zerodha/login-url')
+      const res = await brokerApi.loginUrl('Zerodha')
       setLoginUrl(res.data.data ?? null)
     } catch {
       onError('Could not fetch Zerodha login URL')
@@ -119,9 +121,7 @@ function ZerodhaForm({ onSuccess, onError }: {
     if (!requestToken.trim()) { onError('Request token is required'); return }
     setLoading(true)
     try {
-      const res = await apiClient.post<ApiResponse<BrokerAuthResult>>(
-        '/broker/zerodha/callback', { requestToken: requestToken.trim() }
-      )
+      const res = await brokerApi.connect('Zerodha', { requestToken: requestToken.trim() })
       if (res.data.success) onSuccess('Zerodha')
       else onError(res.data.error ?? 'Login failed')
     } catch (err: any) {
@@ -169,7 +169,7 @@ function UpstoxForm({ onSuccess, onError }: {
   async function fetchLoginUrl() {
     setFetching(true)
     try {
-      const res = await apiClient.get<ApiResponse<string>>('/broker/upstox/login-url')
+      const res = await brokerApi.loginUrl('Upstox')
       setLoginUrl(res.data.data ?? null)
     } catch {
       onError('Could not fetch Upstox login URL')

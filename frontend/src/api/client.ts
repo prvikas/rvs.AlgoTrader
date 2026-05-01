@@ -84,17 +84,19 @@ export const brokerApi = {
     apiClient.get<ApiResponse<BrokerFunds>>(`/broker/${brokerName}/funds`),
   positions: (brokerName: string) =>
     apiClient.get<ApiResponse<BrokerPosition[]>>(`/broker/${brokerName}/positions`),
-  // Auth flows
-  mstockLogin: (apiKey: string, clientCode: string, password: string, totp: string) =>
-    apiClient.post<ApiResponse<BrokerAuthResult>>('/broker/mstock/login', { apiKey, clientCode, password, totp }),
-  zerodhaLoginUrl: () =>
-    apiClient.get<ApiResponse<string>>('/broker/zerodha/login-url'),
-  zerodhaCallback: (requestToken: string) =>
-    apiClient.post<ApiResponse<BrokerAuthResult>>('/broker/zerodha/callback', { requestToken }),
-  upstoxLoginUrl: () =>
-    apiClient.get<ApiResponse<string>>('/broker/upstox/login-url'),
-  upstoxCallback: (authCode: string) =>
-    apiClient.post<ApiResponse<BrokerAuthResult>>('/broker/upstox/callback', { authCode }),
+  // Auth flows — generic endpoints (backend: POST /api/broker/{brokerName}/connect)
+  /** Returns OAuth login URL for the given broker (null for direct-credential brokers). */
+  loginUrl: (brokerName: string) =>
+    apiClient.get<ApiResponse<string>>(`/broker/${brokerName}/login-url`),
+  /** Connects a broker. Pass credentials appropriate for the broker's auth flow:
+   *  DirectCredentials (MStock): { apiKey, clientCode, password, totp }
+   *  OAuth (Zerodha):            { requestToken }
+   *  OAuth2 (Upstox):            { code }
+   */
+  connect: (brokerName: string, credentials: Record<string, string>) =>
+    apiClient.post<ApiResponse<BrokerAuthResult>>(`/broker/${brokerName}/connect`, credentials),
+  disconnect: (brokerName: string) =>
+    apiClient.delete<ApiResponse<boolean>>(`/broker/${brokerName}/connect`),
 }
 
 // Instruments
