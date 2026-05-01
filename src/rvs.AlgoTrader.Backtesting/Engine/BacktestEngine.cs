@@ -232,6 +232,33 @@ public class BacktestEngine(
         var highImpactEventDates = new HashSet<LocalDate>(
     prefetchedEvents.Where(e => e.Impact == "High").Select(e => e.EventDate));
 
+        // Rolling 14-period ATR — pre-seeded over warmup bars so it's ready at bar 0 of trading.
+        const int AtrPeriod = 14;
+        var atrTrBuffer = new decimal[AtrPeriod];
+        int atrTrHead   = 0;
+        int atrTrFill   = 0;
+        decimal currentAtr = 0m;
+        for (int w = 1; w < warmupBars && w < totalBars; w++)
+        {
+            var pw = allCandles[w - 1];
+            var cw = allCandles[w];
+            var tr = Math.Max(cw.High - cw.Low,
+                     Math.Max(Math.Abs(cw.High - pw.Close),
+                              Math.Abs(cw.Low  - pw.Close)));
+            atrTrBuffer[atrTrHead % AtrPeriod] = tr;
+            atrTrHead++;
+            if (atrTrFill < AtrPeriod) atrTrFill++;
+            if (atrTrFill >= AtrPeriod)
+            {
+                decimal s = 0m;
+                for (int k = 0; k < AtrPeriod; k++) s += atrTrBuffer[k];
+                currentAtr = s / AtrPeriod;
+            }
+        }
+
+        // Tracks which trade IDs have already had profit booked this lifetime
+        var profitBookedIds = new HashSet<Guid>();
+
         for (int i = warmupBars; i < totalBars; i++)
         {
             // Cancellation checkpoint every 500 bars
@@ -239,6 +266,23 @@ public class BacktestEngine(
 
             var current = allCandles[i];
             var barDate   = current.OpenTime.Date;
+
+            // ── Update rolling ATR (continues from warmup seed) ───────────────
+            {
+                var prev = allCandles[i - 1];
+                var trueRange = Math.Max(current.High - current.Low,
+                                Math.Max(Math.Abs(current.High - prev.Close),
+                                         Math.Abs(current.Low  - prev.Close)));
+                atrTrBuffer[atrTrHead % AtrPeriod] = trueRange;
+                atrTrHead++;
+                if (atrTrFill < AtrPeriod) atrTrFill++;
+                if (atrTrFill >= AtrPeriod)
+                {
+                    decimal sum = 0m;
+                    for (int k = 0; k < AtrPeriod; k++) sum += atrTrBuffer[k];
+                    currentAtr = sum / AtrPeriod;
+                }
+            }
             var barIvRank = ComputeIvRankAsOf(barDate, ivHistory);
 
             // ── Strategy-driven exit: execute deferred close at this bar's open ──────────
@@ -426,10 +470,68 @@ public class BacktestEngine(
             bool tradeBreakLoop   = false;
             foreach (var openTrade in openTrades.ToList())
             {
-                var updated = ApplyTrailingStop(openTrade, current, request);
+                var updated = ApplyTrailingStop(openTrade, current, request, currentAtr);
                 // Replace with updated trailing-stop state
                 var idx = openTrades.IndexOf(openTrade);
                 if (idx >= 0) openTrades[idx] = updated;
+
+                // ── Profit booking: partial close at triggerR ─────────────────
+                if (request.ProfitBookingEnabled
+                    && !profitBookedIds.Contains(updated.Id)
+                    && updated.Quantity > 1
+                    && currentAtr > 0)
+                {
+                    var initialR = Math.Abs(updated.EntryPrice - updated.InitialStopLoss);
+                    if (initialR > 0)
+                    {
+                        var gainR = updated.Direction == "BUY"
+                            ? (current.High - updated.EntryPrice) / initialR
+                            : (updated.EntryPrice - current.Low) / initialR;
+
+                        if (gainR >= request.ProfitBookingTriggerR)
+                        {
+                            var bookQty = Math.Max(1, (int)(updated.Quantity * request.ProfitBookingPct / 100m));
+                            if (bookQty < updated.Quantity)
+                            {
+                                // Fill partial exit at the bar's close (conservative)
+                                var bookFillPrice = current.Close;
+                                var bookGrossPnl  = updated.Direction == "BUY"
+                                    ? (bookFillPrice - updated.EntryPrice) * bookQty
+                                    : (updated.EntryPrice - bookFillPrice) * bookQty;
+                                var bookCosts = costCalc.Calculate(bookFillPrice * bookQty, updated.Direction != "BUY", costProfile);
+                                var bookedTrade = updated with
+                                {
+                                    Id           = Guid.NewGuid(),
+                                    Quantity     = bookQty,
+                                    ExitPrice    = bookFillPrice,
+                                    ExitTime     = current.CloseTime,
+                                    GrossPnl     = bookGrossPnl,
+                                    ExitCommission = bookCosts.Total,
+                                    NetPnl       = bookGrossPnl - updated.EntryCommission * bookQty / updated.Quantity - bookCosts.Total,
+                                    HoldingBars  = Math.Max(0, i - updated.EntryBarIndex),
+                                    ExitReason   = $"PROFIT_BOOKING:{request.ProfitBookingTriggerR:F1}R",
+                                };
+                                equity += bookGrossPnl - bookCosts.Total;
+                                trades.Add(bookedTrade);
+                                profitBookedIds.Add(updated.Id);
+
+                                // Reduce remaining position quantity; optionally activate trailing
+                                var remaining = updated with
+                                {
+                                    Quantity      = updated.Quantity - bookQty,
+                                    EntryCommission = updated.EntryCommission * (updated.Quantity - bookQty) / updated.Quantity,
+                                    TrailActive   = request.ProfitBookingContinueTrail || updated.TrailActive,
+                                };
+                                openTrades[openTrades.IndexOf(updated)] = remaining;
+                                updated = remaining;
+
+                                if (equity > peakEquity) peakEquity = equity;
+                                var pbDd = peakEquity > 0 ? (peakEquity - equity) / peakEquity : 0m;
+                                if (pbDd > maxDrawdown) maxDrawdown = pbDd;
+                            }
+                        }
+                    }
+                }
 
                 var closed = TryClosePosition(updated, current, request);
                 if (closed != null)
@@ -1289,11 +1391,9 @@ public class BacktestEngine(
     ///   3. Full trail: once gain ≥ TrailActivationR, trail SL at (BestPrice − TrailOffsetR × R).
     ///      SL is a ratchet — it can only move in favor, never back.
     /// </summary>
-    private static BacktestTrade ApplyTrailingStop(BacktestTrade trade, ClosedCandle candle, BacktestRequest req)
+    private static BacktestTrade ApplyTrailingStop(BacktestTrade trade, ClosedCandle candle, BacktestRequest req, decimal currentAtr)
     {
         // Always update WorstPrice (MAE) and BestPrice (MFE) regardless of trailing stop settings.
-        // BestPrice was previously only updated inside the trailing-stop block, causing MFE = 0
-        // for all trades when no trail was configured.
         var worstPrice = trade.Direction == "BUY"
             ? Math.Min(trade.WorstPrice, candle.Low)
             : Math.Max(trade.WorstPrice, candle.High);
@@ -1301,8 +1401,11 @@ public class BacktestEngine(
             ? Math.Max(trade.BestPrice, candle.High)
             : Math.Min(trade.BestPrice, candle.Low);
 
-        // Nothing more to do when trailing stop is fully disabled
-        if (req.TrailActivationR <= 0 && !req.BreakEvenAt1R)
+        var isAtrTrail = req.TrailingType == "ATRMultiple" && currentAtr > 0;
+        var isRTrail   = req.TrailingType == "RMultiple";
+        var trailEnabled = isAtrTrail || isRTrail;
+
+        if (!trailEnabled && !req.BreakEvenAt1R)
         {
             return (worstPrice == trade.WorstPrice && bestPrice == trade.BestPrice)
                 ? trade
@@ -1317,7 +1420,6 @@ public class BacktestEngine(
                 : trade with { WorstPrice = worstPrice, BestPrice = bestPrice };
         }
 
-        // How many R has the trade moved in our favour based on best price seen
         var gainR = trade.Direction == "BUY"
             ? (bestPrice - trade.EntryPrice) / initialR
             : (trade.EntryPrice - bestPrice) / initialR;
@@ -1329,16 +1431,24 @@ public class BacktestEngine(
         if (req.BreakEvenAt1R && gainR >= 1m)
         {
             newSl = trade.Direction == "BUY"
-                ? Math.Max(newSl, trade.EntryPrice)   // SL can only move up
-                : Math.Min(newSl, trade.EntryPrice);  // SL can only move down
+                ? Math.Max(newSl, trade.EntryPrice)
+                : Math.Min(newSl, trade.EntryPrice);
             trailActive = true;
         }
 
-        // ── Full trailing stop ─────────────────────────────────────────────
-        if (req.TrailActivationR > 0 && gainR >= req.TrailActivationR)
+        // ── Trail: activate once gainR >= TrailActivationR ────────────────
+        // TrailActivationR = 0 means activate immediately (any profit)
+        var activationMet = req.TrailActivationR <= 0 || gainR >= req.TrailActivationR
+                         || trade.TrailActive; // once active, stays active
+
+        if (trailEnabled && activationMet)
         {
             trailActive = true;
-            var trailDistance = initialR * req.TrailOffsetR;
+            // Trail distance: ATR×multiplier or initialR×offset
+            var trailDistance = isAtrTrail
+                ? currentAtr * req.TrailOffsetR
+                : initialR   * req.TrailOffsetR;
+
             var trailSl = trade.Direction == "BUY"
                 ? bestPrice - trailDistance
                 : bestPrice + trailDistance;
@@ -1349,7 +1459,6 @@ public class BacktestEngine(
                 : Math.Min(newSl, trailSl);
         }
 
-        // Don't update ExitTime in ApplyTrailingStop — it's only set at actual close
         return trade with { BestPrice = bestPrice, StopLoss = newSl, TrailActive = trailActive, WorstPrice = worstPrice };
     }
 

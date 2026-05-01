@@ -209,7 +209,24 @@
       "Bash(node_modules/.bin/tsc --noEmit)",
       "PowerShell(Set-Location \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\frontend\"; npm run dev -- --port 3001 2>&1 | Select-Object -First 5)",
       "Bash(find \"C:/Users/prvik/Downloads/algotrader-claude-kit\" -name \"*.cs\" -exec grep -l \"record ClosedCandle\" {} \\\\;)",
-      "Bash(git -C C:/Users/prvik/Downloads/algotrader-claude-kit diff HEAD~1 -- src/rvs.AlgoTrader.Infrastructure/Services/HistoricalDownloadService.cs)"
+      "Bash(git -C C:/Users/prvik/Downloads/algotrader-claude-kit diff HEAD~1 -- src/rvs.AlgoTrader.Infrastructure/Services/HistoricalDownloadService.cs)",
+      "Bash(gh pr *)",
+      "WebFetch(domain:patch-diff.githubusercontent.com)",
+      "Bash(git show *)",
+      "Bash(grep -v \"//.*disabled\")",
+      "Bash(grep -iv \"test\\\\|spec\\\\|//.*stub method\\\\|//.*stub out\")",
+      "Bash(grep -v \"//.*DEAD-1\\\\|//.*EF Core\\\\|//.*StubRepo\\\\|//.*Non-interpolated\\\\|//.*External NSE\\\\|//.*in-memory\\\\|SDP-1\")",
+      "Bash(grep -iv \"test\\\\|migration\\\\|//.*user\")",
+      "Bash(xargs sed *)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(grep -v \"\\\\.bin\\\\|ExecuteSqlInterpolated\\\\|SqlQueryRaw\\\\|//\\\\|ExecuteSqlRaw\\\\|\\\\\"{0}\\\\|\\\\$\\\\\"\\\\|IsNullOrEmpty\\\\|typeof\\\\|nameof\\\\|message\\\\|error\\\\|Error\\\\|reason\\\\|label\\\\|name\\\\|type\\\\|status\\\\|action\\\\|Description\\\\|Title\\\\|Symbol\\\\|Source\\\\|Format.*{\")",
+      "Bash(grep -v \"\\\\.bin\\\\|//\")",
+      "Bash(grep -rn \"#[0-9a-fA-F]\\\\{3,6\\\\}\" src/components/strategies/DeploymentsTab.tsx src/components/strategies/IndicatorModal.tsx src/components/strategies/ResultsTab.tsx src/components/strategies/ScenarioDrawer.tsx src/components/strategies/ScenariosTab.tsx)",
+      "Bash(grep -rn \"#[0-9a-fA-F]\\\\{3,6\\\\}\" src/components/Strategy/ src/components/ForwardTest/ src/components/quantIntelligence/)",
+      "Bash(grep -n \"#[0-9a-fA-F]\\\\{3,8\\\\}\" \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\frontend\\\\src\\\\components\\\\strategies\\\\IndicatorModal.tsx\")",
+      "Bash(grep -n \"#[0-9a-fA-F]\\\\{3,8\\\\}\" \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\frontend\\\\src\\\\components\\\\strategies\\\\ResultsTab.tsx\")",
+      "Bash(grep -rn \"#[0-9a-fA-F]\\\\{3,8\\\\}\" \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\frontend\\\\src\\\\components\" \"C:\\\\Users\\\\prvik\\\\Downloads\\\\algotrader-claude-kit\\\\frontend\\\\src\\\\pages\" --include=\"*.tsx\")",
+      "Bash(grep -v \"//.*#[0-9a-fA-F]\")"
     ]
   }
 }

@@ -68,7 +68,9 @@ internal static class ForwardTestSessionMapper
         var tradeList = await tradesRepo.GetBySessionAsync(session.Id, ct);
         var openCount = tradeList.Count(t => !t.ExitTime.HasValue);
 
-        // Build equity curve from closed trades in chronological order
+        // Build equity curve from closed trades in chronological order.
+        // Use RealizedPnl (authoritative since migration 024) with Pnl as fallback for
+        // rows inserted before migration 024 backfilled the column.
         var curve = tradeList
             .Where(t => t.ExitTime.HasValue)
             .OrderBy(t => t.ExitTime)
@@ -76,12 +78,13 @@ internal static class ForwardTestSessionMapper
                 (equity: session.InitialCapital, list: new List<ForwardEquityPoint>()),
                 (acc, t) =>
                 {
-                    acc.equity += t.Pnl;
+                    var tradePnl = t.RealizedPnl ?? t.Pnl;
+                    acc.equity += tradePnl;
                     acc.list.Add(new ForwardEquityPoint(
                         // AP-001: no DateTime — use NodaTime InstantPattern for ISO 8601 formatting
                         InstantPattern.ExtendedIso.Format(t.ExitTime!.Value),
                         acc.equity,
-                        t.Pnl));
+                        tradePnl));
                     return acc;
                 }).list;
 

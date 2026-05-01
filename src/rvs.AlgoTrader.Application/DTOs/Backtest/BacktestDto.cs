@@ -30,9 +30,16 @@ public record BacktestRequestDto(
     string BrokerName = "MStock",
     WalkForwardConfigDto? WalkForward = null,
     // Trailing stop parameters (0 = disabled)
+    // TrailingType: "None" | "RMultiple" | "ATRMultiple"
+    string TrailingType = "None",
     decimal TrailActivationR = 0m,
-    decimal TrailOffsetR = 0.5m,
+    decimal TrailOffsetR = 0.5m,    // R offset (RMultiple) or ATR multiplier (ATRMultiple)
     bool BreakEvenAt1R = false,
+    // Profit booking: close a partial position at a target R, optionally trail the rest
+    bool ProfitBookingEnabled = false,
+    decimal ProfitBookingTriggerR = 2m,
+    decimal ProfitBookingPct = 50m,         // 1–99: % of position to close at trigger
+    bool ProfitBookingContinueTrail = true, // trail remaining qty after booking
     // Circuit breaker: stop early when equity < InitialCapital × CircuitBreakerPct.
     // Default 0.5 = stop at 50% drawdown. Set to 0 to disable.
     decimal CircuitBreakerPct = 0.5m,

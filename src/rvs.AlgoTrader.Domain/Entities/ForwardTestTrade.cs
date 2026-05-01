@@ -13,7 +13,13 @@ public class ForwardTestTrade
     public decimal? ExitPrice { get; set; }
     public decimal? SimulatedFillPrice { get; set; }
     public decimal? Slippage { get; set; }
+    /// <summary>
+    /// Authoritative closed-trade P&amp;L (backfilled from Pnl by migration 024; NOT NULL in DB).
+    /// Always use this for analytics. Nullable in C# only to handle rows inserted before
+    /// migration 024 ran — COALESCE(RealizedPnl, Pnl) in query code for full safety.
+    /// </summary>
     public decimal? RealizedPnl { get; set; }
+    /// <summary>Legacy P&amp;L column — kept for backward compatibility. Always equals RealizedPnl on new rows.</summary>
     public decimal Pnl { get; set; }
     public string? CloseReason { get; set; }
     public Instant EntryTime { get; set; }

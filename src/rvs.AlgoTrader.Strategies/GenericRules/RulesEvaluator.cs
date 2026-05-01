@@ -9,15 +9,21 @@ namespace rvs.AlgoTrader.Strategies.GenericRules;
 //
 // Operator support:
 //   ">" | "<" | ">=" | "<=" | "==" | "!=" | "crossesAbove" | "crossesBelow"
+//   "touchedAndBounced" — pullback to indicator, bounce above (long confirmation)
+//   "touchedAndFailed"  — pullback to indicator, break below (short confirmation)
 //
 // Operand kind support:
-//   "indicator"   — computed indicator value (by id + optional field)
-//   "value"       — static decimal
-//   "window"      — aggregated over N bars (avg/max/min/highest/lowest)
-//   "percentile"  — % rank of indicator over lookback bars
-//   "slope"       — positive (1) if indicator rose over lookback bars, -1 if fell, 0 flat
-//   "close"|"open"|"high"|"low"|"volume" — current bar OHLCV
-//   "sessionState" — boolean session properties (treated as 1 or 0)
+//   "indicator"     — computed indicator value (by id + optional field)
+//   "value"         — static decimal
+//   "window"        — aggregated over N bars (avg/max/min/highest/lowest)
+//   "percentile"    — % rank of indicator over lookback bars
+//   "slope"         — positive (1) if indicator rose over lookback bars, -1 if fell, 0 flat
+//   "close"|"open"|"high"|"low"|"volume"             — current bar OHLCV
+//   "prevClose"|"prevOpen"|"prevHigh"|"prevLow"      — previous bar OHLCV
+//   "isBullishBar"  — 1 if current close > open, else 0
+//   "isBearishBar"  — 1 if current close < open, else 0
+//   "htfBias"       — 1 if HTF indicator value > 0 (bullish), else 0
+//   "sessionState"  — boolean session properties (treated as 1 or 0)
 // ─────────────────────────────────────────────────────────────────────────────
 
 public static class RulesEvaluator
@@ -32,14 +38,15 @@ public static class RulesEvaluator
     public static bool Evaluate(
         RuleBlock block,
         Dictionary<string, ComputedIndicator> indicators,
-        IReadOnlyList<ClosedCandle> candles)
+        IReadOnlyList<ClosedCandle> candles,
+        int openPositionCount = 0)
     {
         if (!block.Enabled || block.Groups.Length == 0) return false;
 
         var isOr = block.GroupOperator.Equals("OR", StringComparison.OrdinalIgnoreCase);
         foreach (var group in block.Groups)
         {
-            var groupResult = EvaluateGroup(group, indicators, candles);
+            var groupResult = EvaluateGroup(group, indicators, candles, openPositionCount);
             if (isOr && groupResult) return true;
             if (!isOr && !groupResult) return false;
         }
@@ -52,7 +59,8 @@ public static class RulesEvaluator
     private static bool EvaluateGroup(
         RuleGroup group,
         Dictionary<string, ComputedIndicator> indicators,
-        IReadOnlyList<ClosedCandle> candles)
+        IReadOnlyList<ClosedCandle> candles,
+        int openPositionCount)
     {
         if (group.Conditions.Length == 0) return false;
 
@@ -61,7 +69,7 @@ public static class RulesEvaluator
         {
             try
             {
-                var result = EvaluateCondition(condition, indicators, candles);
+                var result = EvaluateCondition(condition, indicators, candles, openPositionCount);
                 if (isOr  &&  result) return true;
                 if (!isOr && !result) return false;
             }
@@ -79,14 +87,15 @@ public static class RulesEvaluator
     private static bool EvaluateCondition(
         Condition condition,
         Dictionary<string, ComputedIndicator> indicators,
-        IReadOnlyList<ClosedCandle> candles)
+        IReadOnlyList<ClosedCandle> candles,
+        int openPositionCount)
     {
         var op = condition.Operator;
 
         // sessionState: boolean — no right operand needed
         if (condition.Left.Kind.Equals("sessionState", StringComparison.OrdinalIgnoreCase))
         {
-            var val = ResolveSessionState(condition.Left.Property, candles);
+            var val = ResolveSessionState(condition.Left.Property, candles, openPositionCount);
             return val > 0;
         }
 
@@ -95,6 +104,14 @@ public static class RulesEvaluator
         {
             var slope = ComputeSlope(condition.Left.IndicatorId, condition.Left.LookbackBars ?? 3, indicators);
             return op is ">" or ">=" ? slope > 0 : slope < 0;
+        }
+
+        // touchedAndBounced / touchedAndFailed: pullback entry operators
+        if (op.Equals("touchedAndBounced", StringComparison.OrdinalIgnoreCase) ||
+            op.Equals("touchedAndFailed",  StringComparison.OrdinalIgnoreCase))
+        {
+            return EvaluateTouchedAndBounced(condition, indicators, candles,
+                isBullish: op.Equals("touchedAndBounced", StringComparison.OrdinalIgnoreCase));
         }
 
         // Normal numeric comparison
@@ -115,7 +132,7 @@ public static class RulesEvaluator
             "crossesAbove" => EvaluateCrossover(condition, indicators, candles, isAbove: true),
             "crossesBelow" => EvaluateCrossover(condition, indicators, candles, isAbove: false),
 
-            _ => throw new InvalidOperationException($"Unknown operator: '{op}'")  // or log a warning and return false
+            _ => throw new InvalidOperationException($"Unknown operator: '{op}'")
         };
     }
 
@@ -139,6 +156,29 @@ public static class RulesEvaluator
         return isAbove
             ? leftCurr > rightCurr && leftPrev <= rightPrev   // crossed above
             : leftCurr < rightCurr && leftPrev >= rightPrev;  // crossed below
+    }
+
+    // ── TouchedAndBounced — pullback entry operator ───────────────────────────
+    // Fires AFTER a trend is established (e.g. EMA9 already > EMA21), on a
+    // pullback to a support level, rather than on the initial crossover impulse.
+    // Long: bar low wicked into indicator this bar or previous bar, close back above → bounce.
+    // Short: bar high wicked into indicator this bar or previous bar, close back below → fail.
+    private static bool EvaluateTouchedAndBounced(
+        Condition condition,
+        Dictionary<string, ComputedIndicator> indicators,
+        IReadOnlyList<ClosedCandle> candles,
+        bool isBullish)
+    {
+        if (candles.Count < 2 || condition.Right == null) return false;
+        var level = ResolveOperand(condition.Right, indicators, candles, useCurrentValue: true);
+        if (level == 0m) return false;
+
+        var cur  = candles[^1];
+        var prev = candles[^2];
+
+        return isBullish
+            ? (cur.Low <= level || prev.Low <= level) && cur.Close > level
+            : (cur.High >= level || prev.High >= level) && cur.Close < level;
     }
 
     // ── Operand resolution ────────────────────────────────────────────────────
@@ -187,12 +227,32 @@ public static class RulesEvaluator
                 return allZero ? 1m : 0m;
             }
 
-            // OHLCV shorthand operands
+            // ── HTF bias — reads an indicator tagged role="htfBias" ──────────
+            // Returns 1 if the HTF indicator value > 0 (e.g. SuperTrend direction=1,
+            // or EMA above 0), else 0. Pair with slope conditions for EMA bias.
+            case "htfbias":
+            {
+                if (string.IsNullOrEmpty(operand.IndicatorId)) return 0m;
+                if (!indicators.TryGetValue(operand.IndicatorId, out var htfInd)) return 0m;
+                return htfInd.GetField(operand.Field) > 0 ? 1m : 0m;
+            }
+
+            // ── Candle body direction ─────────────────────────────────────────
+            case "isbullishbar": return candles.Count > 0 && candles[^1].Close > candles[^1].Open ? 1m : 0m;
+            case "isbearishbar": return candles.Count > 0 && candles[^1].Close < candles[^1].Open ? 1m : 0m;
+
+            // ── Current bar OHLCV ─────────────────────────────────────────────
             case "close":   return candles.Count > 0 ? candles[^1].Close  : 0m;
             case "open":    return candles.Count > 0 ? candles[^1].Open   : 0m;
             case "high":    return candles.Count > 0 ? candles[^1].High   : 0m;
             case "low":     return candles.Count > 0 ? candles[^1].Low    : 0m;
             case "volume":  return candles.Count > 0 ? candles[^1].Volume : 0m;
+
+            // ── Previous bar OHLCV ────────────────────────────────────────────
+            case "prevclose": return candles.Count > 1 ? candles[^2].Close  : 0m;
+            case "prevopen":  return candles.Count > 1 ? candles[^2].Open   : 0m;
+            case "prevhigh":  return candles.Count > 1 ? candles[^2].High   : 0m;
+            case "prevlow":   return candles.Count > 1 ? candles[^2].Low    : 0m;
 
             default: return 0m;
         }
@@ -258,7 +318,7 @@ public static class RulesEvaluator
 
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
 
-    private static decimal ResolveSessionState(string? property, IReadOnlyList<ClosedCandle> candles)
+    private static decimal ResolveSessionState(string? property, IReadOnlyList<ClosedCandle> candles, int openPositionCount)
     {
         if (candles.Count == 0) return 0m;
         var current = candles[^1];
@@ -274,8 +334,8 @@ public static class RulesEvaluator
             // Cannot track cross-trade state without external state — return 0 (not available in eval context)
             "PreviousTradeWasLoss" => 0m,
 
-            // Cannot know open position count from candle history alone
-            "OpenPositionCount" => 0m,
+            // Populated by BacktestEngine / LiveEngine via StrategyContext.OpenPositionCount
+            "OpenPositionCount" => openPositionCount,
 
             _ => 0m
         };

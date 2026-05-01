@@ -77,25 +77,40 @@ public static class IndicatorEngine
     /// Computes all indicators in the config for the given candle window.
     /// Returns a dictionary keyed by IndicatorDef.Id.
     /// Indicators that fail to compute (e.g. insufficient data) are omitted.
+    /// When primaryTimeframe is supplied, indicators with a different timeframe
+    /// are computed on resampled candles (e.g. 15m candles → 1H bars for HTF bias).
     /// </summary>
     public static Dictionary<string, ComputedIndicator> ComputeAll(
         IReadOnlyList<ClosedCandle> candles,
         IReadOnlyList<IndicatorDef> indicators,
-        StrategyContext? context = null)
+        StrategyContext? context = null,
+        string? primaryTimeframe = null)
     {
         var result = new Dictionary<string, ComputedIndicator>(
             StringComparer.OrdinalIgnoreCase);
 
         if (candles.Count < 2) return result;
 
-        // Build array of closes once — reused across indicator calculations
-        var closes  = BuildCloses(candles);
+        var closes = BuildCloses(candles);
+        var primaryMins = ParseTimeframeMinutes(primaryTimeframe);
 
         foreach (var ind in indicators)
         {
             try
             {
-                var computed = Compute(ind, candles, closes, context);
+                ComputedIndicator? computed;
+                var indMins = ParseTimeframeMinutes(ind.Timeframe);
+                if (indMins > primaryMins && primaryMins > 0)
+                {
+                    var htfCandles = ResampleCandles(candles, primaryMins, indMins);
+                    if (htfCandles.Count < 2) continue;
+                    var htfCloses = BuildCloses(htfCandles);
+                    computed = Compute(ind, htfCandles, htfCloses, context);
+                }
+                else
+                {
+                    computed = Compute(ind, candles, closes, context);
+                }
                 if (computed != null)
                     result[ind.Id] = computed;
             }
@@ -106,6 +121,64 @@ public static class IndicatorEngine
         }
 
         return result;
+    }
+
+    // ── HTF candle resampling ─────────────────────────────────────────────────
+
+    private static int ParseTimeframeMinutes(string? tf)
+    {
+        if (string.IsNullOrEmpty(tf)) return 0;
+        return int.TryParse(tf, out var m) ? m : 0;
+    }
+
+    /// <summary>
+    /// Aggregates primary-timeframe candles into HTF bars aligned to the NSE
+    /// session start (9:15 IST). E.g. 15m → 60m groups candles into 1H slots:
+    /// slot 0 = 9:15–10:14, slot 1 = 10:15–11:14, etc.
+    /// The last group may be partial (current in-progress HTF bar).
+    /// </summary>
+    private static IReadOnlyList<ClosedCandle> ResampleCandles(
+        IReadOnlyList<ClosedCandle> candles, int fromMins, int toMins)
+    {
+        var result  = new List<ClosedCandle>();
+        var group   = new List<ClosedCandle>();
+        var sessionOpenMinutes = 9 * 60 + 15; // 9:15 IST
+        int currentSlot = -1;
+
+        foreach (var c in candles)
+        {
+            var ist     = c.OpenTime.WithZone(Ist);
+            var minOfDay = ist.Hour * 60 + ist.Minute;
+            var offset  = Math.Max(0, minOfDay - sessionOpenMinutes);
+            var slot    = offset / toMins;
+
+            if (slot != currentSlot && group.Count > 0)
+            {
+                result.Add(AggregateGroup(group));
+                group.Clear();
+            }
+            currentSlot = slot;
+            group.Add(c);
+        }
+        if (group.Count > 0)
+            result.Add(AggregateGroup(group));
+
+        return result;
+    }
+
+    private static ClosedCandle AggregateGroup(List<ClosedCandle> g)
+    {
+        var tf = g[0].Timeframe; // keep original label; caller knows this is HTF
+        return new ClosedCandle(
+            g[0].InternalSymbol,
+            tf,
+            g[0].OpenTime,
+            g[^1].CloseTime,
+            g[0].Open,
+            g.Max(c => c.High),
+            g.Min(c => c.Low),
+            g[^1].Close,
+            g.Sum(c => c.Volume));
     }
 
     // ── Per-indicator dispatch ────────────────────────────────────────────────
@@ -166,6 +239,15 @@ public static class IndicatorEngine
             "ATMIV"          => ComputeContextIndicator(context?.OptionChain?.AtmIv),
             "MAXPAIN"        => ComputeContextIndicator(context?.OptionChain?.MaxPainStrike),
 
+            // ── Option premium VWAP ──────────────────────────────────────────────
+            // Reads per-session cumulative VWAP from StrategyContext.OptionPremiumVwap.
+            // BacktestEngine samples option prices each bar via BS and accumulates them.
+            // key param: "CE_ATM" | "PE_ATM" | "STRADDLE_ATM" | "CE_{strike}" | "PE_{strike}"
+            // Returns null when no VWAP data is available (before first bar or no option chain).
+            "OPTIONPREMIUMVWAP" => ComputeOptionPremiumVwapIndicator(
+                                       context?.OptionPremiumVwap,
+                                       ind.GetString("key", "STRADDLE_ATM")),
+
             _                => null   // unknown type — silently skip
         };
     }
@@ -180,6 +262,23 @@ public static class IndicatorEngine
             Current  = value.Value,
             Previous = value.Value,
             History  = [value.Value],
+        };
+    }
+
+    // ── Option premium VWAP ───────────────────────────────────────────────────
+
+    private static ComputedIndicator? ComputeOptionPremiumVwapIndicator(
+        IReadOnlyDictionary<string, decimal>? vwapMap,
+        string key)
+    {
+        if (vwapMap == null || !vwapMap.TryGetValue(key, out var vwap) || vwap == 0m)
+            return null;
+        return new ComputedIndicator
+        {
+            Current  = vwap,
+            Previous = vwap,  // single point-in-time — no bar history available
+            History  = [vwap],
+            Fields   = new Dictionary<string, decimal> { ["vwap"] = vwap },
         };
     }
 

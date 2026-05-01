@@ -278,10 +278,15 @@ public class BacktestJobManager(
         SebiChargesPct:       dto.SebiChargesPct,
         StampDutyPct:         dto.StampDutyPct,
         JobId:                jobId,
-        TrailActivationR:     dto.TrailActivationR,
-        TrailOffsetR:         dto.TrailOffsetR,
-        BreakEvenAt1R:        dto.BreakEvenAt1R,
-        CircuitBreakerPct:    dto.CircuitBreakerPct);
+        TrailingType:                dto.TrailingType,
+        TrailActivationR:            dto.TrailActivationR,
+        TrailOffsetR:                dto.TrailOffsetR,
+        BreakEvenAt1R:               dto.BreakEvenAt1R,
+        ProfitBookingEnabled:        dto.ProfitBookingEnabled,
+        ProfitBookingTriggerR:       dto.ProfitBookingTriggerR,
+        ProfitBookingPct:            dto.ProfitBookingPct,
+        ProfitBookingContinueTrail:  dto.ProfitBookingContinueTrail,
+        CircuitBreakerPct:           dto.CircuitBreakerPct);
 
     private static BacktestResultDto MapToDto(BacktestResult r, DateTimeOffset startedAt) => new(
         Id: null,
