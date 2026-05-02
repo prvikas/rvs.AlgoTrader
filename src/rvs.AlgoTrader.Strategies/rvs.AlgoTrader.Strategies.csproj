@@ -10,5 +10,6 @@
   <ItemGroup>
     <PackageReference Include="NodaTime" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
   </ItemGroup>
 </Project>

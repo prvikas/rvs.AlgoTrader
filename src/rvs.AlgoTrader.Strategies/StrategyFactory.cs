@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using rvs.AlgoTrader.Application.DTOs.ShortPremiumVelocity;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Strategies.AlertCandleShort;
 using rvs.AlgoTrader.Strategies.CalendarSpread;
@@ -8,6 +10,7 @@ using rvs.AlgoTrader.Strategies.IronCondor;
 using rvs.AlgoTrader.Strategies.PriceActionBreakout;
 using rvs.AlgoTrader.Strategies.ShortStraddleStrangle;
 using rvs.AlgoTrader.Strategies.GenericRules;
+using rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 using rvs.AlgoTrader.Strategies.SmaDualThreshold;
 using rvs.AlgoTrader.Strategies.VcpSwing;
 using rvs.AlgoTrader.Strategies.VerticalSpread;
@@ -32,10 +35,15 @@ namespace rvs.AlgoTrader.Strategies;
 /// │ CalendarSpread           │ Sell near-expiry + buy far-expiry ATM (theta + vega)      │
 /// │ VerticalSpread           │ Bull/Bear call/put spreads (4 types, debit or credit)     │
 /// │ SmaDualThreshold         │ SMA20/50 dual-threshold trend (Nitin Joshi, 1Hr, skip 15:15)│
-/// │ GenericRules             │ UI-defined strategy — any indicator + condition tree         │
+/// │ GenericRules             │ UI-defined strategy — any indicator + condition tree       │
+/// │ ShortPremiumVelocity     │ STRAT-004: Short premium velocity (5-regime options seller)│
 /// └──────────────────────────┴───────────────────────────────────────────────────────────┘
+///
+/// ShortPremiumVelocity uses ActivatorUtilities.CreateInstance so that DI-registered
+/// engine services (ICircuitBreakerService, IJumpRiskMonitor, etc.) are injected automatically.
+/// All other strategies are plain config-only constructions (no DI services).
 /// </summary>
-public class StrategyFactory : IStrategyFactory
+public class StrategyFactory(IServiceProvider serviceProvider) : IStrategyFactory
 {
     public IStrategy Create(string strategyName, string? parametersJson)
     {
@@ -66,6 +74,12 @@ public class StrategyFactory : IStrategyFactory
             "GenericRules"          => new GenericRulesStrategy(
                                            GenericRulesConfig.FromJson(parametersJson ?? "{}")),
 
+            // STRAT-004: ShortPremiumVelocity requires DI services — use ActivatorUtilities.
+            // config is passed explicitly; all other constructor parameters resolved from container.
+            "ShortPremiumVelocity"  => ActivatorUtilities.CreateInstance<ShortPremiumVelocityStrategy>(
+                                           serviceProvider,
+                                           ShortPremiumVelocityConfig.FromJson(parametersJson ?? "{}")),
+
             _ => throw new InvalidOperationException(
                 $"Unknown strategy: '{strategyName}'. Registered: {string.Join(", ", GetRegisteredNames())}. " +
                 $"Add the new strategy to StrategyFactory.cs.")
@@ -79,6 +93,7 @@ public class StrategyFactory : IStrategyFactory
         "IronCondor", "ShortStraddleStrangle", "CalendarSpread", "VerticalSpread",
         "SmaDualThreshold",
         "GenericRules",
+        "ShortPremiumVelocity",
     ];
 
     public IReadOnlyList<StrategyParamDef> GetParameterSchema(string strategyName)
@@ -96,6 +111,7 @@ public class StrategyFactory : IStrategyFactory
             "VerticalSpread"        => VerticalSpreadConfig.GetSchema(),
             "SmaDualThreshold"      => SmaDualThresholdConfig.GetSchema(),
             "GenericRules"          => [],  // schema is free-form JSON (full UI strategy definition)
+            "ShortPremiumVelocity"  => ShortPremiumVelocityConfig.GetSchema(),
             _ => throw new InvalidOperationException(
                 $"Unknown strategy: '{strategyName}'. Registered: {string.Join(", ", GetRegisteredNames())}")
         };

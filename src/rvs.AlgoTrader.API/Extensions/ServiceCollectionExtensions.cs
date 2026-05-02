@@ -10,6 +10,7 @@ using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Infrastructure.Repositories;
 using rvs.AlgoTrader.Infrastructure.Services;
 using rvs.AlgoTrader.Strategies;
+using rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 using System.Text;
 
 namespace rvs.AlgoTrader.API.Extensions;
@@ -86,6 +87,9 @@ public static class ServiceCollectionExtensions
 
         // Strategy factory — registered here because only the API project references rvs.AlgoTrader.Strategies
         services.AddSingleton<IStrategyFactory, StrategyFactory>();
+
+        // STRAT-004: Short Premium Velocity engine services (singleton; hold in-memory rolling state)
+        services.AddShortPremiumVelocity();
 
         // BacktestEngine — registered here because only the API project references rvs.AlgoTrader.Backtesting.
         // Infrastructure defines IBacktestEngine (Application layer interface) but cannot reference
