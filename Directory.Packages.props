@@ -41,6 +41,7 @@
   <ItemGroup Label="Entity Framework Core + TimescaleDB">
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0" />
+    <PackageVersion Include="Npgsql" Version="9.0.4" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL.NodaTime" Version="9.0.4" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.0" />

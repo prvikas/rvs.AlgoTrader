@@ -176,17 +176,50 @@ public sealed class VelocityScreener(
     // ── Data extraction helpers (StrategyContext → domain inputs) ─────────────
 
     private static decimal ExtractGammaPerTheta(StrategyContext ctx)
-        // OptionChain available: derive from ATM Greeks snapshot
-        => ctx.OptionChain?.AtmIv > 0 ? 1.0m : 0.5m; // proxy; replaced by real Greeks in live mode
+    {
+        decimal atmIv = ctx.OptionChain?.AtmIv ?? 0m;
+        if (atmIv <= 0m) return 0.5m;   // no chain data — conservative proxy
+        return atmIv > 20m ? 1.5m       // high-vol: high gamma/theta ratio
+             : atmIv > 12m ? 1.0m       // normal vol
+             : 0.7m;                    // low vol: gamma is cheap
+    }
 
     private static decimal ExtractLiquiditySurvival(StrategyContext ctx)
-        // Bid-ask relative to ATM premium — proxy from IV when chain is present
-        => ctx.OptionChain is not null ? 0.08m : 0.04m;
+    {
+        if (ctx.OptionChain is null) return 0.04m;
+
+        decimal spot = ctx.OptionChain.SpotPrice;
+        if (spot <= 0m) return 0.04m;
+
+        // Find up to 4 near-ATM legs (2 CE + 2 PE) with valid bid/ask
+        var atmLegs = ctx.OptionChain.Options
+            .Where(o => o.BidPrice > 0m && o.AskPrice >= o.BidPrice && o.AskPrice > 0m)
+            .OrderBy(o => Math.Abs(o.StrikePrice - spot))
+            .Take(4)
+            .ToList();
+
+        if (atmLegs.Count == 0) return 0.08m; // chain present but no valid legs
+
+        // Relative bid-ask spread: (ask - bid) / mid
+        // Tight market: < 2% → survival near 1.0
+        // Wide market: > 20% → survival near 0
+        decimal avgRelSpread = atmLegs.Average(o =>
+        {
+            decimal mid = (o.BidPrice + o.AskPrice) / 2m;
+            return mid > 0m ? (o.AskPrice - o.BidPrice) / mid : 0.25m;
+        });
+
+        // survival = 1 - relative spread, clamped [0, 1]
+        return Math.Max(0m, Math.Min(1m, 1m - avgRelSpread));
+    }
 
     private static decimal ExtractClusterExposure(StrategyContext ctx)
         // Proxy: single-symbol exposure ≡ 0.20 when no portfolio data available
         => 0.20m;
 
     private static decimal ExtractPortfolioDelta(StrategyContext ctx)
-        => 0m; // replaced by live aggregation in HedgeEvaluator
+        // Portfolio-level delta requires IHedgeEvaluator — proxy from chain bias for now
+        => ctx.OptionChain?.IsBullishBias == true  ?  10m
+         : ctx.OptionChain?.IsBearishBias == true  ? -10m
+         : 0m;
 }

@@ -199,12 +199,13 @@ public interface IJumpRiskMonitor
 public interface IReinvestmentEngine
 {
     Task ProcessSessionCloseAsync(
-        decimal grossPnl,
-        decimal fees,
-        decimal slippage,
-        decimal hedgeNetCost,
+        Guid                       strategyInstanceId,
+        decimal                    grossPnl,
+        decimal                    fees,
+        decimal                    slippage,
+        decimal                    hedgeNetCost,
         ShortPremiumVelocityConfig config,
-        CancellationToken ct);
+        CancellationToken          ct);
 }
 
 /// <summary>

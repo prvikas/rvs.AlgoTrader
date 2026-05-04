@@ -298,6 +298,9 @@ public class ShortPremiumVelocityConfig
     // Synthetic pricer
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// <summary>Minimum ATM IV (%) used when chain data is unavailable — floor for BSM re-pricing.</summary>
+    public decimal AtmIvGuardMinPct { get; init; } = 10.0m;
+
     public decimal RiskFreeRate { get; init; } = 0.065m;
 
     /// <summary>Volatility skew slope per strike away from ATM (negative for equity smile).</summary>

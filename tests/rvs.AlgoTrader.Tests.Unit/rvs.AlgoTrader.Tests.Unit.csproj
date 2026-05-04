@@ -12,6 +12,7 @@
     <PackageReference Include="FluentAssertions" />
     <PackageReference Include="Moq" />
     <PackageReference Include="NodaTime.Testing" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj" />

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NodaTime;
@@ -21,6 +22,7 @@ namespace rvs.AlgoTrader.Tests.Unit.Strategies.ShortPremiumVelocity;
 public class ReinvestmentEngineTests
 {
     private static readonly ShortPremiumVelocityConfig DefaultConfig = new();
+    private static readonly Guid TestInstanceId = Guid.NewGuid();
 
     private static ReinvestmentEngine BuildSut(decimal available = 5_000_000m)
     {
@@ -31,8 +33,11 @@ public class ReinvestmentEngineTests
         var clock = new Mock<IClock>();
         clock.Setup(c => c.NowInstant()).Returns(Instant.FromUtc(2024, 6, 3, 16, 0, 0));
 
+        // Empty configuration — ConnectionString will be null, PersistAsync will skip DB and log a warning
+        IConfiguration configuration = new ConfigurationBuilder().Build();
+
         return new ReinvestmentEngine(
-            capital.Object, clock.Object, NullLogger<ReinvestmentEngine>.Instance);
+            capital.Object, clock.Object, configuration, NullLogger<ReinvestmentEngine>.Instance);
     }
 
     // ── Log entry created on every session close ──────────────────────────────
@@ -43,6 +48,7 @@ public class ReinvestmentEngineTests
         var sut = BuildSut();
 
         await sut.ProcessSessionCloseAsync(
+            strategyInstanceId: TestInstanceId,
             grossPnl:     10_000m,
             fees:         200m,
             slippage:     100m,
@@ -60,7 +66,7 @@ public class ReinvestmentEngineTests
     {
         var sut = BuildSut();
 
-        await sut.ProcessSessionCloseAsync(10_000m, 200m, 100m, 50m, DefaultConfig, CancellationToken.None);
+        await sut.ProcessSessionCloseAsync(TestInstanceId, 10_000m, 200m, 100m, 50m, DefaultConfig, CancellationToken.None);
 
         var entry = sut.Log[0];
         entry.NetPnl.Should().Be(10_000m - 200m - 100m - 50m,
@@ -72,7 +78,7 @@ public class ReinvestmentEngineTests
     {
         var sut = BuildSut();
 
-        await sut.ProcessSessionCloseAsync(10_000m, 200m, 100m, 50m, DefaultConfig, CancellationToken.None);
+        await sut.ProcessSessionCloseAsync(TestInstanceId, 10_000m, 200m, 100m, 50m, DefaultConfig, CancellationToken.None);
 
         sut.Log[0].FrictionTotal.Should().Be(200m + 100m + 50m);
     }
@@ -85,11 +91,11 @@ public class ReinvestmentEngineTests
         var sut = BuildSut();
 
         // First: record a profit to set allocatedCapital > 0
-        await sut.ProcessSessionCloseAsync(50_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
+        await sut.ProcessSessionCloseAsync(TestInstanceId, 50_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
         decimal capitalAfterGain = sut.Log[0].AllocatedCapitalAfter;
 
         // Then: record a loss
-        await sut.ProcessSessionCloseAsync(-20_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
+        await sut.ProcessSessionCloseAsync(TestInstanceId, -20_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
         decimal capitalAfterLoss = sut.Log[1].AllocatedCapitalAfter;
 
         capitalAfterLoss.Should().BeLessThan(capitalAfterGain,
@@ -104,7 +110,7 @@ public class ReinvestmentEngineTests
         var sut = BuildSut();
 
         // Huge loss with zero starting capital
-        await sut.ProcessSessionCloseAsync(-1_000_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
+        await sut.ProcessSessionCloseAsync(TestInstanceId, -1_000_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
 
         sut.Log[0].AllocatedCapitalAfter.Should().BeGreaterThanOrEqualTo(0m,
             because: "allocated capital can never go below zero");
@@ -122,7 +128,7 @@ public class ReinvestmentEngineTests
         // Compound 10 large-gain sessions to push close to the NAV ceiling
         for (int i = 0; i < 10; i++)
         {
-            await sut.ProcessSessionCloseAsync(200_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
+            await sut.ProcessSessionCloseAsync(TestInstanceId, 200_000m, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
         }
 
         // The last few should have hit the ceiling (effectiveReinvest capped or zero)
@@ -142,7 +148,7 @@ public class ReinvestmentEngineTests
         var sut = BuildSut();
         decimal grossPnl = 10_000m;
 
-        await sut.ProcessSessionCloseAsync(grossPnl, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
+        await sut.ProcessSessionCloseAsync(TestInstanceId, grossPnl, 0m, 0m, 0m, DefaultConfig, CancellationToken.None);
 
         decimal expected = grossPnl * (1m - DefaultConfig.FrictionBufferPercent);
         sut.Log[0].AmountReinvested.Should().BeLessThanOrEqualTo(expected + 0.01m,

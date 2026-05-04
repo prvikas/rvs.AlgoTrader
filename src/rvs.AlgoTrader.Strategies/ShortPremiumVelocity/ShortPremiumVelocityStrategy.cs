@@ -6,6 +6,7 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 
@@ -52,6 +53,8 @@ public sealed class ShortPremiumVelocityStrategy(
     IJumpRiskMonitor                      jumpRisk,
     IMarginManager                        margin,
     IPositionRepository                   positions,
+    ISyntheticOptionsPricer               pricer,
+    IClock                                clock,
     ILogger<ShortPremiumVelocityStrategy> log)
     : IStrategy
 {
@@ -131,7 +134,7 @@ public sealed class ShortPremiumVelocityStrategy(
 
         foreach (var pos in shortLegs)
         {
-            var velocityPos  = MapToVelocityPosition(pos);
+            var velocityPos  = MapToVelocityPosition(pos, ctx, config);
             var rollDecision = await rollEngine.EvaluateAsync(velocityPos, regime, ctx, config, ct);
 
             if (rollDecision.Action != RollAction.Hold)
@@ -273,38 +276,64 @@ public sealed class ShortPremiumVelocityStrategy(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static VelocityPosition MapToVelocityPosition(Domain.Entities.Position pos)
+    private VelocityPosition MapToVelocityPosition(
+        Domain.Entities.Position pos, StrategyContext ctx, ShortPremiumVelocityConfig cfg)
     {
-        // Proxy Greeks — Phase 3 replaces with live re-pricing from ISyntheticOptionsPricer
-        decimal qty        = Math.Abs(pos.Quantity);
-        decimal gammaProxy = 0.01m;
-        decimal thetaProxy = 0.05m;
-        decimal gpTheta    = thetaProxy > 0m ? gammaProxy / thetaProxy : 0m;
-        int     dte        = EstimateDteProxy(pos);
+        decimal spot = ctx.Candles.Count > 0 ? ctx.Candles[^1].Close : 0m;
+
+        // IV: prefer live chain AtmIv, fall back to IvRank-derived estimate, then config floor
+        decimal iv = ctx.OptionChain?.AtmIv > 0m
+            ? ctx.OptionChain!.AtmIv
+            : ctx.SymbolIvRank?.IvPercentile > 0m
+                ? Math.Max(cfg.AtmIvGuardMinPct, ctx.SymbolIvRank!.IvPercentile * 0.25m)
+                : cfg.AtmIvGuardMinPct;
+
+        int dte = EstimateDte(pos);
+
+        // Strike: use spot (ATM assumption — position entity does not store strike)
+        decimal strike = spot > 0m ? spot : pos.EntryPrice;
+
+        // Option type: hedge legs are puts, short-premium legs are calls (ATM straddle convention)
+        var optionType = pos.LegType == LegType.Hedge
+            ? OptionType.Put
+            : OptionType.Call;
+
+        // Live BSM pricing — replaces proxy Greeks
+        SyntheticOptionPrice priced = (spot > 0m && strike > 0m && dte > 0 && iv > 0m)
+            ? pricer.Price(ctx.InternalSymbol, spot, strike, dte, optionType, iv, cfg)
+            : new SyntheticOptionPrice(
+                TheoreticalPrice:   Math.Abs(pos.CurrentPrice - pos.EntryPrice),
+                Delta:              pos.Quantity < 0 ? -0.50m : 0.50m,
+                Gamma:              0.01m,
+                Theta:              -0.05m,
+                Vega:               -0.10m,
+                SimulatedFillPrice: pos.CurrentPrice,
+                SlippageApplied:    0m);
+
+        decimal gpTheta = priced.Theta != 0m ? Math.Abs(priced.Gamma / priced.Theta) : 0m;
 
         return new VelocityPosition(
             PositionId:       pos.Id,
             UnderlyingSymbol: pos.InternalSymbol,
-            StructureType:    StructureType.ShortStraddleStrangle, // proxy; Phase 3 from DB tag
+            StructureType:    StructureType.ShortStraddleStrangle, // Position entity lacks StructureType column — Phase 5 migration
             LegType:          pos.LegType ?? LegType.ShortPremium,
             HedgeType:        pos.HedgeType,
             EntryPremium:     pos.EntryPrice,
             CurrentPremium:   pos.CurrentPrice,
-            Delta:            pos.Quantity < 0 ? -0.50m : 0.50m,
-            Gamma:            gammaProxy,
-            Theta:            thetaProxy,
-            Vega:             -0.10m,
+            Delta:            priced.Delta,
+            Gamma:            priced.Gamma,
+            Theta:            priced.Theta,
+            Vega:             priced.Vega,
             GammaPerTheta:    gpTheta,
             Dte:              dte,
             LinkedShortLegId: pos.LinkedShortLegId,
-            EnteredAt:        pos.OpenedAt ?? NodaTime.SystemClock.Instance.GetCurrentInstant());
+            EnteredAt:        pos.OpenedAt ?? clock.NowInstant());
     }
 
-    private static int EstimateDteProxy(Domain.Entities.Position pos)
+    private int EstimateDte(Domain.Entities.Position pos)
     {
         if (!pos.OpenedAt.HasValue) return 7;
-        double ageDays = (NodaTime.SystemClock.Instance.GetCurrentInstant() - pos.OpenedAt.Value)
-                          .TotalDays;
+        double ageDays = (clock.NowInstant() - pos.OpenedAt.Value).TotalDays;
         return Math.Max(7 - (int)ageDays, 0);
     }
 
