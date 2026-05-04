@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NodaTime;
@@ -23,6 +24,25 @@ public class MarginManagerTests
 {
     private static readonly ShortPremiumVelocityConfig DefaultConfig = new();
 
+    /// <summary>
+    /// Wraps a mock IPositionRepository in a fake IServiceScopeFactory so that
+    /// singleton services (which cannot inject scoped IPositionRepository directly)
+    /// can resolve it per-call via CreateAsyncScope().
+    /// </summary>
+    private static IServiceScopeFactory BuildScopeFactory(IPositionRepository posRepo)
+    {
+        var sp = new Mock<IServiceProvider>();
+        sp.Setup(p => p.GetService(typeof(IPositionRepository))).Returns(posRepo);
+
+        var scope = new Mock<IServiceScope>();
+        scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+        scope.Setup(s => s.Dispose()); // IDisposable
+
+        var factory = new Mock<IServiceScopeFactory>();
+        factory.Setup(f => f.CreateScope()).Returns(scope.Object);
+        return factory.Object;
+    }
+
     private static (MarginManager sut, Mock<IPositionRepository> posRepo, Mock<ICircuitBreakerService> cb)
         BuildSut(IReadOnlyList<Position>? openPositions = null)
     {
@@ -42,7 +62,7 @@ public class MarginManagerTests
         clock.Setup(c => c.NowInstant()).Returns(Instant.FromUtc(2024, 6, 3, 10, 0, 0));
 
         var sut = new MarginManager(
-            posRepo.Object, cb.Object, clock.Object,
+            BuildScopeFactory(posRepo.Object), cb.Object, clock.Object,
             NullLogger<MarginManager>.Instance);
 
         return (sut, posRepo, cb);

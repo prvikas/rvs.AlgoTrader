@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using rvs.AlgoTrader.Application.Commands.ShortPremiumVelocity;
 using rvs.AlgoTrader.Application.DTOs.ShortPremiumVelocity;
@@ -19,7 +20,7 @@ namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 /// or expired conditional hedges. Does NOT publish when circuit-breaker is HardStop.
 /// </summary>
 public sealed class HedgeEvaluator(
-    IPositionRepository        positionRepo,
+    IServiceScopeFactory       scopeFactory,
     ICircuitBreakerService     circuitBreaker,
     IPublisher                 publisher,
     ILogger<HedgeEvaluator>    log)
@@ -38,7 +39,9 @@ public sealed class HedgeEvaluator(
         }
 
         // ── 1. Load all open positions ─────────────────────────────────────────
-        var allOpen = await positionRepo.GetOpenAsync(ct);
+        await using var scope      = scopeFactory.CreateAsyncScope();
+        var             posRepo    = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var allOpen = await posRepo.GetOpenAsync(ct);
         var spvPositions = allOpen
             .Where(p => p.LegType.HasValue)
             .ToList();

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using rvs.AlgoTrader.Application.DTOs.ShortPremiumVelocity;
 using rvs.AlgoTrader.Application.Services;
@@ -28,7 +29,7 @@ namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 /// HedgeNetCost accumulated on position records.
 /// </summary>
 public sealed class HedgeEngine(
-    IPositionRepository     positions,
+    IServiceScopeFactory    scopeFactory,
     ISyntheticOptionsPricer pricer,
     ILogger<HedgeEngine>    log)
     : IHedgeEngine
@@ -127,8 +128,11 @@ public sealed class HedgeEngine(
         VelocityPosition position,
         CancellationToken ct)
     {
+        await using var scope   = scopeFactory.CreateAsyncScope();
+        var             posRepo = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+
         // Find all hedge legs linked to this short-premium position
-        var hedgeLegs = (await positions.GetOpenAsync(ct))
+        var hedgeLegs = (await posRepo.GetOpenAsync(ct))
             .Where(p => p.LinkedShortLegId == position.PositionId &&
                         p.LegType is LegType.Hedge or LegType.DeltaHedge)
             .ToList();
@@ -140,7 +144,7 @@ public sealed class HedgeEngine(
                 hedge.Id, hedge.HedgeType, position.PositionId);
             // Mark position closed — order placement handled by execution engine
             hedge.CloseReason = $"PairedExit: linked short leg {position.PositionId} closed";
-            await positions.UpdateAsync(hedge, ct);
+            await posRepo.UpdateAsync(hedge, ct);
         }
     }
 
@@ -149,7 +153,9 @@ public sealed class HedgeEngine(
         ShortPremiumVelocityConfig config,
         CancellationToken          ct)
     {
-        var openPositions = await positions.GetOpenAsync(ct);
+        await using var scope   = scopeFactory.CreateAsyncScope();
+        var             posRepo = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var openPositions = await posRepo.GetOpenAsync(ct);
         var hedgeLegs = openPositions
             .Where(p => p.LegType is LegType.Hedge or LegType.DeltaHedge)
             .ToList();
@@ -200,7 +206,9 @@ public sealed class HedgeEngine(
         VelocityRegimeState regime, ShortPremiumVelocityConfig config, CancellationToken ct)
     {
         // Check if tail-risk hedge already active; roll if DTE < TailRiskHedgeRollDte
-        var openHedges = await positions.GetOpenAsync(ct);
+        await using var scope   = scopeFactory.CreateAsyncScope();
+        var             posRepo = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var openHedges = await posRepo.GetOpenAsync(ct);
         bool tailHedgeActive = openHedges.Any(p => p.HedgeType == HedgeType.TailRiskHedge);
 
         if (!tailHedgeActive)

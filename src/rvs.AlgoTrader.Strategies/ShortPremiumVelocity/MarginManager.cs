@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.ShortPremiumVelocity;
@@ -27,7 +28,7 @@ namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 ///   Stale (not season) → block size increases only.
 /// </summary>
 public sealed class MarginManager(
-    IPositionRepository         positions,
+    IServiceScopeFactory        scopeFactory,
     ICircuitBreakerService      circuitBreaker,
     IClock                      clock,
     ILogger<MarginManager>      log)
@@ -52,8 +53,10 @@ public sealed class MarginManager(
         if (isFresh)
             return _cached;
 
-        // Re-compute from position repository
-        var openPos = await positions.GetOpenAsync(ct);
+        // Re-compute from position repository (new scope — singleton cannot hold scoped IPositionRepository)
+        await using var scope  = scopeFactory.CreateAsyncScope();
+        var             posRepo = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var openPos = await posRepo.GetOpenAsync(ct);
 
         decimal grossMarginUsed   = ComputeGrossMargin(openPos);
         decimal hedgeMarginCredit = ComputeHedgeCredit(openPos, config);
@@ -91,7 +94,9 @@ public sealed class MarginManager(
             "MarginManager.TrimToFit: NetShocked={NS:P1} > HardCap={HC:P1} — trimming",
             margin.NetShockedUtilization, config.ShockedUtilizationHardCap);
 
-        var openPos = await positions.GetOpenAsync(ct);
+        await using var trimScope  = scopeFactory.CreateAsyncScope();
+        var             trimRepo   = trimScope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var openPos = await trimRepo.GetOpenAsync(ct);
 
         // ── Step 1: rank short-premium legs by ThetaToMargin (worst first) ────
         var shortLegs = openPos
@@ -110,7 +115,7 @@ public sealed class MarginManager(
                 "MarginManager.TrimToFit: closing short-premium leg pos={Id} symbol={Sym}",
                 leg.Id, leg.InternalSymbol);
             leg.CloseReason = "TrimToFit: margin utilisation exceeded ShockedUtilizationHardCap";
-            await positions.UpdateAsync(leg, ct);
+            await trimRepo.UpdateAsync(leg, ct);
             trimmed = true;
 
             // Recompute (simplified proxy — production would re-fetch margin)
@@ -133,7 +138,7 @@ public sealed class MarginManager(
                     "MarginManager.TrimToFit: closing orphaned hedge pos={Id}",
                     hedge.Id);
                 hedge.CloseReason = "TrimToFit: orphaned hedge, linked short leg already closed";
-                await positions.UpdateAsync(hedge, ct);
+                await trimRepo.UpdateAsync(hedge, ct);
                 trimmed = true;
             }
         }

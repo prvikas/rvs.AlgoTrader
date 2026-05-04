@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.DTOs.ShortPremiumVelocity;
@@ -22,7 +23,7 @@ namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 /// Step-up is evaluated by EvaluateStepUpAsync; it is NOT automatic.
 /// </summary>
 public sealed class RecoveryManager(
-    IPositionRepository         positions,
+    IServiceScopeFactory        scopeFactory,
     ICircuitBreakerService      circuitBreaker,
     IClock                      clock,
     ILogger<RecoveryManager>    log)
@@ -180,7 +181,9 @@ public sealed class RecoveryManager(
         var ist = now.InZone(DateTimeZone.ForOffset(Offset.FromHoursAndMinutes(5, 30)));
         var today = ist.Date;
 
-        var closedToday = await positions.GetClosedTodayAsync(
+        await using var scope   = scopeFactory.CreateAsyncScope();
+        var             posRepo = scope.ServiceProvider.GetRequiredService<IPositionRepository>();
+        var closedToday = await posRepo.GetClosedTodayAsync(
             [Guid.Empty], today, ct);  // Guid.Empty = all strategy instances (proxy)
 
         decimal sessionPnl = closedToday.Sum(p => p.UnrealizedPnl + p.RealizedPnl);

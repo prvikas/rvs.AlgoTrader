@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using rvs.AlgoTrader.Application.DTOs.ShortPremiumVelocity;
@@ -24,6 +25,17 @@ public class HedgeEngineTests
 {
     private static readonly ShortPremiumVelocityConfig DefaultConfig = new();
 
+    private static IServiceScopeFactory BuildScopeFactory(IPositionRepository posRepo)
+    {
+        var sp = new Mock<IServiceProvider>();
+        sp.Setup(p => p.GetService(typeof(IPositionRepository))).Returns(posRepo);
+        var scope = new Mock<IServiceScope>();
+        scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+        var factory = new Mock<IServiceScopeFactory>();
+        factory.Setup(f => f.CreateScope()).Returns(scope.Object);
+        return factory.Object;
+    }
+
     private static HedgeEngine BuildSut()
     {
         var positionRepo = new Mock<IPositionRepository>();
@@ -32,7 +44,7 @@ public class HedgeEngineTests
 
         var pricer = new Mock<ISyntheticOptionsPricer>();
 
-        return new HedgeEngine(positionRepo.Object, pricer.Object, NullLogger<HedgeEngine>.Instance);
+        return new HedgeEngine(BuildScopeFactory(positionRepo.Object), pricer.Object, NullLogger<HedgeEngine>.Instance);
     }
 
     // ── M1: Delta hedge ───────────────────────────────────────────────────────
@@ -140,7 +152,7 @@ public class HedgeEngineTests
         var posRepo = new Mock<IPositionRepository>();
         posRepo.Setup(r => r.GetOpenAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
-        var sut      = new HedgeEngine(posRepo.Object, new Mock<ISyntheticOptionsPricer>().Object,
+        var sut      = new HedgeEngine(BuildScopeFactory(posRepo.Object), new Mock<ISyntheticOptionsPricer>().Object,
             NullLogger<HedgeEngine>.Instance);
         var position = SpvTestHelpers.MakePosition();
 

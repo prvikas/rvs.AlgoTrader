@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NodaTime;
@@ -27,6 +28,17 @@ public class RecoveryManagerTests
 {
     private static readonly ShortPremiumVelocityConfig DefaultConfig = new();
 
+    private static IServiceScopeFactory BuildScopeFactory(IPositionRepository posRepo)
+    {
+        var sp = new Mock<IServiceProvider>();
+        sp.Setup(p => p.GetService(typeof(IPositionRepository))).Returns(posRepo);
+        var scope = new Mock<IServiceScope>();
+        scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+        var factory = new Mock<IServiceScopeFactory>();
+        factory.Setup(f => f.CreateScope()).Returns(scope.Object);
+        return factory.Object;
+    }
+
     private static RecoveryManager BuildSut(
         CircuitBreakerStateValue cbState  = CircuitBreakerStateValue.Normal,
         bool                     jumpStop = false)
@@ -45,7 +57,7 @@ public class RecoveryManagerTests
              .Returns(Instant.FromUtc(2024, 6, 3, 10, 0, 0));
 
         return new RecoveryManager(
-            positions.Object, cb.Object, clock.Object,
+            BuildScopeFactory(positions.Object), cb.Object, clock.Object,
             NullLogger<RecoveryManager>.Instance);
     }
 
