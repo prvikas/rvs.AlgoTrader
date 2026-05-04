@@ -1,59 +1,121 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { tradeJournalApi, PnlByDimension } from '../api/client'
-import { C, CONTENT_PAD } from '../styles/tokens'
+import { tradeJournalApi, strategiesApi, PnlByDimension } from '../api/client'
 import { formatInr } from '../utils/datetime'
+import { C, F, TABLE_CELL, TABLE_HEADER_CELL } from '../styles/tokens'
 
-// ── Simple bar chart ──────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function BarChart({ rows, title }: { rows: PnlByDimension[]; title: string }) {
-  if (!rows.length) return null
+function pnlColor(val: number) {
+  return val >= 0 ? C.green : C.red
+}
 
-  const maxAbs = Math.max(...rows.map(r => Math.abs(r.netPnl)), 1)
+// ── Attribution table ─────────────────────────────────────────────────────────
+
+function AttributionTable({ rows, title }: { rows: PnlByDimension[]; title: string }) {
+  const thStyle: React.CSSProperties = {
+    padding: TABLE_HEADER_CELL,
+    fontSize: 10,
+    fontWeight: 700,
+    color: C.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    textAlign: 'left',
+    background: C.surface2,
+    whiteSpace: 'nowrap',
+  }
+
+  const tdStyle: React.CSSProperties = {
+    padding: TABLE_CELL,
+    fontSize: 12,
+    verticalAlign: 'middle',
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.textSub, marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{title}</div>
+        <p style={{ color: C.textMuted, fontSize: 12, margin: 0 }}>No data</p>
+      </div>
+    )
+  }
 
   return (
-    <div style={{
-      background: C.surface, border: `1px solid ${C.border}`,
-      borderRadius: 8, padding: 16,
-    }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.textSub, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
         {title}
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {rows.map(r => {
-          const pct = (Math.abs(r.netPnl) / maxAbs) * 100
-          const positive = r.netPnl >= 0
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={thStyle}>Label</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Trades</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Win Rate</th>
+            <th style={{ ...thStyle, textAlign: 'right' }}>Net P&L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr
+              key={row.label}
+              style={{
+                background: idx % 2 === 0 ? C.surface : C.surface3,
+                borderBottom: `1px solid ${C.border2}`,
+              }}
+            >
+              <td style={{ ...tdStyle, fontWeight: 600, color: C.text }}>{row.label}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: C.textSub }}>{row.tradeCount}</td>
+              <td style={{ ...tdStyle, textAlign: 'right', color: row.winRate >= 0.5 ? C.green : C.red }}>
+                {(row.winRate * 100).toFixed(1)}%
+              </td>
+              <td style={{ ...tdStyle, textAlign: 'right', fontFamily: F.mono, fontWeight: 700, color: pnlColor(row.netPnl) }}>
+                {row.netPnl >= 0 ? '+' : ''}{formatInr(row.netPnl)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ── Bar rows (exit type breakdown) ────────────────────────────────────────────
+
+function ExitTypeSection({ rows }: { rows: PnlByDimension[] }) {
+  const total = rows.reduce((s, r) => s + r.tradeCount, 0) || 1
+
+  const exitColors: Record<string, string> = {
+    STOP_LOSS: C.red,
+    TAKE_PROFIT: C.green,
+    TRAIL_STOP: C.blue,
+    MANUAL: C.amber,
+    TIME_EXIT: C.textSub,
+    SIGNAL_EXIT: C.blue,
+  }
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.textSub, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        By Exit Type
+      </div>
+      <div style={{ padding: '10px 12px' }}>
+        {rows.length === 0 && <p style={{ color: C.textMuted, fontSize: 12, margin: 0 }}>No data</p>}
+        {rows.map(row => {
+          const pct = (row.tradeCount / total) * 100
+          const color = exitColors[row.label] ?? C.textSub
           return (
-            <div key={r.dimension} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 90, fontSize: 12, color: C.textSub, textAlign: 'right', flexShrink: 0 }}>
-                {r.label}
+            <div key={row.label} style={{ marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.label}</span>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: C.textMuted }}>{row.tradeCount} trades ({pct.toFixed(0)}%)</span>
+                  <span style={{ fontFamily: F.mono, fontSize: 12, fontWeight: 700, color: pnlColor(row.netPnl) }}>
+                    {row.netPnl >= 0 ? '+' : ''}{formatInr(row.netPnl)}
+                  </span>
+                </div>
               </div>
-              <div style={{ flex: 1, height: 18, background: C.surface2, borderRadius: 3, overflow: 'hidden', position: 'relative' }}>
-                <div style={{
-                  position: 'absolute',
-                  left: positive ? '50%' : `calc(50% - ${pct / 2}%)`,
-                  width: `${pct / 2}%`,
-                  top: 0, bottom: 0,
-                  background: positive ? C.green : C.red,
-                  borderRadius: 2,
-                }} />
-                <div style={{
-                  position: 'absolute',
-                  left: '50%',
-                  top: 0, bottom: 0,
-                  width: 1,
-                  background: C.border3,
-                }} />
-              </div>
-              <div style={{
-                width: 90, fontSize: 12, fontVariantNumeric: 'tabular-nums',
-                color: positive ? C.green : C.red,
-                textAlign: 'right', flexShrink: 0,
-              }}>
-                {formatInr(r.netPnl)}
-              </div>
-              <div style={{ width: 50, fontSize: 11, color: C.textMuted, textAlign: 'right', flexShrink: 0 }}>
-                {(r.winRate * 100).toFixed(0)}% W
+              <div style={{ background: C.surface2, borderRadius: 3, height: 6, overflow: 'hidden' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.3s' }} />
               </div>
             </div>
           )
@@ -63,198 +125,145 @@ function BarChart({ rows, title }: { rows: PnlByDimension[]; title: string }) {
   )
 }
 
-// ── Tax Lots section ──────────────────────────────────────────────────────────
+// ── Day of week section ───────────────────────────────────────────────────────
 
-function TaxLotsSection() {
-  const currentFY = (() => {
-    const now = new Date()
-    const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1
-    return `${year}-${String(year + 1).slice(2)}`
-  })()
-
-  const [fy, setFy] = useState(currentFY)
-
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['tax-lots', fy],
-    queryFn: () => tradeJournalApi.getTaxLots(fy),
-  })
-
-  const lots = data?.data?.data ?? []
-
-  const handleExport = async () => {
-    try {
-      const res = await tradeJournalApi.exportTaxLots(fy)
-      const url = URL.createObjectURL(res.data as Blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `tax-lots-${fy}.csv`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      // ignore
-    }
-  }
+function DayOfWeekSection({ rows }: { rows: PnlByDimension[] }) {
+  const DOW_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+  const sorted = [...rows].sort((a, b) => DOW_ORDER.indexOf(a.label) - DOW_ORDER.indexOf(b.label))
 
   return (
-    <div style={{
-      background: C.surface, border: `1px solid ${C.border}`,
-      borderRadius: 8, padding: 16,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Tax Lots (ITR-3)
-        </div>
-        <select
-          value={fy}
-          onChange={e => setFy(e.target.value)}
-          style={{
-            background: C.surface2, border: `1px solid ${C.border}`,
-            borderRadius: 5, color: C.text, fontSize: 12, padding: '3px 8px',
-          }}
-        >
-          {[-1, 0, 1].map(d => {
-            const now = new Date()
-            const y = (now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1) + d
-            const label = `${y}-${String(y + 1).slice(2)}`
-            return <option key={label} value={label}>{label}</option>
-          })}
-        </select>
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={handleExport}
-          disabled={lots.length === 0}
-          style={{
-            padding: '4px 12px', borderRadius: 5, border: `1px solid ${C.border}`,
-            background: lots.length > 0 ? C.blue : 'transparent',
-            color: lots.length > 0 ? '#fff' : C.textMuted,
-            cursor: lots.length > 0 ? 'pointer' : 'default', fontSize: 12,
-          }}
-        >Export CSV</button>
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontSize: 12, fontWeight: 700, color: C.textSub, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        By Day of Week
       </div>
-
-      {isLoading && <div style={{ color: C.textMuted, fontSize: 13 }}>Loading…</div>}
-      {isError && <div style={{ color: C.red, fontSize: 13 }}>Failed to load tax lots.</div>}
-
-      {!isLoading && !isError && lots.length === 0 && (
-        <div style={{ color: C.textMuted, fontSize: 13 }}>No closed trades for FY {fy}.</div>
-      )}
-
-      {lots.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ background: C.surface2 }}>
-              {['Symbol', 'Open Date', 'Close Date', 'Qty', 'Buy Price', 'Sell Price', 'Gross P&L', 'Class', 'Days'].map(h => (
-                <th key={h} style={{
-                  padding: '5px 10px', textAlign: 'left',
-                  fontSize: 10, fontWeight: 700, color: C.textMuted,
-                  textTransform: 'uppercase', letterSpacing: '0.05em',
-                  borderBottom: `1px solid ${C.border}`,
-                }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {lots.map((lot, i) => (
-              <tr key={i}>
-                <td style={{ padding: '4px 10px', fontSize: 12, color: C.text, borderBottom: `1px solid ${C.border2}` }}>{lot.symbol}</td>
-                <td style={{ padding: '4px 10px', fontSize: 12, color: C.textSub, borderBottom: `1px solid ${C.border2}` }}>{lot.openDate?.slice(0, 10)}</td>
-                <td style={{ padding: '4px 10px', fontSize: 12, color: C.textSub, borderBottom: `1px solid ${C.border2}` }}>{lot.closeDate?.slice(0, 10)}</td>
-                <td style={{ padding: '4px 10px', fontSize: 12, color: C.text, borderBottom: `1px solid ${C.border2}` }}>{lot.quantity}</td>
-                <td style={{ padding: '4px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: C.text, borderBottom: `1px solid ${C.border2}` }}>{formatInr(lot.buyPrice)}</td>
-                <td style={{ padding: '4px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: C.text, borderBottom: `1px solid ${C.border2}` }}>{formatInr(lot.sellPrice)}</td>
-                <td style={{ padding: '4px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums', color: lot.grossPnl >= 0 ? C.green : C.red, borderBottom: `1px solid ${C.border2}` }}>{formatInr(lot.grossPnl)}</td>
-                <td style={{ padding: '4px 10px', fontSize: 11, borderBottom: `1px solid ${C.border2}` }}>
-                  <span style={{
-                    padding: '1px 6px', borderRadius: 3, fontWeight: 700,
-                    background: lot.classification === 'Speculative' ? C.amberBg : lot.classification === 'LTCG' ? C.greenBg : C.blueBg,
-                    color: lot.classification === 'Speculative' ? C.amber : lot.classification === 'LTCG' ? C.green : C.blue,
-                  }}>{lot.classification}</span>
-                </td>
-                <td style={{ padding: '4px 10px', fontSize: 12, color: C.textSub, borderBottom: `1px solid ${C.border2}` }}>{lot.holdingDays}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <div style={{ padding: '10px 12px' }}>
+        {sorted.length === 0 && <p style={{ color: C.textMuted, fontSize: 12, margin: 0 }}>No data</p>}
+        {sorted.map(row => (
+          <div key={row.label} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '6px 0',
+            borderBottom: `1px solid ${C.border2}`,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: C.text, minWidth: 100 }}>{row.label}</span>
+            <span style={{ fontSize: 11, color: C.textMuted, minWidth: 80, textAlign: 'right' }}>{row.tradeCount} trades</span>
+            <span style={{ fontFamily: F.mono, fontSize: 12, fontWeight: 700, color: pnlColor(row.netPnl), minWidth: 100, textAlign: 'right' }}>
+              {row.netPnl >= 0 ? '+' : ''}{formatInr(row.netPnl)}
+            </span>
+            <span style={{ fontSize: 11, color: row.winRate >= 0.5 ? C.green : C.red, minWidth: 60, textAlign: 'right' }}>
+              {(row.winRate * 100).toFixed(1)}% W
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Page root ─────────────────────────────────────────────────────────────────
 
 export function PortfolioAnalysisPage() {
-  const [from, setFrom] = useState('')
-  const [to,   setTo]   = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate,   setToDate]   = useState('')
+  const [strategyInstanceId, setStrategyInstanceId] = useState('')
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['pnl-attribution', from, to],
+  const { data: attribution, isLoading, isError } = useQuery({
+    queryKey: ['trade-journal-attribution', strategyInstanceId, fromDate, toDate],
     queryFn: () => tradeJournalApi.getAttribution({
-      from: from || undefined,
-      to:   to   || undefined,
-    }),
+      strategyInstanceId: strategyInstanceId || undefined,
+      from: fromDate || undefined,
+      to:   toDate   || undefined,
+    }).then(r => r.data.data),
+    staleTime: 60_000,
   })
 
-  const attr = data?.data?.data
+  const { data: strategies } = useQuery({
+    queryKey: ['strategies-list'],
+    queryFn: () => strategiesApi.list().then(r => r.data.data ?? []),
+    staleTime: 60_000,
+  })
+
+  const selectStyle: React.CSSProperties = {
+    background: C.surface2,
+    border: `1px solid ${C.border}`,
+    borderRadius: 4,
+    color: C.text,
+    padding: '5px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+  }
 
   const inputStyle: React.CSSProperties = {
-    background: C.surface2, border: `1px solid ${C.border}`,
-    borderRadius: 5, color: C.text, fontSize: 12, padding: '4px 8px',
+    background: C.surface2,
+    border: `1px solid ${C.border}`,
+    borderRadius: 4,
+    color: C.text,
+    padding: '5px 8px',
+    fontSize: 12,
+    colorScheme: 'dark',
   }
 
   return (
-    <div style={{ padding: CONTENT_PAD }}>
-      {/* Header + date filter */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>P&amp;L Analysis</div>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: C.textMuted }}>From</span>
-        <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={inputStyle} />
-        <span style={{ fontSize: 12, color: C.textMuted }}>To</span>
-        <input type="date" value={to}   onChange={e => setTo(e.target.value)}   style={inputStyle} />
-        {(from || to) && (
+    <div>
+      {/* Page header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Portfolio Analysis</h2>
+      </div>
+
+      {/* Filters */}
+      <div style={{
+        display: 'flex', gap: 10, alignItems: 'center',
+        marginBottom: 16, flexWrap: 'wrap',
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 6,
+        padding: '8px 12px',
+      }}>
+        <label style={{ fontSize: 11, color: C.textMuted, display: 'flex', alignItems: 'center', gap: 6 }}>
+          From
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={inputStyle} />
+        </label>
+        <label style={{ fontSize: 11, color: C.textMuted, display: 'flex', alignItems: 'center', gap: 6 }}>
+          To
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={inputStyle} />
+        </label>
+        <select value={strategyInstanceId} onChange={e => setStrategyInstanceId(e.target.value)} style={selectStyle}>
+          <option value="">All Strategies</option>
+          {(strategies ?? []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        {(fromDate || toDate || strategyInstanceId) && (
           <button
-            onClick={() => { setFrom(''); setTo('') }}
-            style={{ ...inputStyle, cursor: 'pointer', color: C.textMuted }}
-          >Clear</button>
+            onClick={() => { setFromDate(''); setToDate(''); setStrategyInstanceId('') }}
+            style={{ ...selectStyle, color: C.textMuted }}
+          >
+            Clear
+          </button>
         )}
       </div>
 
-      {isLoading && (
-        <div style={{ color: C.textMuted, fontSize: 13, padding: 32, textAlign: 'center' }}>
-          Loading attribution data…
+      {isLoading && <p style={{ color: C.textMuted }}>Loading attribution data...</p>}
+      {isError && <p style={{ color: C.red }}>Failed to load attribution data.</p>}
+
+      {!isLoading && !isError && attribution && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+          <AttributionTable rows={attribution.bySymbol} title="By Symbol" />
+          <AttributionTable rows={attribution.byMonth} title="By Month" />
+          <ExitTypeSection rows={attribution.byExitType} />
+          <DayOfWeekSection rows={attribution.byDayOfWeek} />
         </div>
       )}
 
-      {isError && (
-        <div style={{ color: C.red, fontSize: 13, padding: 32, textAlign: 'center' }}>
-          Failed to load attribution data.
+      {!isLoading && !isError && !attribution && (
+        <div style={{
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          padding: 32,
+          textAlign: 'center',
+        }}>
+          <p style={{ color: C.textMuted, fontSize: 14, margin: 0 }}>No attribution data available yet.</p>
+          <p style={{ color: C.textDim, fontSize: 12, margin: '6px 0 0' }}>Completed trades will appear here once recorded in the journal.</p>
         </div>
       )}
-
-      {attr && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-            <BarChart rows={attr.bySymbol    ?? []} title="By Symbol" />
-            <BarChart rows={attr.byMonth     ?? []} title="By Month" />
-            <BarChart rows={attr.byDayOfWeek ?? []} title="By Day of Week" />
-            <BarChart rows={attr.byExitType  ?? []} title="By Exit Type" />
-          </div>
-          {/* P9: cross-strategy breakdown — only shown when byStrategy is populated (all-strategies view) */}
-          {(attr.byStrategy ?? []).length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <BarChart rows={attr.byStrategy!} title="By Strategy" />
-            </div>
-          )}
-        </>
-      )}
-
-      {!isLoading && !isError && !attr && (
-        <div style={{ color: C.textMuted, fontSize: 13, padding: 32, textAlign: 'center' }}>
-          No attribution data yet. Run backtests or forward tests to populate the trade journal.
-        </div>
-      )}
-
-      <TaxLotsSection />
     </div>
   )
 }
