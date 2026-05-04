@@ -106,7 +106,7 @@ public sealed class ShortPremiumVelocityStrategy(
         }
 
         // ── Step 5: Margin gate ───────────────────────────────────────────────
-        var marginState = await margin.GetCurrentStateAsync(ct);
+        var marginState = await margin.GetCurrentStateAsync(config, ct);
         if (marginState.NetShockedUtilization > config.ShockedUtilizationHardCap)
         {
             log.LogWarning(
@@ -204,7 +204,7 @@ public sealed class ShortPremiumVelocityStrategy(
 
         // ── Step 14: KellyHat position sizing ────────────────────────────────
         // Half-Kelly: f = (winRate × avgWin − lossRate × avgLoss) / avgWin / 2
-        decimal winRate      = WinRateProxy(regime);
+        decimal winRate      = config.WinRateByRegime.GetValueOrDefault(regime.Label, 0.50m);
         decimal avgWinRatio  = config.ProfitTargetFraction.GetValueOrDefault(regime.Label, 0.50m);
         decimal avgLossRatio = config.StopLossMultiplier;
         decimal lossRate     = 1m - winRate;
@@ -220,12 +220,13 @@ public sealed class ShortPremiumVelocityStrategy(
         // ── Step 15: Soft-stop size cap ───────────────────────────────────────
         if (cbState.State == CircuitBreakerStateValue.SoftStop)
         {
-            baseSize = Math.Round(baseSize * 0.50m, 4);
+            baseSize = Math.Round(baseSize * config.SoftStopSizeCap, 4);
             log.LogInformation(
-                "SPV: SoftStop — size capped 50%: baseSize={S:F4}", baseSize);
+                "SPV: SoftStop — size capped {Cap:P0}: baseSize={S:F4}",
+                config.SoftStopSizeCap, baseSize);
         }
 
-        baseSize = Math.Clamp(baseSize, 0.10m, 1.0m);
+        baseSize = Math.Clamp(baseSize, config.BaseSizeFloor, config.BaseSizeCeiling);
 
         // ── Step 16: Hedge evaluation (fire-and-forget) ───────────────────────
         _ = hedgeEvaluator.EvaluatePortfolioHedgeNeedAsync(regime, config, ct);
@@ -336,16 +337,6 @@ public sealed class ShortPremiumVelocityStrategy(
         double ageDays = (clock.NowInstant() - pos.OpenedAt.Value).TotalDays;
         return Math.Max(7 - (int)ageDays, 0);
     }
-
-    private static decimal WinRateProxy(VelocityRegimeState regime)
-        => regime.Label switch
-        {
-            MarketRegime.VelocityLowVolCompression      => 0.72m,
-            MarketRegime.VelocityChoppyMeanReversion    => 0.65m,
-            MarketRegime.VelocityPostPanicNormalization => 0.60m,
-            MarketRegime.VelocityHighVolExpansion        => 0.55m,
-            _                                            => 0.50m,
-        };
 
     private static IReadOnlyList<SpreadLeg> BuildSpreadLegs(
         StructureType              type,

@@ -144,6 +144,86 @@ public class ShortPremiumVelocityConfig
     };
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Per-regime win-rate and regime tilt
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Historical win-rate (fraction) per regime — used in the half-Kelly sizing formula.
+    /// Lower regimes get conservative estimates; update as live stats accumulate.
+    /// </summary>
+    public Dictionary<MarketRegime, decimal> WinRateByRegime { get; init; } = new()
+    {
+        [MarketRegime.VelocityLowVolCompression]      = 0.72m,
+        [MarketRegime.VelocityChoppyMeanReversion]    = 0.65m,
+        [MarketRegime.VelocityPostPanicNormalization] = 0.60m,
+        [MarketRegime.VelocityHighVolExpansion]        = 0.55m,
+        [MarketRegime.VelocityPanic]                   = 0.50m,
+    };
+
+    /// <summary>
+    /// Multiplier (0–1) applied to the raw Velocity Score's regime component.
+    /// Reduces effective score in high-vol / panic regimes; 0 = no entry in that regime.
+    /// </summary>
+    public Dictionary<MarketRegime, decimal> RegimeTiltByRegime { get; init; } = new()
+    {
+        [MarketRegime.VelocityLowVolCompression]      = 1.00m,
+        [MarketRegime.VelocityChoppyMeanReversion]    = 0.90m,
+        [MarketRegime.VelocityPostPanicNormalization] = 0.85m,
+        [MarketRegime.VelocityHighVolExpansion]        = 0.70m,
+        [MarketRegime.VelocityPanic]                   = 0.00m,
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Results season
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Calendar months (1=Jan … 12=Dec) treated as results season.
+    /// During these months the cluster cap is tightened by ResultsSeasonClusterCapMultiplier.
+    /// Default: Jan, Feb, Apr, May, Jul, Aug, Oct, Nov (quarterly earnings windows).
+    /// </summary>
+    public int[] ResultsSeasonMonths { get; init; } = [1, 2, 4, 5, 7, 8, 10, 11];
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Sizing bounds and circuit-breaker caps
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Minimum base-size fraction (floor applied after Kelly × aggression × recovery).</summary>
+    public decimal BaseSizeFloor { get; init; } = 0.10m;
+
+    /// <summary>Maximum base-size fraction (ceiling applied after Kelly × aggression × recovery).</summary>
+    public decimal BaseSizeCeiling { get; init; } = 1.00m;
+
+    /// <summary>When a soft-stop is active, the computed size is multiplied by this cap (0–1).</summary>
+    public decimal SoftStopSizeCap { get; init; } = 0.50m;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Quality thresholds (VelocityIndicator gating)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Minimum fill-quality score (0–100) required to unlock the maximum aggression multiplier.
+    /// Below this threshold, aggression is capped at the midpoint of Min and Max.
+    /// </summary>
+    public decimal FillQualityTopTierThreshold { get; init; } = 80.0m;
+
+    /// <summary>
+    /// Tail-risk score above which a mandatory hedge is required before opening a new position.
+    /// Maps to VelocityScreener hard gate h: RequiresMandatoryHedge when score exceeds this value.
+    /// </summary>
+    public decimal MandatoryHedgeTailRiskThreshold { get; init; } = 60.0m;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MarginManager internals
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fraction of hedge-leg notional credited as margin reduction (SPAN netting proxy).
+    /// 0.30 means each ₹100 of hedge position reduces net shocked margin by ₹30.
+    /// </summary>
+    public decimal HedgeCreditFraction { get; init; } = 0.30m;
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Structure selection
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -416,7 +496,23 @@ public class ShortPremiumVelocityConfig
         new("ResultsSeasonClusterCapMultiplier","Results Season Cluster Cap Multiplier","decimal", 0.50m,  Min: 0.20m, Max: 1.0m,  Step: 0.05m, Section: "Cluster",
             Hint: "Applied on top of ClusterHardCap during earnings season. Effective cap = ClusterHardCap × multiplier."),
 
+        // ── Sizing bounds and circuit-breaker caps ─────────────────────────
+        new("BaseSizeFloor",                   "Base Size Floor (fraction)",             "decimal", 0.10m,  Min: 0.01m, Max: 0.30m, Step: 0.01m, Section: "Sizing"),
+        new("BaseSizeCeiling",                 "Base Size Ceiling (fraction)",           "decimal", 1.00m,  Min: 0.30m, Max: 1.00m, Step: 0.05m, Section: "Sizing"),
+        new("SoftStopSizeCap",                 "Soft-Stop Size Cap (fraction)",          "decimal", 0.50m,  Min: 0.10m, Max: 0.90m, Step: 0.05m, Section: "Sizing",
+            Hint: "When circuit breaker is in SoftStop, computed size is multiplied by this."),
+
+        // ── Quality thresholds ────────────────────────────────────────────
+        new("FillQualityTopTierThreshold",     "Fill Quality Top-Tier Threshold",        "decimal", 80.0m,  Min: 50m,   Max: 100m, Step: 5m,    Section: "Quality"),
+        new("MandatoryHedgeTailRiskThreshold", "Mandatory Hedge Tail-Risk Threshold",    "decimal", 60.0m,  Min: 30m,   Max: 90m,  Step: 5m,    Section: "Quality"),
+
+        // ── MarginManager ─────────────────────────────────────────────────
+        new("HedgeCreditFraction",             "Hedge Credit Fraction (SPAN netting)",  "decimal", 0.30m,  Min: 0.10m, Max: 0.60m, Step: 0.05m, Section: "Margin"),
+
         // ── Per-regime dicts (schema metadata only; values are JSON objects) ─
+        new("WinRateByRegime",                 "Win Rate By Regime",                    "json", null,   Hint: "Dictionary<MarketRegime, decimal>. Historical win-rate per regime for Kelly sizing."),
+        new("RegimeTiltByRegime",              "Regime Tilt By Regime",                 "json", null,   Hint: "Dictionary<MarketRegime, decimal>. VS regime-component multiplier (0=no entry)."),
+        new("ResultsSeasonMonths",             "Results Season Months",                 "json", null,   Hint: "int[] months (1–12) treated as results season. Default: [1,2,4,5,7,8,10,11]."),
         new("TailRiskScoreCeiling",            "Tail Risk Score Ceiling (per regime)",  "json", null,   Hint: "Dictionary<MarketRegime, decimal>. Max tail-risk score above which entry is blocked."),
         new("GammaPerThetaCeiling",            "Gamma/Theta Ceiling (per regime)",      "json", null,   Hint: "Dictionary<MarketRegime, decimal>. Max gamma-per-theta ratio at entry."),
         new("LiquiditySurvivalFloor",          "Liquidity Floor (per regime)",          "json", null,   Hint: "Dictionary<MarketRegime, decimal>. Min bid-ask/premium ratio for entry."),

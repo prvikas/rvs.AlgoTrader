@@ -48,14 +48,17 @@ public class VelocityScreenerTests
             ResetEligibleAt:  null));
 
         var mm = new Mock<IMarginManager>();
+        var marginState = new MarginState(
+            GrossMarginUsed:       1_000_000m,
+            HedgeMarginCredit:     100_000m,
+            NetShockedUtilization: netShockedUtilization,
+            IsFresh:               true,
+            IsResultsSeason:       false,
+            LastRefreshedAt:       NodaTime.Instant.FromUtc(2024, 6, 3, 9, 15, 0));
         mm.Setup(m => m.GetCurrentStateAsync(It.IsAny<CancellationToken>()))
-          .ReturnsAsync(new MarginState(
-              GrossMarginUsed:       1_000_000m,
-              HedgeMarginCredit:     100_000m,
-              NetShockedUtilization: netShockedUtilization,
-              IsFresh:               true,
-              IsResultsSeason:       false,
-              LastRefreshedAt:       NodaTime.Instant.FromUtc(2024, 6, 3, 9, 15, 0)));
+          .ReturnsAsync(marginState);
+        mm.Setup(m => m.GetCurrentStateAsync(It.IsAny<ShortPremiumVelocityConfig>(), It.IsAny<CancellationToken>()))
+          .ReturnsAsync(marginState);
 
         return new VelocityScreener(cb.Object, mm.Object, NullLogger<VelocityScreener>.Instance);
     }

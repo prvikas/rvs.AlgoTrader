@@ -128,7 +128,7 @@ public class EmaVwapMomentumStrategy(EmaVwapMomentumConfig config) : IStrategy
         // NoTradeAfterMinutes: minutes from midnight (e.g. 900 = 15:00 IST)
         if (config.NoTradeAfterMinutes > 0)
         {
-            var barIst     = current.OpenTime.ToInstant().InZone(Ist).LocalDateTime;
+            var barIst     = current.CloseTime.ToInstant().InZone(Ist).LocalDateTime;
             var barMinutes = barIst.Hour * 60 + barIst.Minute;
             if (barMinutes >= config.NoTradeAfterMinutes)
                 return Task.FromResult(SignalResult.Hold(

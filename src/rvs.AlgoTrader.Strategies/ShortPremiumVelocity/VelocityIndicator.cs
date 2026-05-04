@@ -25,16 +25,6 @@ public sealed class VelocityIndicator(
     ILogger<VelocityIndicator> log)
     : IVelocityIndicator
 {
-    // Per-regime tilt factors
-    private static readonly Dictionary<MarketRegime, decimal> RegimeTilt = new()
-    {
-        [MarketRegime.VelocityLowVolCompression]      = 1.00m,
-        [MarketRegime.VelocityChoppyMeanReversion]    = 0.90m,
-        [MarketRegime.VelocityPostPanicNormalization] = 0.85m,
-        [MarketRegime.VelocityHighVolExpansion]        = 0.70m,
-        [MarketRegime.VelocityPanic]                   = 0.00m,
-    };
-
     public async Task<VelocityScoreResult> ScoreAsync(
         StrategyContext            ctx,
         VelocityRegimeState        regime,
@@ -45,10 +35,10 @@ public sealed class VelocityIndicator(
         ValidateWeights(config.VelocityScoreWeights,       "VelocityScoreWeights");
         ValidateWeights(config.OpportunityDensityWeights,  "OpportunityDensityWeights");
 
-        MarginState margin = await marginManager.GetCurrentStateAsync(ct);
+        MarginState margin = await marginManager.GetCurrentStateAsync(config, ct);
 
         // ── Raw inputs (scaled 0-100 unless noted) ────────────────────────────
-        decimal regimeTilt      = RegimeTilt.GetValueOrDefault(regime.Label, 0m);
+        decimal regimeTilt      = config.RegimeTiltByRegime.GetValueOrDefault(regime.Label, 0m);
         decimal thetaPerMargin  = ComputeThetaPerMargin(ctx, margin);
         decimal gammaPerTheta   = ComputeGammaPerTheta(ctx);
         decimal liquiditySurv   = ComputeLiquiditySurvival(ctx);
@@ -97,7 +87,7 @@ public sealed class VelocityIndicator(
         }
 
         // Allow max ONLY if ALL unlocking conditions are met
-        bool fillQualityTopTier = fillQuality >= 80m;
+        bool fillQualityTopTier = fillQuality >= config.FillQualityTopTierThreshold;
         bool odSufficient       = od >= config.OdThresholdForMaxAggression;
         bool marginFresh        = margin.IsFresh;
 

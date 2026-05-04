@@ -166,8 +166,14 @@ public interface ICircuitBreakerService
 /// </summary>
 public interface IMarginManager
 {
-    /// <summary>Fetches and returns the current margin state from the broker (cached for freshness window).</summary>
+    /// <summary>Fetches and returns the current margin state (cached; freshness from config.MarginFreshnessMaxAgeMinutes).</summary>
     Task<MarginState> GetCurrentStateAsync(CancellationToken ct);
+
+    /// <summary>Same as above but honours the supplied config's freshness threshold. Default implementation delegates to the no-config overload.</summary>
+    Task<MarginState> GetCurrentStateAsync(
+        ShortPremiumVelocityConfig config,
+        CancellationToken ct)
+        => GetCurrentStateAsync(ct);
 
     /// <summary>
     /// Trims the lowest-priority positions until net-shocked utilisation falls to

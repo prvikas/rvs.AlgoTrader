@@ -36,13 +36,18 @@ public sealed class MarginManager(
     private MarginState _cached = new(0m, 0m, 0m, false, false,
         NodaTime.Instant.MinValue);
 
-    public async Task<MarginState> GetCurrentStateAsync(CancellationToken ct)
+    public Task<MarginState> GetCurrentStateAsync(CancellationToken ct)
+        => GetCurrentStateAsync(new ShortPremiumVelocityConfig(), ct);
+
+    public async Task<MarginState> GetCurrentStateAsync(
+        ShortPremiumVelocityConfig config,
+        CancellationToken          ct)
     {
         var now = clock.NowInstant();
 
-        // Return cached if still fresh (checked below by consumer; here we refresh periodically)
+        // Return cached if still fresh — use config threshold, not a hardcoded literal
         bool isFresh = _cached.IsFresh &&
-                       (now - _cached.LastRefreshedAt).TotalMinutes <= 20;
+                       (now - _cached.LastRefreshedAt).TotalMinutes <= config.MarginFreshnessMaxAgeMinutes;
 
         if (isFresh)
             return _cached;
@@ -51,12 +56,12 @@ public sealed class MarginManager(
         var openPos = await positions.GetOpenAsync(ct);
 
         decimal grossMarginUsed   = ComputeGrossMargin(openPos);
-        decimal hedgeMarginCredit = ComputeHedgeCredit(openPos);
+        decimal hedgeMarginCredit = ComputeHedgeCredit(openPos, config);
         decimal netShocked        = grossMarginUsed > 0
             ? Math.Max(0m, grossMarginUsed - hedgeMarginCredit) / grossMarginUsed
             : 0m;
 
-        bool isResultsSeason = IsResultsSeasonNow(now);
+        bool isResultsSeason = IsResultsSeasonNow(now, config);
 
         _cached = new MarginState(
             GrossMarginUsed:       grossMarginUsed,
@@ -77,7 +82,7 @@ public sealed class MarginManager(
         ShortPremiumVelocityConfig config,
         CancellationToken          ct)
     {
-        var margin = await GetCurrentStateAsync(ct);
+        var margin = await GetCurrentStateAsync(config, ct);
 
         if (margin.NetShockedUtilization < config.ShockedUtilizationHardCap)
             return false; // already within limits
@@ -109,7 +114,7 @@ public sealed class MarginManager(
             trimmed = true;
 
             // Recompute (simplified proxy — production would re-fetch margin)
-            margin = await GetCurrentStateAsync(ct);
+            margin = await GetCurrentStateAsync(config, ct);
         }
 
         // ── Step 2: close orphaned hedge legs ──────────────────────────────────
@@ -134,7 +139,7 @@ public sealed class MarginManager(
         }
 
         // ── Step 3: escalate to HardStop if still over target ──────────────────
-        margin = await GetCurrentStateAsync(ct);
+        margin = await GetCurrentStateAsync(config, ct);
         if (margin.NetShockedUtilization > target)
         {
             log.LogCritical(
@@ -156,12 +161,14 @@ public sealed class MarginManager(
             .Sum(p => Math.Abs(p.AvgPrice * p.Quantity));
     }
 
-    private static decimal ComputeHedgeCredit(IEnumerable<Position> positions)
+    private static decimal ComputeHedgeCredit(
+        IEnumerable<Position>      positions,
+        ShortPremiumVelocityConfig config)
     {
-        // Hedge legs reduce net SPAN margin requirement
+        // Hedge legs reduce net SPAN margin requirement by config.HedgeCreditFraction
         return positions
             .Where(p => p.LegType is LegType.Hedge or LegType.DeltaHedge)
-            .Sum(p => Math.Abs(p.AvgPrice * p.Quantity) * 0.3m); // ~30% margin credit proxy
+            .Sum(p => Math.Abs(p.AvgPrice * p.Quantity) * config.HedgeCreditFraction);
     }
 
     private static decimal ComputeThetaToMarginRatio(Position p)
@@ -171,9 +178,9 @@ public sealed class MarginManager(
         return margin > 0 ? p.UnrealizedPnl / margin : 0m;
     }
 
-    private static bool IsResultsSeasonNow(Instant now)
+    private static bool IsResultsSeasonNow(Instant now, ShortPremiumVelocityConfig config)
     {
         var ist = now.InZone(DateTimeZone.ForOffset(Offset.FromHoursAndMinutes(5, 30)));
-        return ist.Month is 1 or 2 or 4 or 5 or 7 or 8 or 10 or 11;
+        return config.ResultsSeasonMonths.Contains(ist.Month);
     }
 }

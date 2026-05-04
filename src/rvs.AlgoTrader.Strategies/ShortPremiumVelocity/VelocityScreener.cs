@@ -40,8 +40,8 @@ public sealed class VelocityScreener(
         var softViolations  = new List<string>();
         decimal aggressionCap = config.AggressionMultiplierMax;
 
-        // Pre-fetch margin state (needed for gates e and cluster)
-        MarginState margin = await marginManager.GetCurrentStateAsync(ct);
+        // Pre-fetch margin state — pass config so freshness window uses config value
+        MarginState margin = await marginManager.GetCurrentStateAsync(config, ct);
 
         // ── Derived inputs (from StrategyContext / option chain) ──────────────
         // In production these come from OptionChain and portfolio analytics;
@@ -107,7 +107,7 @@ public sealed class VelocityScreener(
 
         // ── RequiresMandatoryHedge ─────────────────────────────────────────────
         bool requiresHedge =
-            tailRiskScore > 60m ||
+            tailRiskScore > config.MandatoryHedgeTailRiskThreshold ||
             regime.Label is Domain.Entities.MarketRegime.VelocityHighVolExpansion
                         or Domain.Entities.MarketRegime.VelocityPanic ||
             Math.Abs(portfolioDelta) > config.DeltaHedgeTriggerThreshold;
