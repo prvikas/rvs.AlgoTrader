@@ -1,49 +1,20 @@
-using Microsoft.Extensions.Options;
-using NodaTime;
-using rvs.AlgoTrader.Domain.Interfaces;
-
-namespace rvs.AlgoTrader.Infrastructure.Clock;
-
-/// <summary>
-/// Default implementation of <see cref="IMarketTimezone"/>.
-/// Reads the IANA timezone id from <see cref="MarketTimezoneOptions"/> (appsettings.json)
-/// so the application works for any exchange timezone without code changes.
-/// </summary>
-public sealed class MarketTimezoneService : IMarketTimezone
-{
-    private readonly IClock _nodaClock;
-
-    public MarketTimezoneService(IOptions<MarketTimezoneOptions> options, IClock nodaClock)
-    {
-        _nodaClock = nodaClock;
-        var tzId = options.Value?.TimeZoneId;
-        if (string.IsNullOrWhiteSpace(tzId))
-            throw new InvalidOperationException(
-                "MarketTimezone:TimeZoneId is not configured in appsettings.json. " +
-                "Example: \"Asia/Kolkata\" for India, \"America/New_York\" for US.");
-
-        Zone = DateTimeZoneProviders.Tzdb[tzId];
-    }
-
-    /// <inheritdoc />
-    public DateTimeZone Zone { get; }
-
-    /// <inheritdoc />
-    public ZonedDateTime Now => _nodaClock.GetCurrentInstant().InZone(Zone);
-
-    /// <inheritdoc />
-    public ZonedDateTime ToMarketTime(Instant utcInstant) => utcInstant.InZone(Zone);
-
-    /// <inheritdoc />
-    public ZonedDateTime ToMarketTime(DateTime utcDateTime)
-    {
-        var instant = Instant.FromDateTimeUtc(
-            utcDateTime.Kind == DateTimeKind.Utc
-                ? utcDateTime
-                : DateTime.SpecifyKind(utcDateTime, DateTimeKind.Utc));
-        return instant.InZone(Zone);
-    }
-
-    /// <inheritdoc />
-    public LocalDate TodayInMarket => Now.Date;
-}
+// FILE INTENTIONALLY REMOVED
+//
+// MarketTimezoneService has been deleted because it read the timezone from
+// appsettings.json (MarketTimezoneOptions), which meant:
+//   - Only one timezone could be active at a time
+//   - Changing timezone required an app restart
+//   - Multiple overlapping markets (India + US + UK) could not coexist
+//
+// The correct approach is to store the IANA timezone on the broker_credentials
+// DB row (market_timezone_id column) and resolve it at runtime via:
+//
+//   IBrokerTimezoneResolver.ResolveAsync(brokerName, ct)
+//
+// See:
+//   - src/rvs.AlgoTrader.Domain/Interfaces/IBrokerTimezoneResolver.cs
+//   - src/rvs.AlgoTrader.Infrastructure/Clock/BrokerTimezoneResolver.cs
+//   - src/rvs.AlgoTrader.Infrastructure/Clock/BrokerMarketTimezone.cs
+//
+// This file is kept as a one-line comment tombstone so git history explains
+// the removal. It does not contain any compilable code.
