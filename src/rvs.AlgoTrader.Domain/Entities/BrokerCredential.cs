@@ -3,51 +3,46 @@ using rvs.AlgoTrader.Domain.Enums;
 namespace rvs.AlgoTrader.Domain.Entities;
 
 /// <summary>
-/// Broker-specific credentials and order routing configuration for a strategy instance.
-/// Separated from StrategyInstance (definition) to follow SRP and isolate security concerns.
-/// 1:1 relationship with StrategyInstance.
-/// BrokerToken is encrypted at rest via repository layer.
+/// Stores execution-level broker credentials keyed by <see cref="BrokerName"/>.
+///
+/// DESIGN:
+///   - PK = BrokerName (natural key).  One row per broker, shared across strategy instances.
+///   - StrategyInstanceId is nullable with NO FK constraint (diagnostic only).
+///   - MarketTimezoneId is the IANA timezone of the exchange this broker operates on.
+///     This makes multi-market trading possible: Zerodha (IST) and IBKR (ET) can run
+///     simultaneously without any config change or app restart.
+///
+/// Adding a new broker:
+///   INSERT INTO broker_credentials (broker_name, market_timezone_id, ...)
+///   VALUES ('IBKR', 'America/New_York', ...);
+///   -- No code change, no appsettings.json change, no restart needed.
 /// </summary>
 public class BrokerCredential
 {
-    public Guid StrategyInstanceId { get; set; }
-    public StrategyInstance? StrategyInstance { get; set; }
-
-    /// <summary>Broker instrument token (e.g., mStock nfo code) — encrypted at rest.</summary>
-    public string? BrokerToken { get; set; }
-
-    /// <summary>Trading exchange (NSE, BSE, NCDEX, etc.).</summary>
-    public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
-
-    /// <summary>Order product type (MIS=intraday, CNC=delivery, etc.).</summary>
-    public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
-
-    /// <summary>Order size in lots; defaults to 1.</summary>
-    public int LotSize { get; set; } = 1;
-
-    // EF Core requires parameterless constructor
-    public BrokerCredential() { }
-
-    public static BrokerCredential Create(Guid strategyInstanceId)
-    {
-        return new BrokerCredential
-        {
-            StrategyInstanceId = strategyInstanceId,
-            BrokerToken = null,
-            Exchange = Enums.Exchange.NSE,
-            ProductType = Enums.ProductType.MIS,
-            LotSize = 1,
-        };
-    }
+    /// <summary>Natural PK. Examples: "Zerodha", "Upstox", "IBKR", "IGGroup".</summary>
+    public string BrokerName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Updates order routing configuration.
-    /// Called from command handlers when the user edits the instance.
+    /// IANA timezone id of the exchange this broker operates on.
+    /// Examples:
+    ///   "Asia/Kolkata"      → NSE / BSE (India)
+    ///   "America/New_York"  → NYSE / NASDAQ (US)
+    ///   "Europe/London"     → LSE (UK)
+    ///   "Asia/Singapore"    → SGX (Singapore)
+    ///
+    /// Stored in DB so multiple brokers across overlapping markets can co-exist
+    /// without restarting the application or changing appsettings.json.
     /// </summary>
-    public void UpdateOrderRouting(Exchange exchange, ProductType productType, int lotSize)
-    {
-        Exchange = exchange;
-        ProductType = productType;
-        LotSize = lotSize > 0 ? lotSize : 1;
-    }
+    public string MarketTimezoneId { get; set; } = "Asia/Kolkata";
+
+    /// <summary>
+    /// Optional back-reference to the strategy instance that last updated this row.
+    /// No FK constraint — credentials outlive individual strategy instances.
+    /// </summary>
+    public Guid? StrategyInstanceId { get; set; }
+
+    public string?     BrokerToken  { get; set; }
+    public Exchange    Exchange     { get; set; } = Exchange.NSE;
+    public ProductType ProductType  { get; set; } = ProductType.MIS;
+    public int         LotSize      { get; set; } = 1;
 }

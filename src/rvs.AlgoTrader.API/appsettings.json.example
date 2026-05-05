@@ -1,0 +1,12 @@
+{
+  "// MARKET TIMEZONE": "Timezone is NO LONGER set here. It lives in broker_credentials.market_timezone_id in the DB.",
+  "// To add a broker": "INSERT INTO broker_credentials (broker_name, market_timezone_id) VALUES ('IBKR', 'America/New_York');",
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Database=algotrader;Username=postgres;Password=changeme"
+  },
+  "Jwt": {
+    "Key": "REPLACE_WITH_STRONG_SECRET",
+    "Issuer": "rvs.AlgoTrader",
+    "Audience": "rvs.AlgoTrader"
+  }
+}
