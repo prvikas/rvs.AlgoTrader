@@ -8,7 +8,7 @@ namespace rvs.AlgoTrader.Infrastructure.Repositories;
 
 public class StrategyInstanceRepository(
     AlgoTraderDbContext db,
-    IFieldEncryptionService encryption,
+    //IFieldEncryptionService encryption,
     Domain.Interfaces.IClock clock) : IStrategyInstanceRepository
 {
     public async Task<StrategyInstance?> GetByIdAsync(Guid id, CancellationToken ct = default)

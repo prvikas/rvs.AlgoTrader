@@ -19,11 +19,6 @@ public class Instrument
     public decimal TickSize { get; set; }
     public bool IsActive { get; set; }
 
-    // Per-broker tokens — stored separately so any broker can resolve a token
-    public string? ZerodhaToken { get; set; }
-    public string? UpstoxToken { get; set; }
-    public string? MStockToken { get; set; }
-
     /// <summary>
     /// Currency in which the instrument is quoted.
     /// INR for NSE/BSE equities and derivatives; USD for MCX commodities (e.g. crude, gold).
@@ -49,14 +44,8 @@ public class Instrument
     public Instant UpdatedAt => LastRefreshedAt;
     public Instant RefreshedAt => LastRefreshedAt;
 
-    /// <summary>Returns the broker token for a specific broker, or null if not available.</summary>
-    public string? GetBrokerToken(string brokerName) => brokerName.ToLowerInvariant() switch
-    {
-        "zerodha" => ZerodhaToken,
-        "upstox"  => UpstoxToken,
-        "mstock"  => MStockToken,
-        _         => null
-    };
+    /// <summary>Per-broker tokens — migrated to child table instrument_broker_tokens.</summary>
+    public virtual ICollection<InstrumentBrokerToken> BrokerTokens { get; set; } = new List<InstrumentBrokerToken>();
 
     // EF Core requires parameterless constructor
     public Instrument() { }

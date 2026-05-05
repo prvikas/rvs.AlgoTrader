@@ -7,7 +7,7 @@ public class StrategyRun
 {
     public Guid Id { get; set; }
     public Guid StrategyInstanceId { get; set; }
-    public string? BrokerName { get; set; }
+    public short? BrokerId { get; set; }
     public StrategyMode Mode { get; set; }
     public StrategyRunStatus Status { get; set; }
     public Instant StartedAt { get; set; }
@@ -20,6 +20,9 @@ public class StrategyRun
     public int WinCount { get; set; }
     public int LossCount { get; set; }
     public decimal MaxDrawdown { get; set; }
+
+    // Navigation
+    public virtual Broker? Broker { get; set; }
 
     // EF Core requires parameterless constructor
     public StrategyRun() { }

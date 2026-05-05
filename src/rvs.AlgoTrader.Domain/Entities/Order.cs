@@ -6,7 +6,7 @@ namespace rvs.AlgoTrader.Domain.Entities;
 public class Order
 {
     public Guid Id { get; private set; }
-    public string BrokerName { get; private set; } = string.Empty;
+    public short BrokerId { get; private set; }
     public string? BrokerOrderId { get; private set; }
     public string InternalSymbol { get; private set; } = string.Empty;
     public OrderType OrderType { get; private set; }
@@ -22,27 +22,33 @@ public class Order
     public long FilledQuantity { get; private set; }
     public decimal? TrailingSl { get; private set; }
     public decimal? TrailingTp { get; private set; }
-    public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
-    public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
+    public short ExchangeId { get; set; }
+    public short ProductTypeId { get; set; }
     public string? RejectionReason { get; set; }
     public Instant? PlacedAt { get; private set; }
     public Instant? FilledAt { get; private set; }
     public Instant CreatedAt { get; private set; }
     public Instant UpdatedAt { get; private set; }
 
+    // Navigation
+    public virtual Broker? Broker { get; set; }
+    public virtual Exchange? Exchange { get; set; }
+    public virtual ProductType? ProductType { get; set; }
+
     private Order() { }
 
     public static Order Create(
-        string brokerName, string internalSymbol,
+        short brokerId, string internalSymbol,
         OrderType orderType, OrderDirection direction,
         long quantity, decimal? price, decimal? triggerPrice,
+        short exchangeId, short productTypeId,
         string idempotencyKey, string correlationId,
         Guid? strategyRunId, Instant now)
     {
         return new Order
         {
             Id = Guid.NewGuid(),
-            BrokerName = brokerName,
+            BrokerId = brokerId,
             InternalSymbol = internalSymbol,
             OrderType = orderType,
             Direction = direction,
@@ -50,6 +56,8 @@ public class Order
             Price = price,
             TriggerPrice = triggerPrice,
             Status = OrderStatus.Pending,
+            ExchangeId = exchangeId,
+            ProductTypeId = productTypeId,
             IdempotencyKey = idempotencyKey,
             CorrelationId = correlationId,
             StrategyRunId = strategyRunId,

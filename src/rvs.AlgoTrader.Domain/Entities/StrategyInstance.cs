@@ -11,7 +11,8 @@ public class StrategyInstance
     public string StrategyType { get; set; } = string.Empty;
     public Guid? WatchlistId { get; set; }
     public StrategyMode Mode { get; set; }
-    public string? BrokerName { get; set; }
+    public Guid? BrokerAccountId { get; set; }
+    public Guid? BrokerExchangeConfigId { get; set; }
     public bool IsActive { get; set; }
     public StrategyStatus Status { get; set; }
     public string ConfigJson { get; set; } = TradingDefaults.EmptyJson;
@@ -32,7 +33,8 @@ public class StrategyInstance
 
     // Navigation properties to related entities (separate concerns)
     public StrategyRuntimeState? RuntimeState { get; set; }
-    public BrokerCredential? Credential { get; set; }
+    public UserBrokerAccount? BrokerAccount { get; set; }
+    public BrokerExchangeConfig? BrokerExchangeConfig { get; set; }
 
     // ── P4 Approval Gate ─────────────────────────────────────────────────────
 
@@ -64,11 +66,12 @@ public class StrategyInstance
 
     public static StrategyInstance Create(
         string name, string strategyType, Guid? watchlistId,
-        StrategyMode mode, string? brokerName, string createdBy,
+        StrategyMode mode, Guid? brokerAccountId, string createdBy,
         Instant createdAt, string? internalSymbol = null,
         string? timeframe = null, string? configJson = null,
         string? failureBehaviorJson = null, Guid? riskProfileId = null,
-        string? scheduleJson = null, string? parametersJson = null)
+        string? scheduleJson = null, string? parametersJson = null,
+        Guid? brokerExchangeConfigId = null)
     {
         return new StrategyInstance
         {
@@ -77,7 +80,8 @@ public class StrategyInstance
             StrategyType = strategyType,
             WatchlistId = watchlistId,
             Mode = mode,
-            BrokerName = brokerName,
+            BrokerAccountId = brokerAccountId,
+            BrokerExchangeConfigId = brokerExchangeConfigId,
             IsActive = true,
             Status = StrategyStatus.Draft,
             ConfigJson = configJson ?? "{}",

@@ -7,7 +7,7 @@ namespace rvs.AlgoTrader.Domain.Entities;
 public class Position
 {
     public Guid Id { get; private set; }
-    public string BrokerName { get; private set; } = string.Empty;
+    public short BrokerId { get; private set; }
     public string InternalSymbol { get; private set; } = string.Empty;
     public long Quantity { get; private set; }
     public decimal AvgPrice { get; private set; }
@@ -18,7 +18,7 @@ public class Position
     public bool IsOpen { get; private set; }
     public Guid? StrategyRunId { get; private set; }
     public string CorrelationId { get; private set; } = string.Empty;
-    public string ProductType { get; set; } = "MIS";
+    public short ProductTypeId { get; set; }
     public string? CloseReason { get; set; }
 
     // ── Short Premium Velocity — leg tagging (AP: no separate hedge table) ────
@@ -62,18 +62,22 @@ public class Position
     public decimal AveragePrice => AvgPrice;
     public decimal LastPrice => CurrentPrice;
 
+    // Navigation
+    public virtual Broker? Broker { get; set; }
+    public virtual ProductType? ProductType { get; set; }
+
     private Position() { }
 
     public static Position Open(
-        string brokerName, string internalSymbol,
+        short brokerId, string internalSymbol,
         long quantity, decimal avgPrice,
         decimal? stopLoss, decimal? takeProfit,
-        Guid? strategyRunId, string correlationId, Instant now)
+        short productTypeId, Guid? strategyRunId, string correlationId, Instant now)
     {
         return new Position
         {
             Id = Guid.NewGuid(),
-            BrokerName = brokerName,
+            BrokerId = brokerId,
             InternalSymbol = internalSymbol,
             Quantity = quantity,
             AvgPrice = avgPrice,
@@ -81,6 +85,7 @@ public class Position
             CurrentPrice = avgPrice,
             StopLoss = stopLoss,
             TakeProfit = takeProfit,
+            ProductTypeId = productTypeId,
             IsOpen = true,
             StrategyRunId = strategyRunId,
             CorrelationId = correlationId,
