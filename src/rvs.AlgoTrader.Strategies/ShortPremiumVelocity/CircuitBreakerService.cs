@@ -94,23 +94,50 @@ public sealed class CircuitBreakerService(
             return;
         }
 
-        // ── Reset eligibility ─────────────────────────────────────────────────
-        if (_state != CircuitBreakerStateValue.Normal && _resetEligibleAt.HasValue && now >= _resetEligibleAt)
-        {
-            // Reset conditions checked externally by caller (marginFresh, jumpRisk, regime)
-            // Here we only auto-reset when all conditions are met
-            bool jumpRiskClear = !jumpRisk.CurrentState.IsSoftStop;
+        // Reset is handled by TryResetAsync, called by SPV strategy after margin + regime are known.
+    }
 
-            if (jumpRiskClear)
-            {
-                log.LogInformation(
-                    "CircuitBreaker: resetting to Normal from {PriorState} at {At}",
-                    _state, now);
-                _state           = CircuitBreakerStateValue.Normal;
-                _triggeredAt     = null;
-                _resetEligibleAt = null;
-            }
+    /// <summary>
+    /// Resets the circuit breaker to Normal when ALL three conditions hold:
+    ///   1. ResetEligibleAt has passed (next trading day).
+    ///   2. MarginState.IsFresh — broker margin data is current.
+    ///   3. JumpRisk is not in soft-stop.
+    ///   4. Regime is not Panic or HighVolExpansion (would re-trigger immediately).
+    /// </summary>
+    public Task TryResetAsync(
+        MarginState         marginState,
+        VelocityRegimeState regime,
+        CancellationToken   ct)
+    {
+        if (_state == CircuitBreakerStateValue.Normal) return Task.CompletedTask;
+        if (!_resetEligibleAt.HasValue)                return Task.CompletedTask;
+
+        var now = clock.NowInstant();
+        if (now < _resetEligibleAt.Value)              return Task.CompletedTask;
+
+        bool jumpRiskClear = !jumpRisk.CurrentState.IsSoftStop;
+        bool marginFresh   = marginState.IsFresh;
+        bool regimeSafe    = regime.Label is not (MarketRegime.VelocityPanic
+                                                or MarketRegime.VelocityHighVolExpansion);
+
+        if (jumpRiskClear && marginFresh && regimeSafe)
+        {
+            log.LogInformation(
+                "CircuitBreaker: resetting to Normal from {PriorState} — " +
+                "marginFresh={MF} jumpRiskClear={JR} regime={R} at {At}",
+                _state, marginFresh, jumpRiskClear, regime.Label, now);
+            _state           = CircuitBreakerStateValue.Normal;
+            _triggeredAt     = null;
+            _resetEligibleAt = null;
         }
+        else
+        {
+            log.LogDebug(
+                "CircuitBreaker: reset deferred — jumpRiskClear={J} marginFresh={M} regimeSafe={R}",
+                jumpRiskClear, marginFresh, regimeSafe);
+        }
+
+        return Task.CompletedTask;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

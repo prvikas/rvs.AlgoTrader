@@ -116,6 +116,11 @@ public sealed class ShortPremiumVelocityStrategy(
             return SignalResult.Hold("MarginHardCap: TrimToFit triggered");
         }
 
+        // ── Step 5b: Circuit-breaker reset eligibility check ─────────────────
+        // Called once per tick with live margin state + regime — the three conditions
+        // (margin fresh, jump risk cleared, regime not Panic/HighVol) are checked inside.
+        await circuitBreaker.TryResetAsync(marginState, regime, ct);
+
         // ── Step 6: Velocity screener hard gates ──────────────────────────────
         var screen = await screener.ScreenAsync(ctx, regime, config, ct);
         if (!screen.Passed)
@@ -229,7 +234,10 @@ public sealed class ShortPremiumVelocityStrategy(
         baseSize = Math.Clamp(baseSize, config.BaseSizeFloor, config.BaseSizeCeiling);
 
         // ── Step 16: Hedge evaluation (fire-and-forget) ───────────────────────
-        _ = hedgeEvaluator.EvaluatePortfolioHedgeNeedAsync(regime, config, ct);
+        _ = hedgeEvaluator.EvaluatePortfolioHedgeNeedAsync(regime, config, ct)
+            .ContinueWith(
+                t => log.LogError(t.Exception, "SPV: HedgeEvaluator fire-and-forget failed"),
+                TaskContinuationOptions.OnlyOnFaulted);
 
         // ── Step 17: Build and return spread signal ───────────────────────────
         var legs = BuildSpreadLegs(structureChoice.Type, config);
@@ -313,10 +321,15 @@ public sealed class ShortPremiumVelocityStrategy(
 
         decimal gpTheta = priced.Theta != 0m ? Math.Abs(priced.Gamma / priced.Theta) : 0m;
 
+        var structureType = pos.StructureType is not null
+            && Enum.TryParse<StructureType>(pos.StructureType, out var parsed)
+                ? parsed
+                : StructureType.ShortStraddleStrangle; // fallback for legacy rows without structure_type
+
         return new VelocityPosition(
             PositionId:       pos.Id,
             UnderlyingSymbol: pos.InternalSymbol,
-            StructureType:    StructureType.ShortStraddleStrangle, // Position entity lacks StructureType column — Phase 5 migration
+            StructureType:    structureType,
             LegType:          pos.LegType ?? LegType.ShortPremium,
             HedgeType:        pos.HedgeType,
             EntryPremium:     pos.EntryPrice,

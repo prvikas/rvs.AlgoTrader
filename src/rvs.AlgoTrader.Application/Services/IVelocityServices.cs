@@ -158,6 +158,20 @@ public interface ICircuitBreakerService
         decimal dailyLossPct,
         ShortPremiumVelocityConfig config,
         CancellationToken ct);
+
+    /// <summary>
+    /// Checks reset eligibility when all three conditions are met:
+    ///   1. MarginState.IsFresh is true (broker margin data up-to-date).
+    ///   2. JumpRisk is not in soft-stop.
+    ///   3. Current regime is NOT VelocityPanic or VelocityHighVolExpansion.
+    ///
+    /// Default implementation is a no-op so that existing mocks remain unaffected.
+    /// </summary>
+    Task TryResetAsync(
+        MarginState marginState,
+        VelocityRegimeState regime,
+        CancellationToken ct)
+        => Task.CompletedTask;
 }
 
 /// <summary>

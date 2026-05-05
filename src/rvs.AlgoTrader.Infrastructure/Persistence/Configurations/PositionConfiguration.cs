@@ -36,6 +36,7 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
         builder.Property(p => p.HedgeNetCost).HasColumnName("hedge_net_cost")
             .HasPrecision(18, 4);
         builder.Property(p => p.LinkedShortLegId).HasColumnName("linked_short_leg_id");
+        builder.Property(p => p.StructureType).HasColumnName("structure_type").HasMaxLength(50);
 
         // Self-referencing FK: Hedge leg → ShortPremium leg (no cascade delete)
         builder.HasOne<Position>()

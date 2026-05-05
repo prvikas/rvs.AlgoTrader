@@ -36,6 +36,13 @@ public class Position
     /// </summary>
     public Guid? LinkedShortLegId { get; set; }
 
+    /// <summary>
+    /// Option spread structure (e.g. "IronCondor", "ShortStraddleStrangle").
+    /// Stored as a string so the domain entity has no hard dependency on strategy enums.
+    /// Null for plain equity / non-SPV positions.
+    /// </summary>
+    public string? StructureType { get; set; }
+
     public decimal RealizedPnl { get; private set; }
     public decimal UnrealizedPnl { get; private set; }
     public Instant? OpenedAt { get; private set; }
