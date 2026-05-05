@@ -13,7 +13,7 @@ public class StrategyRunConfiguration : IEntityTypeConfiguration<StrategyRun>
         builder.HasKey(r => r.Id);
         builder.Property(r => r.Id).HasColumnName("id");
         builder.Property(r => r.StrategyInstanceId).HasColumnName("strategy_instance_id");
-        builder.Property(r => r.BrokerName).HasColumnName("broker_name").HasMaxLength(50);
+        builder.Property(r => r.BrokerId).HasColumnName("broker_id");
         builder.Property(r => r.Mode).HasColumnName("mode").HasConversion<string>().HasMaxLength(20);
         builder.Property(r => r.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(30);
         builder.Property(r => r.StartedAt).HasColumnName("started_at")
@@ -33,6 +33,13 @@ public class StrategyRunConfiguration : IEntityTypeConfiguration<StrategyRun>
 
         builder.HasIndex(r => r.StrategyInstanceId);
         builder.HasIndex(r => r.Status);
+
+        // Foreign keys
+        builder.HasOne(r => r.Broker)
+            .WithMany()
+            .HasForeignKey(r => r.BrokerId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<StrategyInstance>()
             .WithMany()

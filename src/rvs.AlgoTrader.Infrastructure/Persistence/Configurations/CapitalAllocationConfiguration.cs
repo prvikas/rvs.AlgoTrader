@@ -13,7 +13,7 @@ public class CapitalAllocationConfiguration : IEntityTypeConfiguration<CapitalAl
         builder.HasKey(c => c.Id);
         builder.Property(c => c.Id).HasColumnName("id");
         builder.Property(c => c.StrategyInstanceId).HasColumnName("strategy_instance_id");
-        builder.Property(c => c.BrokerName).HasColumnName("broker_name").HasMaxLength(50);
+        builder.Property(c => c.BrokerId).HasColumnName("broker_id").IsRequired();
         builder.Property(c => c.AllocatedCapital).HasColumnName("allocated_capital").HasPrecision(18, 4);
         builder.Property(c => c.ReservedCapital).HasColumnName("reserved_capital").HasPrecision(18, 4);
         builder.Ignore(c => c.AvailableCapital); // computed: AllocatedCapital - ReservedCapital
@@ -27,6 +27,12 @@ public class CapitalAllocationConfiguration : IEntityTypeConfiguration<CapitalAl
                 v => Instant.FromDateTimeUtc(v));
 
         builder.HasIndex(c => c.StrategyInstanceId).IsUnique();
+
+        // Foreign keys
+        builder.HasOne(c => c.Broker)
+            .WithMany()
+            .HasForeignKey(c => c.BrokerId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<StrategyInstance>()
             .WithMany()

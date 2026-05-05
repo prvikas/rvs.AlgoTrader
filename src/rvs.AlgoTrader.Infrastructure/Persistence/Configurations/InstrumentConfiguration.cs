@@ -22,9 +22,6 @@ public class InstrumentConfiguration : IEntityTypeConfiguration<Instrument>
         builder.Property(i => i.LotSize).HasColumnName("lot_size");
         builder.Property(i => i.TickSize).HasColumnName("tick_size").HasPrecision(18, 4);
         builder.Property(i => i.IsActive).HasColumnName("is_active");
-        builder.Property(i => i.ZerodhaToken).HasColumnName("zerodha_token").HasMaxLength(20);
-        builder.Property(i => i.UpstoxToken).HasColumnName("upstox_token").HasMaxLength(100);
-        builder.Property(i => i.MStockToken).HasColumnName("mstock_token").HasMaxLength(100);
         builder.Property(i => i.LastRefreshedAt).HasColumnName("last_refreshed_at")
             .HasConversion(
                 v => v.ToDateTimeUtc(),
@@ -43,6 +40,12 @@ public class InstrumentConfiguration : IEntityTypeConfiguration<Instrument>
         builder.Property(i => i.QuoteCurrency).HasColumnName("quote_currency").HasMaxLength(10);
         builder.Property(i => i.SettlementCurrency).HasColumnName("settlement_currency").HasMaxLength(10);
         builder.Property(i => i.PriceMultiplier).HasColumnName("price_multiplier").HasPrecision(18, 6);
+
+        // Navigation to broker tokens (child table)
+        builder.HasMany(i => i.BrokerTokens)
+            .WithOne(t => t.Instrument)
+            .HasForeignKey(t => t.InstrumentId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.HasAlternateKey(i => i.InternalSymbol);
         builder.HasIndex(i => new { i.TradingSymbol, i.Exchange });

@@ -12,7 +12,7 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
         builder.ToTable("positions");
         builder.HasKey(p => p.Id);
         builder.Property(p => p.Id).HasColumnName("id");
-        builder.Property(p => p.BrokerName).HasColumnName("broker_name").HasMaxLength(50).IsRequired();
+        builder.Property(p => p.BrokerId).HasColumnName("broker_id").IsRequired();
         builder.Property(p => p.InternalSymbol).HasColumnName("internal_symbol").HasMaxLength(50).IsRequired();
         builder.Property(p => p.Quantity).HasColumnName("quantity").IsRequired();
         builder.Property(p => p.AvgPrice).HasColumnName("average_price").HasPrecision(18, 4).IsRequired();
@@ -22,7 +22,7 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
         builder.Property(p => p.UnrealizedPnl).HasColumnName("unrealized_pnl").HasPrecision(18, 4);
         builder.Property(p => p.StopLoss).HasColumnName("stop_loss").HasPrecision(18, 4);
         builder.Property(p => p.TakeProfit).HasColumnName("take_profit").HasPrecision(18, 4);
-        builder.Property(p => p.ProductType).HasColumnName("product_type").HasMaxLength(10).IsRequired();
+        builder.Property(p => p.ProductTypeId).HasColumnName("product_type_id").IsRequired();
         builder.Property(p => p.IsOpen).HasColumnName("is_open");
         builder.Property(p => p.StrategyRunId).HasColumnName("strategy_run_id");
         builder.Property(p => p.CorrelationId).HasColumnName("correlation_id").HasMaxLength(100);
@@ -41,6 +41,17 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
             .HasConversion(
                 v => v == null ? (DateOnly?)null : new DateOnly(v.Value.Year, v.Value.Month, v.Value.Day),
                 v => v == null ? (LocalDate?)null : new LocalDate(v.Value.Year, v.Value.Month, v.Value.Day));
+
+        // Foreign keys
+        builder.HasOne(p => p.Broker)
+            .WithMany()
+            .HasForeignKey(p => p.BrokerId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne(p => p.ProductType)
+            .WithMany()
+            .HasForeignKey(p => p.ProductTypeId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         // Self-referencing FK: Hedge leg → ShortPremium leg (no cascade delete)
         builder.HasOne<Position>()
@@ -70,7 +81,9 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
                 v => v.ToDateTimeUtc(),
                 v => Instant.FromDateTimeUtc(v));
 
-        builder.HasIndex(p => new { p.BrokerName, p.IsOpen });
+        // Indexes
+        builder.HasIndex(p => new { p.BrokerId, p.IsOpen })
+            .HasDatabaseName("idx_positions_broker_open");
         builder.HasIndex(p => p.StrategyRunId);
         builder.HasIndex(p => new { p.InternalSymbol, p.IsOpen });
 

@@ -16,7 +16,8 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.StrategyType).HasColumnName("strategy_name").HasMaxLength(100).IsRequired();
         builder.Property(s => s.InternalSymbol).HasColumnName("internal_symbol").HasMaxLength(50).IsRequired();
         builder.Property(s => s.Timeframe).HasColumnName("timeframe").HasMaxLength(10).IsRequired();
-        builder.Property(s => s.BrokerName).HasColumnName("broker_name").HasMaxLength(50);
+        builder.Property(s => s.BrokerAccountId).HasColumnName("broker_account_id");
+        builder.Property(s => s.BrokerExchangeConfigId).HasColumnName("broker_exchange_config_id");
         builder.Property(s => s.Mode).HasColumnName("mode").HasConversion<string>().HasMaxLength(20).IsRequired();
         builder.Property(s => s.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(30).IsRequired();
         builder.Property(s => s.ParametersJson).HasColumnName("parameters_json").HasColumnType("jsonb");
@@ -61,13 +62,16 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
             .HasForeignKey<StrategyRuntimeState>(r => r.StrategyInstanceId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // BrokerCredential is NO LONGER a dependent of StrategyInstance.
-        // broker_credentials.strategy_instance_id is a nullable diagnostic column with no FK.
-        // Do NOT configure a HasOne/WithOne here — that would re-introduce the FK constraint
-        // that Migration 020 explicitly dropped.
-        // The Credential navigation property on StrategyInstance is intentionally ignored below
-        // so EF does not try to manage it as an owned/dependent entity.
-        builder.Ignore(s => s.Credential);
+        // Broker account and exchange config
+        builder.HasOne(s => s.BrokerAccount)
+            .WithMany()
+            .HasForeignKey(s => s.BrokerAccountId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.HasOne(s => s.BrokerExchangeConfig)
+            .WithMany()
+            .HasForeignKey(s => s.BrokerExchangeConfigId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.HasIndex(s => s.Status);
         builder.HasIndex(s => new { s.InternalSymbol, s.Status });
