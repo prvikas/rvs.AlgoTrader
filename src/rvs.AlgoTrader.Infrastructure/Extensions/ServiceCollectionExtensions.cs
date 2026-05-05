@@ -43,8 +43,10 @@ public static class ServiceCollectionExtensions
         // Local auth (username/password for backtest-only / broker-free mode)
         services.Configure<LocalAuthOptions>(config.GetSection(LocalAuthOptions.SectionName));
 
-        // Clock — production singleton
-        services.AddSingleton<IClock, SystemClock>();
+        // Clock — production singleton (SystemClock wraps NodaTime.SystemClock.Instance)
+        // SimulatedClock is for tests/backtests only — it requires an Instant ctor arg
+        // that DI cannot inject, so it must never be registered here.
+        services.AddSingleton<IClock, Clock.SystemClock>();
         services.AddSingleton<NodaTime.IClock>(NodaTime.SystemClock.Instance);
 
         // Migration runner — auto-applies all numbered *.sql files on startup

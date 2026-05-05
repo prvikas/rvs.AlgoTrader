@@ -4,6 +4,9 @@
     <RootNamespace>rvs.AlgoTrader.Infrastructure</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="Clock\MarketTimezoneService.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\rvs.AlgoTrader.Domain\rvs.AlgoTrader.Domain.csproj" />
     <ProjectReference Include="..\rvs.AlgoTrader.Application\rvs.AlgoTrader.Application.csproj" />
     <ProjectReference Include="..\rvs.AlgoTrader.Brokers.Abstractions\rvs.AlgoTrader.Brokers.Abstractions.csproj" />
