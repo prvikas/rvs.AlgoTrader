@@ -10,14 +10,20 @@ public class BrokerCredentialConfiguration : IEntityTypeConfiguration<BrokerCred
     {
         builder.ToTable("broker_credentials");
 
-        // PK is now broker_name — credentials belong to the broker, not a strategy run.
         builder.HasKey(c => c.BrokerName);
         builder.Property(c => c.BrokerName)
                .HasColumnName("broker_name")
                .HasMaxLength(50)
                .IsRequired();
 
-        // StrategyInstanceId kept as nullable denorm column — NO FK constraint.
+        // IANA timezone id — stored per-broker so multiple markets can run simultaneously.
+        builder.Property(c => c.MarketTimezoneId)
+               .HasColumnName("market_timezone_id")
+               .HasMaxLength(50)
+               .IsRequired()
+               .HasDefaultValue("Asia/Kolkata");
+
+        // Nullable, no FK — diagnostic reference only.
         builder.Property(c => c.StrategyInstanceId)
                .HasColumnName("strategy_instance_id")
                .IsRequired(false);

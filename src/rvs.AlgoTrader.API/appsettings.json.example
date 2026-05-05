@@ -1,9 +1,6 @@
 {
-  "// MARKET TIMEZONE": "Set this to the IANA timezone of the exchange you are trading on.",
-  "// Examples      ": "Asia/Kolkata (NSE/BSE India) | America/New_York (NYSE/NASDAQ) | Europe/London (LSE) | Asia/Singapore (SGX)",
-  "MarketTimezone": {
-    "TimeZoneId": "Asia/Kolkata"
-  },
+  "// MARKET TIMEZONE": "Timezone is NO LONGER set here. It lives in broker_credentials.market_timezone_id in the DB.",
+  "// To add a broker": "INSERT INTO broker_credentials (broker_name, market_timezone_id) VALUES ('IBKR', 'America/New_York');",
   "ConnectionStrings": {
     "DefaultConnection": "Host=localhost;Database=algotrader;Username=postgres;Password=changeme"
   },

@@ -3,35 +3,36 @@ using NodaTime;
 namespace rvs.AlgoTrader.Domain.Interfaces;
 
 /// <summary>
-/// Provides the market/exchange timezone for time-sensitive calculations
-/// (session windows, EOD resets, candle aggregation, etc.).
+/// Provides timezone-aware time helpers scoped to a specific broker's market.
 ///
-/// Register a concrete implementation via DI and configure the IANA timezone id
-/// in appsettings.json under <c>MarketTimezone:TimeZoneId</c>.
+/// Do NOT inject this as a singleton that reads from appsettings.json.
+/// Instead, resolve it per-broker at runtime via <see cref="IBrokerTimezoneResolver"/>:
 ///
-/// Examples:
-///   India (NSE/BSE):   "Asia/Kolkata"
-///   US (NYSE/NASDAQ):  "America/New_York"
-///   UK (LSE):          "Europe/London"
-///   Singapore (SGX):   "Asia/Singapore"
+///   var tz = _brokerTimezoneResolver.Resolve(brokerName);
+///   var marketNow = tz.Now;  // correct time for that broker's exchange
+///
+/// This supports simultaneous multi-market trading (e.g. Zerodha at IST + IBKR at ET)
+/// without any config change or app restart.
 /// </summary>
 public interface IMarketTimezone
 {
-    /// <summary>The configured IANA timezone (e.g. "Asia/Kolkata").</summary>
+    /// <summary>The broker's IANA timezone id (e.g. "Asia/Kolkata").</summary>
+    string TimezoneId { get; }
+
+    /// <summary>The NodaTime DateTimeZone resolved from <see cref="TimezoneId"/>.</summary>
     DateTimeZone Zone { get; }
 
-    /// <summary>Returns the current wall-clock time in the market timezone.</summary>
+    /// <summary>Current wall-clock instant in the broker's market timezone.</summary>
     ZonedDateTime Now { get; }
 
-    /// <summary>Converts a UTC <see cref="Instant"/> to the market's local <see cref="ZonedDateTime"/>.</summary>
+    /// <summary>Converts a UTC Instant to the broker's local ZonedDateTime.</summary>
     ZonedDateTime ToMarketTime(Instant utcInstant);
 
     /// <summary>
-    /// Converts a UTC <see cref="DateTime"/> (Kind=Utc) to the market's local <see cref="ZonedDateTime"/>.
-    /// Convenience overload used by repositories and services that receive DateTime from EF Core.
+    /// Convenience overload: converts a UTC DateTime (from EF Core) to market local time.
     /// </summary>
     ZonedDateTime ToMarketTime(DateTime utcDateTime);
 
-    /// <summary>Returns today's date in the market timezone.</summary>
+    /// <summary>Today's date in the broker's market timezone.</summary>
     LocalDate TodayInMarket { get; }
 }
