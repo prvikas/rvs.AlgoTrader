@@ -3,51 +3,30 @@ using rvs.AlgoTrader.Domain.Enums;
 namespace rvs.AlgoTrader.Domain.Entities;
 
 /// <summary>
-/// Broker-specific credentials and order routing configuration for a strategy instance.
-/// Separated from StrategyInstance (definition) to follow SRP and isolate security concerns.
-/// 1:1 relationship with StrategyInstance.
-/// BrokerToken is encrypted at rest via repository layer.
+/// Stores execution-level broker credentials (exchange, product type, lot size, token)
+/// keyed by <see cref="BrokerName"/>.
+///
+/// DESIGN NOTE: This table is intentionally INDEPENDENT of <see cref="StrategyInstance"/>.
+/// A single broker credential (e.g. "Zerodha" – NSE/NRML/LotSize=1) is reusable across
+/// any number of strategy instances.  The previous design mistakenly used StrategyInstanceId
+/// as the primary key, coupling credentials to a single strategy run.
+///
+/// <see cref="StrategyInstanceId"/> is kept as a nullable denorm column for diagnostic
+/// queries only; it carries NO foreign key constraint.
 /// </summary>
 public class BrokerCredential
 {
-    public Guid StrategyInstanceId { get; set; }
-    public StrategyInstance? StrategyInstance { get; set; }
-
-    /// <summary>Broker instrument token (e.g., mStock nfo code) — encrypted at rest.</summary>
-    public string? BrokerToken { get; set; }
-
-    /// <summary>Trading exchange (NSE, BSE, NCDEX, etc.).</summary>
-    public Exchange Exchange { get; set; } = Enums.Exchange.NSE;
-
-    /// <summary>Order product type (MIS=intraday, CNC=delivery, etc.).</summary>
-    public ProductType ProductType { get; set; } = Enums.ProductType.MIS;
-
-    /// <summary>Order size in lots; defaults to 1.</summary>
-    public int LotSize { get; set; } = 1;
-
-    // EF Core requires parameterless constructor
-    public BrokerCredential() { }
-
-    public static BrokerCredential Create(Guid strategyInstanceId)
-    {
-        return new BrokerCredential
-        {
-            StrategyInstanceId = strategyInstanceId,
-            BrokerToken = null,
-            Exchange = Enums.Exchange.NSE,
-            ProductType = Enums.ProductType.MIS,
-            LotSize = 1,
-        };
-    }
+    /// <summary>Broker name acts as the natural key (e.g. "Zerodha", "Upstox", "MStock").</summary>
+    public string BrokerName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Updates order routing configuration.
-    /// Called from command handlers when the user edits the instance.
+    /// Optional back-reference to the strategy instance that last upserted this row.
+    /// No FK constraint — credentials outlive individual strategy instances.
     /// </summary>
-    public void UpdateOrderRouting(Exchange exchange, ProductType productType, int lotSize)
-    {
-        Exchange = exchange;
-        ProductType = productType;
-        LotSize = lotSize > 0 ? lotSize : 1;
-    }
+    public Guid? StrategyInstanceId { get; set; }
+
+    public string? BrokerToken    { get; set; }
+    public Exchange   Exchange     { get; set; } = Exchange.NSE;
+    public ProductType ProductType { get; set; } = ProductType.MIS;
+    public int        LotSize      { get; set; } = 1;
 }

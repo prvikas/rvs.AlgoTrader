@@ -1,0 +1,15 @@
+{
+  "// MARKET TIMEZONE": "Set this to the IANA timezone of the exchange you are trading on.",
+  "// Examples      ": "Asia/Kolkata (NSE/BSE India) | America/New_York (NYSE/NASDAQ) | Europe/London (LSE) | Asia/Singapore (SGX)",
+  "MarketTimezone": {
+    "TimeZoneId": "Asia/Kolkata"
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Database=algotrader;Username=postgres;Password=changeme"
+  },
+  "Jwt": {
+    "Key": "REPLACE_WITH_STRONG_SECRET",
+    "Issuer": "rvs.AlgoTrader",
+    "Audience": "rvs.AlgoTrader"
+  }
+}
