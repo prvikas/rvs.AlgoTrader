@@ -37,6 +37,10 @@ public class PositionConfiguration : IEntityTypeConfiguration<Position>
             .HasPrecision(18, 4);
         builder.Property(p => p.LinkedShortLegId).HasColumnName("linked_short_leg_id");
         builder.Property(p => p.StructureType).HasColumnName("structure_type").HasMaxLength(50);
+        builder.Property(p => p.ExpiryDate).HasColumnName("expiry_date")
+            .HasConversion(
+                v => v == null ? (DateOnly?)null : new DateOnly(v.Value.Year, v.Value.Month, v.Value.Day),
+                v => v == null ? (LocalDate?)null : new LocalDate(v.Value.Year, v.Value.Month, v.Value.Day));
 
         // Self-referencing FK: Hedge leg → ShortPremium leg (no cascade delete)
         builder.HasOne<Position>()

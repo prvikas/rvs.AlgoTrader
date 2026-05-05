@@ -7,6 +7,7 @@ using rvs.AlgoTrader.API.Services;
 using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Backtesting.Engine;
 using rvs.AlgoTrader.Domain.Interfaces;
+using rvs.AlgoTrader.Infrastructure.Persistence;
 using rvs.AlgoTrader.Infrastructure.Repositories;
 using rvs.AlgoTrader.Infrastructure.Services;
 using rvs.AlgoTrader.Strategies;
@@ -89,6 +90,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStrategyFactory, StrategyFactory>();
 
         // STRAT-004: Short Premium Velocity engine services (singleton; hold in-memory rolling state)
+        // ISpvStateStore persists CB/Recovery state across restarts. Scoped — accessed via IServiceScopeFactory.
+        services.AddScoped<ISpvStateStore, SpvStateStore>();
         services.AddShortPremiumVelocity();
 
         // BacktestEngine — registered here because only the API project references rvs.AlgoTrader.Backtesting.

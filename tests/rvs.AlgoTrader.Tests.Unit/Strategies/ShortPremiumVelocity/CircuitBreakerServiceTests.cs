@@ -1,5 +1,6 @@
 using FluentAssertions;
 using MediatR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using NodaTime;
@@ -15,10 +16,35 @@ namespace rvs.AlgoTrader.Tests.Unit.Strategies.ShortPremiumVelocity;
 ///   Normal → SoftStop (dailyLoss ≥ SoftStopLossPct)
 ///   Normal/SoftStop → HardStop (dailyLoss ≥ HardStopLossPct)
 ///   HardStop → reset to Normal (next trading day + jumpRisk clear)
+///
+/// All tests use Guid.Empty as the strategy instanceId (single-instance scenario).
+/// Multi-instance isolation is tested implicitly — each instanceId has independent state.
 /// </summary>
 public class CircuitBreakerServiceTests
 {
     private static readonly ShortPremiumVelocityConfig DefaultConfig = new();
+    private static readonly Guid TestInstance = Guid.Empty;
+
+    /// <summary>
+    /// Builds a scope factory that returns a no-op ISpvStateStore (no DB persistence in unit tests).
+    /// </summary>
+    private static IServiceScopeFactory BuildScopeFactory()
+    {
+        var store = new Mock<ISpvStateStore>();
+        store.Setup(s => s.LoadCbStateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((PersistedCbState?)null); // no persisted state
+        store.Setup(s => s.SaveCbStateAsync(
+                It.IsAny<Guid>(), It.IsAny<PersistedCbState>(), It.IsAny<CancellationToken>()))
+             .Returns(Task.CompletedTask);
+
+        var sp = new Mock<IServiceProvider>();
+        sp.Setup(p => p.GetService(typeof(ISpvStateStore))).Returns(store.Object);
+        var scope = new Mock<IServiceScope>();
+        scope.Setup(s => s.ServiceProvider).Returns(sp.Object);
+        var factory = new Mock<IServiceScopeFactory>();
+        factory.Setup(f => f.CreateScope()).Returns(scope.Object);
+        return factory.Object;
+    }
 
     private static CircuitBreakerService BuildSut(bool jumpRiskClear = true)
     {
@@ -34,7 +60,7 @@ public class CircuitBreakerServiceTests
             new JumpRiskState(1m, 1m, 0.1m, IsSoftStop: !jumpRiskClear, TriggeredAt: null));
 
         return new CircuitBreakerService(
-            publisher.Object, clock.Object, jumpRisk.Object,
+            BuildScopeFactory(), publisher.Object, clock.Object, jumpRisk.Object,
             NullLogger<CircuitBreakerService>.Instance);
     }
 
@@ -45,8 +71,8 @@ public class CircuitBreakerServiceTests
     {
         var sut = BuildSut();
 
-        sut.CurrentState.State.Should().Be(CircuitBreakerStateValue.Normal);
-        sut.CurrentState.TriggeredAt.Should().BeNull();
+        sut.GetState(TestInstance).State.Should().Be(CircuitBreakerStateValue.Normal);
+        sut.GetState(TestInstance).TriggeredAt.Should().BeNull();
     }
 
     // ── SoftStop trigger ──────────────────────────────────────────────────────
@@ -56,11 +82,11 @@ public class CircuitBreakerServiceTests
     {
         var sut = BuildSut();
 
-        await sut.EvaluateAsync(DefaultConfig.SoftStopLossPct, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, DefaultConfig.SoftStopLossPct, DefaultConfig, CancellationToken.None);
 
-        sut.CurrentState.State.Should().Be(CircuitBreakerStateValue.SoftStop,
+        sut.GetState(TestInstance).State.Should().Be(CircuitBreakerStateValue.SoftStop,
             because: $"dailyLoss = SoftStopLossPct={DefaultConfig.SoftStopLossPct} triggers SoftStop");
-        sut.CurrentState.TriggeredAt.Should().NotBeNull();
+        sut.GetState(TestInstance).TriggeredAt.Should().NotBeNull();
     }
 
     [Fact]
@@ -68,9 +94,9 @@ public class CircuitBreakerServiceTests
     {
         var sut = BuildSut();
 
-        await sut.EvaluateAsync(DefaultConfig.SoftStopLossPct - 0.001m, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, DefaultConfig.SoftStopLossPct - 0.001m, DefaultConfig, CancellationToken.None);
 
-        sut.CurrentState.State.Should().Be(CircuitBreakerStateValue.Normal,
+        sut.GetState(TestInstance).State.Should().Be(CircuitBreakerStateValue.Normal,
             because: "loss just below SoftStopLossPct threshold should stay Normal");
     }
 
@@ -81,11 +107,11 @@ public class CircuitBreakerServiceTests
     {
         var sut = BuildSut();
 
-        await sut.EvaluateAsync(DefaultConfig.HardStopLossPct, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, DefaultConfig.HardStopLossPct, DefaultConfig, CancellationToken.None);
 
-        sut.CurrentState.State.Should().Be(CircuitBreakerStateValue.HardStop,
+        sut.GetState(TestInstance).State.Should().Be(CircuitBreakerStateValue.HardStop,
             because: $"dailyLoss = HardStopLossPct={DefaultConfig.HardStopLossPct} triggers HardStop");
-        sut.CurrentState.TriggeredAt.Should().NotBeNull();
+        sut.GetState(TestInstance).TriggeredAt.Should().NotBeNull();
     }
 
     [Fact]
@@ -94,9 +120,9 @@ public class CircuitBreakerServiceTests
         var sut = BuildSut();
 
         // Loss exceeds both SoftStop and HardStop simultaneously
-        await sut.EvaluateAsync(DefaultConfig.HardStopLossPct + 0.01m, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, DefaultConfig.HardStopLossPct + 0.01m, DefaultConfig, CancellationToken.None);
 
-        sut.CurrentState.State.Should().Be(CircuitBreakerStateValue.HardStop,
+        sut.GetState(TestInstance).State.Should().Be(CircuitBreakerStateValue.HardStop,
             because: "HardStop threshold takes priority over SoftStop when both exceeded");
     }
 
@@ -117,10 +143,10 @@ public class CircuitBreakerServiceTests
                 .Returns(new JumpRiskState(1m, 1m, 0.1m, false, null));
 
         var sut = new CircuitBreakerService(
-            publisher.Object, clock.Object, jumpRisk.Object,
+            BuildScopeFactory(), publisher.Object, clock.Object, jumpRisk.Object,
             NullLogger<CircuitBreakerService>.Instance);
 
-        await sut.EvaluateAsync(DefaultConfig.HardStopLossPct, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, DefaultConfig.HardStopLossPct, DefaultConfig, CancellationToken.None);
 
         publisher.Verify(
             p => p.Publish(It.IsAny<object>(), It.IsAny<CancellationToken>()),
@@ -135,12 +161,13 @@ public class CircuitBreakerServiceTests
     {
         var sut = BuildSut();
 
-        await sut.EvaluateAsync(DefaultConfig.SoftStopLossPct, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, DefaultConfig.SoftStopLossPct, DefaultConfig, CancellationToken.None);
 
-        sut.CurrentState.ResetEligibleAt.Should().NotBeNull(
+        var state = sut.GetState(TestInstance);
+        state.ResetEligibleAt.Should().NotBeNull(
             because: "ResetEligibleAt must be set so the service knows when reset is allowed");
-        sut.CurrentState.ResetEligibleAt!.Value.Should().BeGreaterThan(
-            sut.CurrentState.TriggeredAt!.Value,
+        state.ResetEligibleAt!.Value.Should().BeGreaterThan(
+            state.TriggeredAt!.Value,
             because: "Reset can only happen after triggering — next trading day at earliest");
     }
 
@@ -151,8 +178,27 @@ public class CircuitBreakerServiceTests
     {
         var sut = BuildSut();
 
-        await sut.EvaluateAsync(0m, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateAsync(TestInstance, 0m, DefaultConfig, CancellationToken.None);
 
-        sut.CurrentState.State.Should().Be(CircuitBreakerStateValue.Normal);
+        sut.GetState(TestInstance).State.Should().Be(CircuitBreakerStateValue.Normal);
+    }
+
+    // ── Per-instance isolation ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PerInstance_InstanceA_HardStop_DoesNotAffectInstanceB()
+    {
+        var sut = BuildSut();
+        var instanceA = Guid.NewGuid();
+        var instanceB = Guid.NewGuid();
+
+        // Trigger HardStop on instance A
+        await sut.EvaluateAsync(instanceA, DefaultConfig.HardStopLossPct, DefaultConfig, CancellationToken.None);
+
+        // Instance B should remain Normal
+        sut.GetState(instanceA).State.Should().Be(CircuitBreakerStateValue.HardStop,
+            because: "instance A triggered HardStop");
+        sut.GetState(instanceB).State.Should().Be(CircuitBreakerStateValue.Normal,
+            because: "instance B is independent — HardStop on A must not bleed into B");
     }
 }

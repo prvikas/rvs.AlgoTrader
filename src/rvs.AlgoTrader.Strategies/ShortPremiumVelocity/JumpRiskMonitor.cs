@@ -39,6 +39,13 @@ public sealed class JumpRiskMonitor(
     public JumpRiskState CurrentState => _currentState;
 
     /// <summary>
+    /// True until the rolling window has accumulated enough ticks to make spike detection reliable.
+    /// After a process restart this will be true for the first ~5+ ticks. Operators should be
+    /// aware that the jump-risk gate does not fire during this warm-up window.
+    /// </summary>
+    public bool IsWarmingUp => _volWindow.Count < 5;
+
+    /// <summary>
     /// Wire to IBrokerStreamClient and begin streaming ticks for all configured symbols.
     /// Called once on startup by the DI hosting layer; returns immediately (fire-and-forget via Task).
     /// No polling loop — driven entirely by WebSocket events.

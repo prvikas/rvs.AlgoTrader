@@ -6,18 +6,22 @@ using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using System.Collections.Concurrent;
 using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 
 /// <summary>
-/// Post-drawdown recovery state machine with 4 steps:
+/// Post-drawdown recovery state machine with 4 steps per strategy instance:
 ///
 ///   Step 0 (Panic lock): IsSoftStop or regime=Panic → multiplier = RecoveryMultiplierMin[Panic] = 0.50.
 ///   Step 1 (Initial):    Entry into recovery → multiplier = RegimeMin (0.50–1.00).
 ///   Step 2 (Stabilise):  RecoveryWindowMinSessions[regime] profitable sessions → multiplier mid-point.
 ///   Step 3 (Rebuild):    RecoveryWindowMaxSessions[regime] sessions AND Sharpe ≥ RecoveryStep3SharpeMin → multiplier = RegimeMax.
 ///   Full (Normal):       No active drawdown → multiplier = 1.0 (uncapped).
+///
+/// Per-instance isolation: each Guid instanceId maintains independent recovery state so that
+/// a drawdown on one instance does not reduce sizing for another running instance.
 ///
 /// All window sizes come from config — no hard-coded session counts.
 /// Step-up is evaluated by EvaluateStepUpAsync; it is NOT automatic.
@@ -29,47 +33,59 @@ public sealed class RecoveryManager(
     ILogger<RecoveryManager>    log)
     : IRecoveryManager
 {
-    // ── Recovery state ────────────────────────────────────────────────────────
-    private int     _recoveryStep        = 0;   // 0=Normal, 1=Init, 2=Stabilise, 3=Rebuild
-    private bool    _inRecovery          = false;
-    private int     _sessionsInStep      = 0;
-    private int     _profitableSessions  = 0;
-    private decimal _rollingPnl         = 0m;
-    private decimal _rollingPnlSumSq    = 0m;
-    private int     _rollingPnlCount    = 0;
-    private Instant _stepEnteredAt      = Instant.MinValue;
+    // ── Per-instance state ────────────────────────────────────────────────────
 
-    // ── IRecoveryManager ─────────────────────────────────────────────────────
+    private sealed class RecoveryInstance
+    {
+        public int     Step              = 0;
+        public bool    InRecovery        = false;
+        public int     SessionsInStep    = 0;
+        public int     ProfitableSessions = 0;
+        public decimal RollingPnl        = 0m;
+        public decimal RollingPnlSumSq   = 0m;
+        public int     RollingPnlCount   = 0;
+        public Instant StepEnteredAt     = Instant.MinValue;
+    }
+
+    private readonly ConcurrentDictionary<Guid, RecoveryInstance> _instances = new();
+
+    private RecoveryInstance GetOrCreate(Guid instanceId)
+        => _instances.GetOrAdd(instanceId, _ => new RecoveryInstance());
+
+    // ── IRecoveryManager (per-instance) ──────────────────────────────────────
 
     /// <summary>
-    /// Returns the sizing multiplier (0.50–1.25) to apply this session.
+    /// Returns the sizing multiplier (0.50–1.25) for the given strategy instance.
     ///
     /// Panic lock overrides all steps: if circuit-breaker is HardStop or regime is Panic,
     /// returns RecoveryMultiplierMin[Panic] (0.50) regardless of step.
     /// </summary>
     public decimal GetRecoveryMultiplier(
+        Guid                       instanceId,
         VelocityRegimeState        regime,
         ShortPremiumVelocityConfig config)
     {
-        // Panic lock — highest priority
-        bool panicLock = circuitBreaker.CurrentState.State == CircuitBreakerStateValue.HardStop
+        // Panic lock — highest priority; use per-instance CB state
+        bool panicLock = circuitBreaker.GetState(instanceId).State == CircuitBreakerStateValue.HardStop
                       || regime.Label == MarketRegime.VelocityPanic;
 
         if (panicLock)
         {
             decimal panicMin = config.RecoveryMultiplierMin.GetValueOrDefault(
                 MarketRegime.VelocityPanic, 0.50m);
-            log.LogDebug("RecoveryManager: Panic lock → multiplier={M}", panicMin);
+            log.LogDebug("RecoveryManager[{I}]: Panic lock → multiplier={M}", instanceId, panicMin);
             return panicMin;
         }
 
-        if (!_inRecovery)
+        var s = GetOrCreate(instanceId);
+
+        if (!s.InRecovery)
             return 1.0m; // normal — no cap
 
         decimal regimeMin = config.RecoveryMultiplierMin.GetValueOrDefault(regime.Label, 0.50m);
         decimal regimeMax = config.RecoveryMultiplierMax.GetValueOrDefault(regime.Label, 1.25m);
 
-        decimal multiplier = _recoveryStep switch
+        decimal multiplier = s.Step switch
         {
             1 => regimeMin,                                      // 50–100% depending on regime
             2 => Math.Round((regimeMin + regimeMax) / 2m, 4),   // mid-point
@@ -78,91 +94,81 @@ public sealed class RecoveryManager(
         };
 
         log.LogDebug(
-            "RecoveryManager: step={S} regime={R} multiplier={M} sessionsInStep={SS}",
-            _recoveryStep, regime.Label, multiplier, _sessionsInStep);
+            "RecoveryManager[{I}]: step={S} regime={R} multiplier={M} sessionsInStep={SS}",
+            instanceId, s.Step, regime.Label, multiplier, s.SessionsInStep);
 
         return multiplier;
     }
 
     /// <summary>
-    /// Evaluates whether to step up to the next recovery stage.
-    ///
-    /// Step 1 → 2: sessionsInStep ≥ RecoveryWindowMinSessions[regime] AND ≥1 profitable session.
-    /// Step 2 → 3: sessionsInStep ≥ RecoveryWindowMaxSessions[regime] AND Sharpe ≥ RecoveryStep3SharpeMin.
-    /// Step 3 → Full: Sharpe ≥ RecoveryStep3SharpeMin AND no recent loss streak.
-    ///
-    /// Also handles: entering recovery when CB is SoftStop/HardStop.
+    /// Evaluates whether to step up to the next recovery stage for the given instance.
     /// Returns true when a step-up occurred.
     /// </summary>
     public async Task<bool> EvaluateStepUpAsync(
+        Guid                       instanceId,
         VelocityRegimeState        regime,
         ShortPremiumVelocityConfig config,
         CancellationToken          ct)
     {
-        var cbState = circuitBreaker.CurrentState.State;
+        var cbState = circuitBreaker.GetState(instanceId).State;
+        var s       = GetOrCreate(instanceId);
 
         // ── Enter recovery mode if not already in it ──────────────────────────
-        if (!_inRecovery && cbState != CircuitBreakerStateValue.Normal)
+        if (!s.InRecovery && cbState != CircuitBreakerStateValue.Normal)
         {
-            _inRecovery       = true;
-            _recoveryStep     = 1;
-            _sessionsInStep   = 0;
-            _profitableSessions = 0;
-            _stepEnteredAt    = clock.NowInstant();
+            s.InRecovery         = true;
+            s.Step               = 1;
+            s.SessionsInStep     = 0;
+            s.ProfitableSessions = 0;
+            s.StepEnteredAt      = clock.NowInstant();
             log.LogWarning(
-                "RecoveryManager: entering recovery step=1 regime={R} cb={CB}",
-                regime.Label, cbState);
+                "RecoveryManager[{I}]: entering recovery step=1 regime={R} cb={CB}",
+                instanceId, regime.Label, cbState);
             return false; // just entered; evaluate next session
         }
 
         // ── Exit recovery when CB resets to Normal ────────────────────────────
-        if (_inRecovery && cbState == CircuitBreakerStateValue.Normal && _recoveryStep >= 3)
+        if (s.InRecovery && cbState == CircuitBreakerStateValue.Normal && s.Step >= 3)
         {
-            decimal sharpe = ComputeRollingSharpe();
+            decimal sharpe = ComputeRollingSharpe(s);
             if (sharpe >= config.RecoveryStep3SharpeMin)
             {
                 log.LogInformation(
-                    "RecoveryManager: FULL recovery — sharpe={Sh:F2} ≥ {Min:F2}; exiting recovery mode",
-                    sharpe, config.RecoveryStep3SharpeMin);
-                _inRecovery       = false;
-                _recoveryStep     = 0;
-                _sessionsInStep   = 0;
-                _profitableSessions = 0;
-                _rollingPnl       = 0m;
-                _rollingPnlSumSq  = 0m;
-                _rollingPnlCount  = 0;
+                    "RecoveryManager[{I}]: FULL recovery — sharpe={Sh:F2} ≥ {Min:F2}; exiting recovery mode",
+                    instanceId, sharpe, config.RecoveryStep3SharpeMin);
+                ResetInstance(s);
                 return true;
             }
         }
 
-        if (!_inRecovery) return false;
+        if (!s.InRecovery) return false;
 
         // ── Update session P&L stats ──────────────────────────────────────────
-        await UpdateSessionStatsAsync(regime, config, ct);
+        await UpdateSessionStatsAsync(instanceId, s, regime, config, ct);
 
-        int minSessions = config.RecoveryWindowMinSessions.GetValueOrDefault(regime.Label, 20);
-        int maxSessions = config.RecoveryWindowMaxSessions.GetValueOrDefault(regime.Label, 40);
-        decimal sharpeNow = ComputeRollingSharpe();
+        int     minSessions = config.RecoveryWindowMinSessions.GetValueOrDefault(regime.Label, 20);
+        int     maxSessions = config.RecoveryWindowMaxSessions.GetValueOrDefault(regime.Label, 40);
+        decimal sharpeNow   = ComputeRollingSharpe(s);
 
         bool stepped = false;
 
-        if (_recoveryStep == 1 && _sessionsInStep >= minSessions && _profitableSessions >= 1)
+        if (s.Step == 1 && s.SessionsInStep >= minSessions && s.ProfitableSessions >= 1)
         {
-            _recoveryStep   = 2;
-            _sessionsInStep = 0;
+            s.Step           = 2;
+            s.SessionsInStep = 0;
             log.LogInformation(
-                "RecoveryManager: step 1→2 after {N} sessions profit={P} regime={R}",
-                minSessions, _profitableSessions, regime.Label);
+                "RecoveryManager[{I}]: step 1→2 after {N} sessions profit={P} regime={R}",
+                instanceId, minSessions, s.ProfitableSessions, regime.Label);
             stepped = true;
         }
-        else if (_recoveryStep == 2 && _sessionsInStep >= maxSessions &&
+        else if (s.Step == 2 && s.SessionsInStep >= maxSessions &&
                  sharpeNow >= config.RecoveryStep3SharpeMin)
         {
-            _recoveryStep   = 3;
-            _sessionsInStep = 0;
+            s.Step           = 3;
+            s.SessionsInStep = 0;
             log.LogInformation(
-                "RecoveryManager: step 2→3 after {N} sessions sharpe={Sh:F2} regime={R}",
-                maxSessions, sharpeNow, regime.Label);
+                "RecoveryManager[{I}]: step 2→3 after {N} sessions sharpe={Sh:F2} regime={R}",
+                instanceId, maxSessions, sharpeNow, regime.Label);
             stepped = true;
         }
 
@@ -171,14 +177,27 @@ public sealed class RecoveryManager(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    private static void ResetInstance(RecoveryInstance s)
+    {
+        s.InRecovery         = false;
+        s.Step               = 0;
+        s.SessionsInStep     = 0;
+        s.ProfitableSessions = 0;
+        s.RollingPnl         = 0m;
+        s.RollingPnlSumSq    = 0m;
+        s.RollingPnlCount    = 0;
+    }
+
     private async Task UpdateSessionStatsAsync(
+        Guid                       instanceId,
+        RecoveryInstance           s,
         VelocityRegimeState        regime,
         ShortPremiumVelocityConfig config,
         CancellationToken          ct)
     {
         // Proxy: compute daily P&L from closed positions today
-        var now = clock.NowInstant();
-        var ist = now.InZone(DateTimeZone.ForOffset(Offset.FromHoursAndMinutes(5, 30)));
+        var now  = clock.NowInstant();
+        var ist  = now.InZone(DateTimeZone.ForOffset(Offset.FromHoursAndMinutes(5, 30)));
         var today = ist.Date;
 
         await using var scope   = scopeFactory.CreateAsyncScope();
@@ -188,25 +207,25 @@ public sealed class RecoveryManager(
 
         decimal sessionPnl = closedToday.Sum(p => p.UnrealizedPnl + p.RealizedPnl);
 
-        _sessionsInStep++;
-        if (sessionPnl > 0) _profitableSessions++;
+        s.SessionsInStep++;
+        if (sessionPnl > 0) s.ProfitableSessions++;
 
         // Update rolling stats for Sharpe
-        _rollingPnl      += sessionPnl;
-        _rollingPnlSumSq += sessionPnl * sessionPnl;
-        _rollingPnlCount++;
+        s.RollingPnl      += sessionPnl;
+        s.RollingPnlSumSq += sessionPnl * sessionPnl;
+        s.RollingPnlCount++;
 
         log.LogDebug(
-            "RecoveryManager.UpdateStats: sessionPnl={PnL:F0} sessionsInStep={S} profitable={P}",
-            sessionPnl, _sessionsInStep, _profitableSessions);
+            "RecoveryManager[{I}].UpdateStats: sessionPnl={PnL:F0} sessionsInStep={S} profitable={P}",
+            instanceId, sessionPnl, s.SessionsInStep, s.ProfitableSessions);
     }
 
-    private decimal ComputeRollingSharpe()
+    private static decimal ComputeRollingSharpe(RecoveryInstance s)
     {
-        if (_rollingPnlCount < 2) return 0m;
+        if (s.RollingPnlCount < 2) return 0m;
 
-        decimal mean     = _rollingPnl / _rollingPnlCount;
-        decimal variance = (_rollingPnlSumSq / _rollingPnlCount) - (mean * mean);
+        decimal mean     = s.RollingPnl / s.RollingPnlCount;
+        decimal variance = (s.RollingPnlSumSq / s.RollingPnlCount) - (mean * mean);
         decimal stdDev   = variance > 0m ? (decimal)Math.Sqrt((double)variance) : 1m;
 
         return stdDev > 0m ? Math.Round(mean / stdDev * (decimal)Math.Sqrt(252.0), 4) : 0m;

@@ -1,5 +1,6 @@
 using NodaTime;
 using rvs.AlgoTrader.Domain.Enums;
+// ReSharper disable once RedundantUsingDirective — LocalDate used below
 
 namespace rvs.AlgoTrader.Domain.Entities;
 
@@ -42,6 +43,13 @@ public class Position
     /// Null for plain equity / non-SPV positions.
     /// </summary>
     public string? StructureType { get; set; }
+
+    /// <summary>
+    /// Actual expiry date of the option series (IST calendar date, e.g. 2024-06-27).
+    /// Null for plain equity / non-SPV positions.
+    /// Used by RollDecisionEngine to compute true DTE instead of estimating from age.
+    /// </summary>
+    public LocalDate? ExpiryDate { get; set; }
 
     public decimal RealizedPnl { get; private set; }
     public decimal UnrealizedPnl { get; private set; }

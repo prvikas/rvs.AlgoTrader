@@ -14,6 +14,13 @@ namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 ///   - IStrategy instances are long-lived (one per configured strategy run).
 ///   - No request-scoped state; cancellation is propagated via CancellationToken per call.
 ///
+/// Multi-instance isolation: CircuitBreakerService and RecoveryManager maintain per-Guid
+/// state buckets (ConcurrentDictionary keyed by StrategyInstanceId) so that two concurrent
+/// forward-test instances do not bleed state into each other.
+///
+/// ISpvStateStore (Scoped) must be registered in the host BEFORE calling AddShortPremiumVelocity().
+/// It is registered in rvs.AlgoTrader.API/Extensions/ServiceCollectionExtensions.cs.
+///
 /// StrategyFactory is registered separately in the API layer as IStrategyFactory → StrategyFactory.
 /// This extension only registers the SPV sub-services so ActivatorUtilities can resolve
 /// ShortPremiumVelocityStrategy when StrategyFactory.Create("ShortPremiumVelocity", ...) is called.

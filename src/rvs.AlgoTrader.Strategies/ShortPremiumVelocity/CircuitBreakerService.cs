@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NodaTime;
 using rvs.AlgoTrader.Application.Commands.Strategy;
@@ -7,13 +8,17 @@ using rvs.AlgoTrader.Application.Services;
 using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.ValueObjects;
+using System.Collections.Concurrent;
 using IClock = rvs.AlgoTrader.Domain.Interfaces.IClock;
 
 namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 
 /// <summary>
 /// Intraday circuit-breaker state machine: Normal → SoftStop → HardStop.
-/// Evaluated on every tick via EvaluateAsync(dailyLossPct, config, ct).
+/// Evaluated on every tick via EvaluateAsync(instanceId, dailyLossPct, config, ct).
+///
+/// Per-instance isolation: each Guid instanceId has its own CB state bucket.
+/// Running two forward-test instances simultaneously will not share CB state.
 ///
 /// SoftStop trigger: dailyLossPct ≥ SoftStopLossPct (default 1.5%).
 ///   Effects: 50% size cap (RecoveryManager), AggressionMultiplier ≤ 1.0 (VelocityIndicator),
@@ -26,9 +31,14 @@ namespace rvs.AlgoTrader.Strategies.ShortPremiumVelocity;
 ///   PUBLISHES ActivateKillSwitchCommand (existing) via MediatR — no duplicate mechanism.
 ///
 /// Reset: next trading day when MarginState.IsFresh AND JumpRisk.IsSoftStop==false
-///   AND regime is NOT Panic/HighVolExpansion. ResetEligibleAt = next trading day open.
+///   AND regime is NOT Panic/HighVolExpansion. Checked via TryResetAsync.
+///
+/// Persistence: state is written to velocity_circuit_breaker_state on every transition.
+///   On first call per instanceId, state is lazily loaded from DB so process restarts
+///   do not silently clear a HardStop.
 /// </summary>
 public sealed class CircuitBreakerService(
+    IServiceScopeFactory            scopeFactory,
     IPublisher                      publisher,
     IClock                          clock,
     IJumpRiskMonitor                jumpRisk,
@@ -39,81 +49,93 @@ public sealed class CircuitBreakerService(
     private static readonly DateTimeZone Ist =
         DateTimeZone.ForOffset(Offset.FromHoursAndMinutes(5, 30));
 
-    // In-memory state — persisted to DB in Phase 3 migration table
-    private CircuitBreakerStateValue _state = CircuitBreakerStateValue.Normal;
-    private Instant?                 _triggeredAt;
-    private Instant?                 _resetEligibleAt;
+    // ── Per-instance state ────────────────────────────────────────────────────
 
-    public CircuitBreakerState CurrentState => new(
-        State:           _state,
-        DailyLossPercent: _lastDailyLossPct,
-        TriggeredAt:      _triggeredAt,
-        ResetEligibleAt: _resetEligibleAt);
+    private sealed class CbInstance
+    {
+        public CircuitBreakerStateValue State           = CircuitBreakerStateValue.Normal;
+        public decimal                  DailyLossPercent;
+        public Instant?                 TriggeredAt;
+        public Instant?                 ResetEligibleAt;
+        public bool                     LoadedFromDb;
+    }
 
-    private decimal _lastDailyLossPct;
+    private readonly ConcurrentDictionary<Guid, CbInstance> _instances = new();
+
+    private CbInstance GetOrCreate(Guid instanceId)
+        => _instances.GetOrAdd(instanceId, _ => new CbInstance());
+
+    // ── ICircuitBreakerService ────────────────────────────────────────────────
+
+    /// <summary>Global (Guid.Empty) state — kept for backward compat with mocks that set up CurrentState.</summary>
+    public CircuitBreakerState CurrentState => GetState(Guid.Empty);
+
+    /// <summary>Per-instance state access.</summary>
+    public CircuitBreakerState GetState(Guid instanceId)
+    {
+        var s = GetOrCreate(instanceId);
+        return new CircuitBreakerState(s.State, s.DailyLossPercent, s.TriggeredAt, s.ResetEligibleAt);
+    }
 
     public async Task EvaluateAsync(
+        Guid                       instanceId,
         decimal                    dailyLossPct,
         ShortPremiumVelocityConfig config,
         CancellationToken          ct)
     {
-        _lastDailyLossPct = dailyLossPct;
+        var s   = await EnsureLoadedAsync(instanceId, ct);
         var now = clock.NowInstant();
+        s.DailyLossPercent = dailyLossPct;
 
         // ── HardStop trigger ──────────────────────────────────────────────────
-        if (dailyLossPct >= config.HardStopLossPct && _state != CircuitBreakerStateValue.HardStop)
+        if (dailyLossPct >= config.HardStopLossPct && s.State != CircuitBreakerStateValue.HardStop)
         {
-            _state           = CircuitBreakerStateValue.HardStop;
-            _triggeredAt     = now;
-            _resetEligibleAt = NextTradingDayOpen(now);
+            s.State           = CircuitBreakerStateValue.HardStop;
+            s.TriggeredAt     = now;
+            s.ResetEligibleAt = NextTradingDayOpen(now);
 
             log.LogCritical(
-                "CircuitBreaker: HARD STOP triggered — dailyLoss={Loss:P2} ≥ HardCap={Cap:P2} at {At}",
-                dailyLossPct, config.HardStopLossPct, now);
+                "CircuitBreaker[{I}]: HARD STOP triggered — dailyLoss={Loss:P2} ≥ HardCap={Cap:P2} at {At}",
+                instanceId, dailyLossPct, config.HardStopLossPct, now);
 
-            // Publish existing kill-switch command — no new mechanism
+            await PersistAsync(instanceId, s, ct);
+
             await publisher.Publish(
                 new ActivateKillSwitchCommand(
                     Actor:         "CircuitBreakerService",
-                    Reason:        $"SPV HardStop: dailyLoss={dailyLossPct:P2} ≥ {config.HardStopLossPct:P2}",
+                    Reason:        $"SPV HardStop[{instanceId}]: dailyLoss={dailyLossPct:P2} ≥ {config.HardStopLossPct:P2}",
                     CorrelationId: Guid.NewGuid().ToString()),
                 ct);
             return;
         }
 
         // ── SoftStop trigger ──────────────────────────────────────────────────
-        if (dailyLossPct >= config.SoftStopLossPct && _state == CircuitBreakerStateValue.Normal)
+        if (dailyLossPct >= config.SoftStopLossPct && s.State == CircuitBreakerStateValue.Normal)
         {
-            _state       = CircuitBreakerStateValue.SoftStop;
-            _triggeredAt = now;
-            _resetEligibleAt = NextTradingDayOpen(now);
+            s.State       = CircuitBreakerStateValue.SoftStop;
+            s.TriggeredAt = now;
+            s.ResetEligibleAt = NextTradingDayOpen(now);
 
             log.LogWarning(
-                "CircuitBreaker: SOFT STOP triggered — dailyLoss={Loss:P2} ≥ SoftCap={Cap:P2} at {At}",
-                dailyLossPct, config.SoftStopLossPct, now);
-            return;
-        }
+                "CircuitBreaker[{I}]: SOFT STOP triggered — dailyLoss={Loss:P2} ≥ SoftCap={Cap:P2} at {At}",
+                instanceId, dailyLossPct, config.SoftStopLossPct, now);
 
-        // Reset is handled by TryResetAsync, called by SPV strategy after margin + regime are known.
+            await PersistAsync(instanceId, s, ct);
+        }
     }
 
-    /// <summary>
-    /// Resets the circuit breaker to Normal when ALL three conditions hold:
-    ///   1. ResetEligibleAt has passed (next trading day).
-    ///   2. MarginState.IsFresh — broker margin data is current.
-    ///   3. JumpRisk is not in soft-stop.
-    ///   4. Regime is not Panic or HighVolExpansion (would re-trigger immediately).
-    /// </summary>
-    public Task TryResetAsync(
+    public async Task TryResetAsync(
+        Guid                instanceId,
         MarginState         marginState,
         VelocityRegimeState regime,
         CancellationToken   ct)
     {
-        if (_state == CircuitBreakerStateValue.Normal) return Task.CompletedTask;
-        if (!_resetEligibleAt.HasValue)                return Task.CompletedTask;
+        var s = await EnsureLoadedAsync(instanceId, ct);
+        if (s.State == CircuitBreakerStateValue.Normal) return;
+        if (!s.ResetEligibleAt.HasValue)               return;
 
         var now = clock.NowInstant();
-        if (now < _resetEligibleAt.Value)              return Task.CompletedTask;
+        if (now < s.ResetEligibleAt.Value)             return;
 
         bool jumpRiskClear = !jumpRisk.CurrentState.IsSoftStop;
         bool marginFresh   = marginState.IsFresh;
@@ -123,21 +145,80 @@ public sealed class CircuitBreakerService(
         if (jumpRiskClear && marginFresh && regimeSafe)
         {
             log.LogInformation(
-                "CircuitBreaker: resetting to Normal from {PriorState} — " +
+                "CircuitBreaker[{I}]: resetting to Normal from {Prior} — " +
                 "marginFresh={MF} jumpRiskClear={JR} regime={R} at {At}",
-                _state, marginFresh, jumpRiskClear, regime.Label, now);
-            _state           = CircuitBreakerStateValue.Normal;
-            _triggeredAt     = null;
-            _resetEligibleAt = null;
+                instanceId, s.State, marginFresh, jumpRiskClear, regime.Label, now);
+
+            s.State           = CircuitBreakerStateValue.Normal;
+            s.TriggeredAt     = null;
+            s.ResetEligibleAt = null;
+
+            await PersistAsync(instanceId, s, ct);
         }
         else
         {
             log.LogDebug(
-                "CircuitBreaker: reset deferred — jumpRiskClear={J} marginFresh={M} regimeSafe={R}",
-                jumpRiskClear, marginFresh, regimeSafe);
+                "CircuitBreaker[{I}]: reset deferred — jumpRiskClear={J} marginFresh={M} regimeSafe={R}",
+                instanceId, jumpRiskClear, marginFresh, regimeSafe);
+        }
+    }
+
+    // ── DB load/persist ───────────────────────────────────────────────────────
+
+    private async Task<CbInstance> EnsureLoadedAsync(Guid instanceId, CancellationToken ct)
+    {
+        var s = GetOrCreate(instanceId);
+        if (s.LoadedFromDb) return s;
+
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<ISpvStateStore>();
+
+        var row = await store.LoadCbStateAsync(instanceId, ct);
+        if (row != null)
+        {
+            s.State = Enum.TryParse<CircuitBreakerStateValue>(row.State, out var parsed)
+                ? parsed : CircuitBreakerStateValue.Normal;
+            s.DailyLossPercent = row.DailyLossPercent;
+            s.TriggeredAt      = row.TriggeredAt.HasValue
+                ? Instant.FromDateTimeUtc(DateTime.SpecifyKind(row.TriggeredAt.Value, DateTimeKind.Utc))
+                : null;
+            s.ResetEligibleAt  = row.ResetEligibleAt.HasValue
+                ? Instant.FromDateTimeUtc(DateTime.SpecifyKind(row.ResetEligibleAt.Value, DateTimeKind.Utc))
+                : null;
+
+            log.LogInformation(
+                "CircuitBreaker[{I}]: loaded persisted state={State} from DB (dailyLoss={L:P2})",
+                instanceId, s.State, s.DailyLossPercent);
+        }
+        else
+        {
+            log.LogDebug(
+                "CircuitBreaker[{I}]: no persisted state found — starting Normal", instanceId);
         }
 
-        return Task.CompletedTask;
+        s.LoadedFromDb = true;
+        return s;
+    }
+
+    private async Task PersistAsync(Guid instanceId, CbInstance s, CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var store = scope.ServiceProvider.GetRequiredService<ISpvStateStore>();
+            await store.SaveCbStateAsync(instanceId, new PersistedCbState
+            {
+                State            = s.State.ToString(),
+                DailyLossPercent = s.DailyLossPercent,
+                TriggeredAt      = s.TriggeredAt?.ToDateTimeUtc(),
+                ResetEligibleAt  = s.ResetEligibleAt?.ToDateTimeUtc(),
+                UpdatedAt        = clock.NowInstant().ToDateTimeUtc(),
+            }, ct);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "CircuitBreaker[{I}]: failed to persist state — in-memory state still valid", instanceId);
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

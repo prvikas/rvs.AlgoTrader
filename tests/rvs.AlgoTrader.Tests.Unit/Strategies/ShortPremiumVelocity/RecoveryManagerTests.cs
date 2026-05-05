@@ -23,10 +23,14 @@ namespace rvs.AlgoTrader.Tests.Unit.Strategies.ShortPremiumVelocity;
 ///   Step 1 (initial)         → multiplier = RecoveryMultiplierMin[regime].
 ///   Step 2 (stabilise)       → multiplier = midpoint of min+max.
 ///   Step 3 (rebuild)         → multiplier = RecoveryMultiplierMax[regime].
+///
+/// All tests use Guid.Empty as instanceId (single-instance scenario).
+/// Per-instance isolation test verifies that separate instanceIds have independent state.
 /// </summary>
 public class RecoveryManagerTests
 {
     private static readonly ShortPremiumVelocityConfig DefaultConfig = new();
+    private static readonly Guid TestInstance = Guid.Empty;
 
     private static IServiceScopeFactory BuildScopeFactory(IPositionRepository posRepo)
     {
@@ -49,8 +53,10 @@ public class RecoveryManagerTests
                  .ReturnsAsync([]);
 
         var cb = new Mock<ICircuitBreakerService>();
-        cb.Setup(c => c.CurrentState).Returns(
-            new CircuitBreakerState(cbState, 0m, null, null));
+        // Mock both CurrentState (compat property) and GetState(Guid) for per-instance access
+        var cbStateObj = new CircuitBreakerState(cbState, 0m, null, null);
+        cb.Setup(c => c.CurrentState).Returns(cbStateObj);
+        cb.Setup(c => c.GetState(It.IsAny<Guid>())).Returns(cbStateObj);
 
         var clock = new Mock<IClock>();
         clock.Setup(c => c.NowInstant())
@@ -69,7 +75,7 @@ public class RecoveryManagerTests
         var sut    = BuildSut(cbState: CircuitBreakerStateValue.Normal);
         var regime = SpvTestHelpers.MakeRegime(MarketRegime.VelocityChoppyMeanReversion);
 
-        var multiplier = sut.GetRecoveryMultiplier(regime, DefaultConfig);
+        var multiplier = sut.GetRecoveryMultiplier(TestInstance, regime, DefaultConfig);
 
         multiplier.Should().Be(1.0m,
             because: "when not in recovery mode the multiplier is uncapped at 1.0");
@@ -83,7 +89,7 @@ public class RecoveryManagerTests
         var sut    = BuildSut(cbState: CircuitBreakerStateValue.Normal);
         var regime = SpvTestHelpers.MakeRegime(MarketRegime.VelocityPanic);
 
-        var multiplier = sut.GetRecoveryMultiplier(regime, DefaultConfig);
+        var multiplier = sut.GetRecoveryMultiplier(TestInstance, regime, DefaultConfig);
 
         decimal expected = DefaultConfig.RecoveryMultiplierMin.GetValueOrDefault(MarketRegime.VelocityPanic, 0.50m);
         multiplier.Should().Be(expected,
@@ -96,7 +102,7 @@ public class RecoveryManagerTests
         var sut    = BuildSut(cbState: CircuitBreakerStateValue.HardStop);
         var regime = SpvTestHelpers.MakeRegime(MarketRegime.VelocityChoppyMeanReversion);
 
-        var multiplier = sut.GetRecoveryMultiplier(regime, DefaultConfig);
+        var multiplier = sut.GetRecoveryMultiplier(TestInstance, regime, DefaultConfig);
 
         decimal expected = DefaultConfig.RecoveryMultiplierMin.GetValueOrDefault(MarketRegime.VelocityPanic, 0.50m);
         multiplier.Should().Be(expected,
@@ -112,9 +118,9 @@ public class RecoveryManagerTests
         var regime = SpvTestHelpers.MakeRegime(MarketRegime.VelocityChoppyMeanReversion);
 
         // EvaluateStepUpAsync detects SoftStop and enters recovery at step 1
-        await sut.EvaluateStepUpAsync(regime, DefaultConfig, CancellationToken.None);
+        await sut.EvaluateStepUpAsync(TestInstance, regime, DefaultConfig, CancellationToken.None);
 
-        decimal multiplier = sut.GetRecoveryMultiplier(regime, DefaultConfig);
+        decimal multiplier = sut.GetRecoveryMultiplier(TestInstance, regime, DefaultConfig);
         decimal expected   = DefaultConfig.RecoveryMultiplierMin.GetValueOrDefault(
             MarketRegime.VelocityChoppyMeanReversion, 0.50m);
 
@@ -135,7 +141,7 @@ public class RecoveryManagerTests
         var sut    = BuildSut();
         var regime = SpvTestHelpers.MakeRegime(label);
 
-        var multiplier = sut.GetRecoveryMultiplier(regime, DefaultConfig);
+        var multiplier = sut.GetRecoveryMultiplier(TestInstance, regime, DefaultConfig);
 
         multiplier.Should().BeInRange(0m, 1.25m,
             because: "Recovery multiplier must always stay within the [0, RecoveryMultiplierMax[max]] band");
@@ -149,10 +155,32 @@ public class RecoveryManagerTests
         var sut    = BuildSut(cbState: CircuitBreakerStateValue.Normal);
         var regime = SpvTestHelpers.MakeRegime(MarketRegime.VelocityChoppyMeanReversion);
 
-        bool steppedUp = await sut.EvaluateStepUpAsync(regime, DefaultConfig, CancellationToken.None);
+        bool steppedUp = await sut.EvaluateStepUpAsync(TestInstance, regime, DefaultConfig, CancellationToken.None);
 
         steppedUp.Should().BeFalse(because: "CB is Normal — no recovery to step up from");
         // Should stay at uncapped 1.0
-        sut.GetRecoveryMultiplier(regime, DefaultConfig).Should().Be(1.0m);
+        sut.GetRecoveryMultiplier(TestInstance, regime, DefaultConfig).Should().Be(1.0m);
+    }
+
+    // ── Per-instance isolation ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PerInstance_InstanceA_Recovery_DoesNotAffectInstanceB()
+    {
+        var sut = BuildSut(cbState: CircuitBreakerStateValue.SoftStop);
+        var instanceA = Guid.NewGuid();
+        var instanceB = Guid.NewGuid();
+        var regime    = SpvTestHelpers.MakeRegime(MarketRegime.VelocityChoppyMeanReversion);
+
+        // Enter recovery on instance A
+        await sut.EvaluateStepUpAsync(instanceA, regime, DefaultConfig, CancellationToken.None);
+
+        decimal multA = sut.GetRecoveryMultiplier(instanceA, regime, DefaultConfig);
+        decimal multB = sut.GetRecoveryMultiplier(instanceB, regime, DefaultConfig);
+
+        multA.Should().BeLessThan(1.0m,
+            because: "instance A entered recovery — multiplier must be capped");
+        multB.Should().Be(1.0m,
+            because: "instance B is independent — recovery on A must not reduce B's multiplier");
     }
 }

@@ -111,6 +111,15 @@ public class PromoteForwardTestToLiveHandler(
         var session = instanceSessions.OrderByDescending(s => s.StartedAt).FirstOrDefault();
 
         // ── Pre-flight checks ─────────────────────────────────────────────────
+        // Summary of all 7 checks (visible here for operator reference):
+        //   1. Kill switch must NOT be active
+        //   2. Broker '{BrokerName}' must be authenticated
+        //   3. Forward test session must be Stopped or Completed (not still Running)
+        //   4. At least 5 trades must have been completed
+        //   5. Win rate must be ≥ 40%
+        //   6. Max drawdown must be < 25%
+        //   7. Allocated capital must be > 0
+        // All checks are returned in PromoteToLiveResultDto.Checks regardless of pass/fail.
         var checks = new List<PreFlightCheckDto>();
 
         // 1. Kill switch must NOT be active

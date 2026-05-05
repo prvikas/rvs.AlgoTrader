@@ -86,7 +86,7 @@ public sealed class ShortPremiumVelocityStrategy(
             ctx.InternalSymbol, regime.Label, regime.RegimeStability, regime.TailRiskScore);
 
         // ── Step 3: Circuit-breaker gate ─────────────────────────────────────
-        var cbState = circuitBreaker.CurrentState;
+        var cbState = circuitBreaker.GetState(ctx.StrategyInstanceId);   // per-instance state
         if (cbState.State == CircuitBreakerStateValue.HardStop)
         {
             log.LogInformation(
@@ -97,6 +97,13 @@ public sealed class ShortPremiumVelocityStrategy(
 
         // ── Step 4: Jump-risk gate ────────────────────────────────────────────
         var jumpState = jumpRisk.CurrentState;
+        if (jumpRisk.IsWarmingUp)
+        {
+            log.LogWarning(
+                "SPV: JumpRiskMonitor is warming up — spike detection not yet active. " +
+                "Rolling window has insufficient data. New entries are permitted but jump-risk " +
+                "soft-stop will NOT fire until the window fills (typically a few minutes after start).");
+        }
         if (jumpState.IsSoftStop)
         {
             log.LogInformation(
@@ -119,7 +126,7 @@ public sealed class ShortPremiumVelocityStrategy(
         // ── Step 5b: Circuit-breaker reset eligibility check ─────────────────
         // Called once per tick with live margin state + regime — the three conditions
         // (margin fresh, jump risk cleared, regime not Panic/HighVol) are checked inside.
-        await circuitBreaker.TryResetAsync(marginState, regime, ct);
+        await circuitBreaker.TryResetAsync(ctx.StrategyInstanceId, marginState, regime, ct);
 
         // ── Step 6: Velocity screener hard gates ──────────────────────────────
         var screen = await screener.ScreenAsync(ctx, regime, config, ct);
@@ -205,7 +212,7 @@ public sealed class ShortPremiumVelocityStrategy(
         }
 
         // ── Step 13: Recovery multiplier ──────────────────────────────────────
-        decimal recoveryMultiplier = recovery.GetRecoveryMultiplier(regime, config);
+        decimal recoveryMultiplier = recovery.GetRecoveryMultiplier(ctx.StrategyInstanceId, regime, config);
 
         // ── Step 14: KellyHat position sizing ────────────────────────────────
         // Half-Kelly: f = (winRate × avgWin − lossRate × avgLoss) / avgWin / 2
@@ -222,7 +229,8 @@ public sealed class ShortPremiumVelocityStrategy(
         decimal baseSize = Math.Round(
             halfKelly * score.AggressionMultiplier * recoveryMultiplier, 4);
 
-        // ── Step 15: Soft-stop size cap ───────────────────────────────────────
+        // ── Step 15: Soft-stop size cap (re-read in case TryResetAsync changed state) ───
+        cbState = circuitBreaker.GetState(ctx.StrategyInstanceId);
         if (cbState.State == CircuitBreakerStateValue.SoftStop)
         {
             baseSize = Math.Round(baseSize * config.SoftStopSizeCap, 4);
@@ -346,8 +354,20 @@ public sealed class ShortPremiumVelocityStrategy(
 
     private int EstimateDte(Domain.Entities.Position pos)
     {
+        // Use stored expiry date when available — correct DTE for RollDecisionEngine
+        if (pos.ExpiryDate.HasValue)
+        {
+            var nowIst = clock.NowInstant()
+                .InZone(NodaTime.DateTimeZone.ForOffset(NodaTime.Offset.FromHoursAndMinutes(5, 30)))
+                .Date;
+            int dte = NodaTime.Period.Between(nowIst, pos.ExpiryDate.Value, NodaTime.PeriodUnits.Days).Days;
+            return Math.Max(dte, 0);
+        }
+
+        // Fallback: estimate from position age (legacy rows without expiry_date column)
         if (!pos.OpenedAt.HasValue) return 7;
         double ageDays = (clock.NowInstant() - pos.OpenedAt.Value).TotalDays;
+        log.LogDebug("SPV.EstimateDte: pos={Id} has no ExpiryDate — using age-based estimate", pos.Id);
         return Math.Max(7 - (int)ageDays, 0);
     }
 

@@ -129,16 +129,37 @@ public interface IHedgeEvaluator
 /// </summary>
 public interface IRecoveryManager
 {
-    /// <summary>Returns the sizing multiplier (0.5–1.25) to apply during recovery mode.</summary>
+    // ── Per-instance API (preferred for multi-instance safety) ────────────────
+
+    /// <summary>
+    /// Returns the sizing multiplier (0.5–1.25) for the given strategy instance.
+    /// Each instance maintains an independent recovery state so that a drawdown on
+    /// instance A does not reduce sizing for instance B.
+    /// </summary>
     decimal GetRecoveryMultiplier(
+        Guid instanceId,
         VelocityRegimeState regime,
         ShortPremiumVelocityConfig config);
 
-    /// <summary>Returns true when the strategy is eligible to step up to the next recovery stage.</summary>
+    /// <summary>
+    /// Evaluates step-up eligibility for the given strategy instance.
+    /// Returns true when a step-up occurred.
+    /// </summary>
     Task<bool> EvaluateStepUpAsync(
+        Guid instanceId,
         VelocityRegimeState regime,
         ShortPremiumVelocityConfig config,
         CancellationToken ct);
+
+    // ── Backward-compat overloads (delegate to Guid.Empty bucket) ────────────
+
+    /// <summary>Single-instance convenience overload. Delegates to GetRecoveryMultiplier(Guid.Empty, ...).</summary>
+    decimal GetRecoveryMultiplier(VelocityRegimeState regime, ShortPremiumVelocityConfig config)
+        => GetRecoveryMultiplier(Guid.Empty, regime, config);
+
+    /// <summary>Single-instance convenience overload. Delegates to EvaluateStepUpAsync(Guid.Empty, ...).</summary>
+    Task<bool> EvaluateStepUpAsync(VelocityRegimeState regime, ShortPremiumVelocityConfig config, CancellationToken ct)
+        => EvaluateStepUpAsync(Guid.Empty, regime, config, ct);
 }
 
 /// <summary>
@@ -147,31 +168,53 @@ public interface IRecoveryManager
 /// </summary>
 public interface ICircuitBreakerService
 {
-    /// <summary>Current circuit-breaker state. Updated by <see cref="EvaluateAsync"/>.</summary>
-    CircuitBreakerState CurrentState { get; }
+    // ── Global property (kept for backward compat with mocks) ─────────────────
 
     /// <summary>
-    /// Evaluates the daily loss percentage against SoftStop / HardStop thresholds.
-    /// Publishes a <see cref="Commands.ShortPremiumVelocity.JumpRiskSoftStopEvent"/> when the soft threshold is crossed.
+    /// Circuit-breaker state for the Guid.Empty (global/default) instance.
+    /// Prefer GetState(instanceId) when operating with multiple concurrent strategy instances.
+    /// </summary>
+    CircuitBreakerState CurrentState { get; }
+
+    // ── Per-instance API (preferred for multi-instance safety) ────────────────
+
+    /// <summary>
+    /// Returns the circuit-breaker state for the given strategy instance.
+    /// Default impl falls back to <see cref="CurrentState"/> so existing mocks need no changes.
+    /// </summary>
+    CircuitBreakerState GetState(Guid instanceId) => CurrentState;
+
+    /// <summary>
+    /// Evaluates the daily loss percentage for the given strategy instance against SoftStop/HardStop thresholds.
+    /// Persists state to DB on transitions so restarts do not lose HardStop/SoftStop status.
     /// </summary>
     Task EvaluateAsync(
+        Guid instanceId,
         decimal dailyLossPct,
         ShortPremiumVelocityConfig config,
         CancellationToken ct);
 
     /// <summary>
-    /// Checks reset eligibility when all three conditions are met:
+    /// Checks reset eligibility for the given instance when all three conditions are met:
     ///   1. MarginState.IsFresh is true (broker margin data up-to-date).
     ///   2. JumpRisk is not in soft-stop.
     ///   3. Current regime is NOT VelocityPanic or VelocityHighVolExpansion.
-    ///
-    /// Default implementation is a no-op so that existing mocks remain unaffected.
     /// </summary>
     Task TryResetAsync(
+        Guid instanceId,
         MarginState marginState,
         VelocityRegimeState regime,
-        CancellationToken ct)
-        => Task.CompletedTask;
+        CancellationToken ct);
+
+    // ── Backward-compat overloads (delegate to Guid.Empty bucket) ────────────
+
+    /// <summary>Single-instance convenience overload. Delegates to EvaluateAsync(Guid.Empty, ...).</summary>
+    Task EvaluateAsync(decimal dailyLossPct, ShortPremiumVelocityConfig config, CancellationToken ct)
+        => EvaluateAsync(Guid.Empty, dailyLossPct, config, ct);
+
+    /// <summary>Single-instance convenience overload. Default no-op for mock compat.</summary>
+    Task TryResetAsync(MarginState marginState, VelocityRegimeState regime, CancellationToken ct)
+        => TryResetAsync(Guid.Empty, marginState, regime, ct);
 }
 
 /// <summary>
@@ -208,6 +251,14 @@ public interface IJumpRiskMonitor
 {
     /// <summary>Current jump-risk state (updated on every WebSocket tick).</summary>
     JumpRiskState CurrentState { get; }
+
+    /// <summary>
+    /// True while the rolling volatility window is still filling after (re)start.
+    /// During warm-up the soft-stop gate does not fire (too little data to detect spikes reliably).
+    /// Callers should log a warning when IsWarmingUp is true so operators are aware of the blind window.
+    /// Default: false (mocks/stubs are not in warm-up).
+    /// </summary>
+    bool IsWarmingUp => false;
 
     // Event-driven — no polling methods. Wire to IBrokerWebSocket via DI.
 }
