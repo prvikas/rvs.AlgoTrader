@@ -1,87 +1,98 @@
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz'
-
-const IST = 'Asia/Kolkata'
-
 /**
- * Format a UTC ISO string for display in IST.
- * Rule: ALL API timestamps are UTC. Display in IST (UTC+5:30).
- * The "IST" timezone label is appended so users are never confused about which timezone they're seeing.
- */
-export function formatIst(utcIso: string | null | undefined, fmt = 'dd MMM HH:mm'): string {
-  if (!utcIso) return '--'
-  try {
-    return `${formatInTimeZone(new Date(utcIso), IST, fmt)} IST`
-  } catch {
-    return utcIso
-  }
-}
-
-/** Full date + time in IST. */
-export function formatIstFull(utcIso: string | null | undefined): string {
-  if (!utcIso) return '--'
-  try {
-    return `${formatInTimeZone(new Date(utcIso), IST, 'dd MMM yyyy HH:mm:ss')} IST`
-  } catch {
-    return utcIso ?? '--'
-  }
-}
-
-/** Date only in IST, no timezone label needed. */
-export function formatIstDate(utcIso: string | null | undefined): string {
-  if (!utcIso) return '--'
-  try {
-    return formatInTimeZone(new Date(utcIso), IST, 'dd MMM yyyy')
-  } catch {
-    return utcIso
-  }
-}
-
-/** Time only in IST (HH:mm:ss). */
-export function formatIstTime(utcIso: string | null | undefined): string {
-  if (!utcIso) return '--'
-  try {
-    return `${formatInTimeZone(new Date(utcIso), IST, 'HH:mm:ss')} IST`
-  } catch {
-    return utcIso
-  }
-}
-
-/**
- * Returns true if the current IST time falls within NSE market hours.
+ * datetime.ts — timezone-aware display helpers.
  *
- * NSE official hours: 09:15–15:30 IST, Monday–Friday.
- * Note: Indian market holidays are not checked here — those require a backend call to
- * IMarketCalendarService. This check is for UI display purposes only (e.g. "Market Open" indicator).
- * Do NOT use this for order placement decisions on the backend.
+ * API returns UTC ISO-8601.  Display timezone comes from the broker's
+ * market_timezone_id column (read via the strategy/broker context, NOT a global config).
+ *
+ * For UI pages that are broker-specific (e.g. Live Orders for Zerodha vs IBKR),
+ * pass the broker's timezoneId explicitly:
+ *
+ *   formatMarketDateTime(row.placedAt, broker.marketTimezoneId)
+ *   // Zerodha order → "04 May 2026, 09:15:03" (IST)
+ *   // IBKR order    → "04 May 2026, 09:30:01" (ET)
+ *
+ * For pages without broker context, falls back to the browser's local timezone.
  */
-export function isMarketHours(): boolean {
-  const now = toZonedTime(new Date(), IST)
-  const day = now.getDay() // 0=Sun, 6=Sat
-  if (day === 0 || day === 6) return false
-  const totalMinutes = now.getHours() * 60 + now.getMinutes()
-  // 9:15 = 555 minutes, 15:30 = 930 minutes
-  return totalMinutes >= 9 * 60 + 15 && totalMinutes <= 15 * 60 + 30
+
+// ── Core helper ──────────────────────────────────────────────────────────────
+
+function toZonedDisplay(
+  utcIso: string | null | undefined,
+  tzId: string,
+  opts: Intl.DateTimeFormatOptions
+): string {
+  if (!utcIso) return '—'
+  try {
+    return new Date(utcIso).toLocaleString('en-IN', { timeZone: tzId, ...opts })
+  } catch {
+    return utcIso
+  }
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Full date + time in the given broker's market timezone.
+ * Example: "04 May 2026, 09:15:03"
+ *
+ * @param utcIso  - UTC ISO string from API
+ * @param tzId    - IANA timezone id from broker_credentials.market_timezone_id
+ */
+export function formatMarketDateTime(
+  utcIso: string | null | undefined,
+  tzId: string
+): string {
+  return toZonedDisplay(utcIso, tzId, {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  })
 }
 
 /**
- * Format a number as Indian Rupees.
- * Uses 'en-IN' locale: produces "₹1,00,000.00" format (Indian numbering system).
+ * Time only (HH:mm:ss) in the broker's market timezone.
+ * Used for order timestamps, signal entries, etc.
  */
-export function formatInr(value: number | null | undefined): string {
-  if (value == null) return '--'
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(value)
+export function formatMarketTime(
+  utcIso: string | null | undefined,
+  tzId: string
+): string {
+  return toZonedDisplay(utcIso, tzId, {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  })
 }
 
 /**
- * Format a decimal ratio as a percentage string.
- * Input 0.1234 → "12.34%"
+ * Short date (dd MMM yyyy) in the broker's market timezone.
+ * Used for backtest date ranges, trade date columns, etc.
  */
-export function formatPct(value: number | null | undefined, decimals = 2): string {
-  if (value == null) return '--'
-  return `${(value * 100).toFixed(decimals)}%`
+export function formatMarketDate(
+  utcIso: string | null | undefined,
+  tzId: string
+): string {
+  return toZonedDisplay(utcIso, tzId, {
+    day: '2-digit', month: 'short', year: 'numeric',
+  })
+}
+
+/**
+ * Current time as HH:mm in the given broker's market timezone.
+ * Used to pre-fill session window defaults.
+ */
+export function marketTimeNow(tzId: string): string {
+  return new Date().toLocaleTimeString('en-IN', {
+    timeZone: tzId,
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+}
+
+/**
+ * Helper: formats using browser local timezone when no broker context is known.
+ * Use sparingly — prefer passing tzId explicitly.
+ */
+export function formatLocalDateTime(utcIso: string | null | undefined): string {
+  if (!utcIso) return '—'
+  return new Date(utcIso).toLocaleString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  })
 }
