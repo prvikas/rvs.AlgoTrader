@@ -4,14 +4,29 @@ using rvs.AlgoTrader.Domain.Interfaces;
 namespace rvs.AlgoTrader.Infrastructure.Clock;
 
 /// <summary>
-/// Production clock — delegates to NodaTime's SystemClock.
-/// Timezone-specific helpers now live in <see cref="IMarketTimezone"/> / <see cref="MarketTimezoneService"/>;
-/// this class only provides the raw UTC instant.
+/// Production clock implementation of <see cref="IClock"/>.
+/// Registered as singleton in DI: services.AddSingleton&lt;IClock, SystemClock&gt;();
+///
+/// NowIst() and TodayIst() are kept for backward compatibility.
+/// New broker-specific code should inject <see cref="IBrokerTimezoneResolver"/> instead.
 /// </summary>
 public sealed class SystemClock : IClock
 {
-    public static readonly SystemClock Instance = new();
-    private SystemClock() { }
+    // Public parameterless constructor required for DI registration.
+    public SystemClock() { }
 
-    public Instant GetCurrentInstant() => NodaTime.SystemClock.Instance.GetCurrentInstant();
+    private static readonly DateTimeZone IstZone =
+        DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
+
+    /// <inheritdoc />
+    public Instant NowInstant() =>
+        NodaTime.SystemClock.Instance.GetCurrentInstant();
+
+    /// <inheritdoc />
+    public ZonedDateTime NowIst() =>
+        NowInstant().InZone(IstZone);
+
+    /// <inheritdoc />
+    public LocalDate TodayIst() =>
+        NowIst().Date;
 }

@@ -41,7 +41,7 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         builder.Property(s => s.WatchlistId).HasColumnName("watchlist_id");
         builder.Property(s => s.DefinitionScenarioId).HasColumnName("definition_scenario_id");
 
-        // Foreign keys to related entities (Migration 021 #192, #197)
+        // Foreign keys to related entities
         builder.HasOne<RiskProfile>().WithMany().HasForeignKey(s => s.RiskProfileId).OnDelete(DeleteBehavior.SetNull);
         builder.HasOne<Domain.Entities.Watchlist>().WithMany().HasForeignKey(s => s.WatchlistId).OnDelete(DeleteBehavior.SetNull);
 
@@ -55,16 +55,19 @@ public class StrategyInstanceConfiguration : IEntityTypeConfiguration<StrategyIn
         // Ignore computed/derived properties with no DB column
         builder.Ignore(s => s.StrategyName);
 
-        // Navigation properties to related entities (1:1 relationships)
+        // RuntimeState: 1:1, cascade delete
         builder.HasOne(s => s.RuntimeState)
             .WithOne(r => r.StrategyInstance)
             .HasForeignKey<StrategyRuntimeState>(r => r.StrategyInstanceId)
             .OnDelete(DeleteBehavior.Cascade);
 
-        builder.HasOne(s => s.Credential)
-            .WithOne(c => c.StrategyInstance)
-            .HasForeignKey<BrokerCredential>(c => c.StrategyInstanceId)
-            .OnDelete(DeleteBehavior.Cascade);
+        // BrokerCredential is NO LONGER a dependent of StrategyInstance.
+        // broker_credentials.strategy_instance_id is a nullable diagnostic column with no FK.
+        // Do NOT configure a HasOne/WithOne here — that would re-introduce the FK constraint
+        // that Migration 020 explicitly dropped.
+        // The Credential navigation property on StrategyInstance is intentionally ignored below
+        // so EF does not try to manage it as an owned/dependent entity.
+        builder.Ignore(s => s.Credential);
 
         builder.HasIndex(s => s.Status);
         builder.HasIndex(s => new { s.InternalSymbol, s.Status });
