@@ -21,6 +21,24 @@ public interface IStrategy
     int MinWarmupBars => 50;
 
     /// <summary>
+    /// Number of candles to fetch BEFORE FromDate so that all indicators are
+    /// fully warmed up at the first tradeable bar.
+    ///
+    /// BacktestEngine fetches candles starting (FromDate − preloadDays) where
+    /// preloadDays = PreloadBars × 2 (calendar-day buffer for weekends/holidays).
+    /// Trade evaluation begins at the first candle on or after FromDate — the
+    /// preload candles are consumed only for indicator seeding.
+    ///
+    /// ForwardTestEngine uses Max(PreloadBars + 50, 500) as the rolling cache
+    /// window so live indicators converge to the same depth.
+    ///
+    /// Default 200 covers EMA-200 / 200-day SMA. Strategies with shorter periods
+    /// SHOULD override with a smaller value (e.g. MaxPeriod × 3 + 20) to avoid
+    /// unnecessary DB load. Must be >= MinWarmupBars.
+    /// </summary>
+    int PreloadBars => Math.Max(MinWarmupBars, 200);
+
+    /// <summary>
     /// Maximum number of concurrent open positions (trades + spreads combined).
     /// Default 1 preserves backward-compatible single-position behaviour.
     /// Strategies that pyramid or hold multiple independent legs (e.g. straddle with
