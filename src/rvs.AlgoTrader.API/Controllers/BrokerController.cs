@@ -68,8 +68,10 @@ public class BrokerController(
         var result  = new List<UserBrokerAccountDto>();
         foreach (var r in records)
         {
-            var connected = await sessions.IsAuthenticatedAsync(userId, r.BrokerName, ct);
-            result.Add(new UserBrokerAccountDto(r.Id, r.BrokerName, r.Market, r.DisplayName, r.IsActive, connected));
+            var brokerName = r.Broker?.Name ?? "Unknown";
+            var connected = await sessions.IsAuthenticatedAsync(userId, brokerName, ct);
+            // Market field removed; using broker name only in DTO
+            result.Add(new UserBrokerAccountDto(r.Id, brokerName, null, r.DisplayName, r.IsActive, connected));
         }
         return Ok(ApiResponse<IReadOnlyList<UserBrokerAccountDto>>.Ok(result));
     }

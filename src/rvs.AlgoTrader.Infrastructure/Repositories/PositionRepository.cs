@@ -13,21 +13,50 @@ public class PositionRepository(AlgoTraderDbContext db) : IPositionRepository
         => await db.Positions.FindAsync([id], ct);
 
     public async Task<IReadOnlyList<Position>> GetOpenAsync(CancellationToken ct = default)
-        => await db.Positions.Where(p => p.IsOpen).ToListAsync(ct);
+        => await db.Positions
+            .Include(p => p.Broker)
+            .Include(p => p.ProductType)
+            .Where(p => p.IsOpen)
+            .ToListAsync(ct);
 
     public async Task<IReadOnlyList<Position>> GetBySymbolAsync(string symbol, CancellationToken ct = default)
-        => await db.Positions.Where(p => p.InternalSymbol == symbol).ToListAsync(ct);
+        => await db.Positions
+            .Include(p => p.Broker)
+            .Include(p => p.ProductType)
+            .Where(p => p.InternalSymbol == symbol)
+            .ToListAsync(ct);
 
     // ── Additional methods used by Infrastructure internally ─────────────────
 
     public async Task<IReadOnlyList<Position>> GetOpenPositionsAsync(string brokerName, CancellationToken ct = default)
-        => await db.Positions.Where(p => p.BrokerName == brokerName && p.IsOpen).ToListAsync(ct);
+    {
+        // Resolve broker name to broker ID first
+        var broker = await db.Brokers.FirstOrDefaultAsync(b => b.Name == brokerName, ct);
+        if (broker is null) return [];
+        return await db.Positions
+            .Include(p => p.Broker)
+            .Include(p => p.ProductType)
+            .Where(p => p.BrokerId == broker.Id && p.IsOpen)
+            .ToListAsync(ct);
+    }
 
     public async Task<IReadOnlyList<Position>> GetByStrategyRunAsync(Guid strategyRunId, CancellationToken ct = default)
-        => await db.Positions.Where(p => p.StrategyRunId == strategyRunId).ToListAsync(ct);
+        => await db.Positions
+            .Include(p => p.Broker)
+            .Include(p => p.ProductType)
+            .Where(p => p.StrategyRunId == strategyRunId)
+            .ToListAsync(ct);
 
     public async Task<Position?> GetOpenPositionForSymbolAsync(string brokerName, string symbol, CancellationToken ct = default)
-        => await db.Positions.FirstOrDefaultAsync(p => p.BrokerName == brokerName && p.InternalSymbol == symbol && p.IsOpen, ct);
+    {
+        // Resolve broker name to broker ID first
+        var broker = await db.Brokers.FirstOrDefaultAsync(b => b.Name == brokerName, ct);
+        if (broker is null) return null;
+        return await db.Positions
+            .Include(p => p.Broker)
+            .Include(p => p.ProductType)
+            .FirstOrDefaultAsync(p => p.BrokerId == broker.Id && p.InternalSymbol == symbol && p.IsOpen, ct);
+    }
 
     public async Task AddAsync(Position position, CancellationToken ct = default)
     {

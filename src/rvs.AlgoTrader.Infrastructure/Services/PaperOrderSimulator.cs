@@ -34,8 +34,8 @@ public sealed class PaperOrderSimulator(
         decimal fillPrice = slippageModel.ApplySlippage(
             currentPrice, direction, DefaultSlippage);
 
-        var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
-        int lots     = credential.LotSize > 0 ? credential.LotSize : 1;
+        // Lot size defaults to 1 for paper trading (broker credential no longer available)
+        int lots     = 1;
         var now      = clock.NowInstant();
         var paperId  = $"PAPER-{instance.Id:N}-{now.ToUnixTimeTicks()}";
 

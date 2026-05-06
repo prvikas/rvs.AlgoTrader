@@ -21,6 +21,7 @@ public class StrategyInstanceManager(
     IStrategyRunRepository runRepo,
     CandleAggregatorService aggregator,
     IInstrumentRepository instrumentRepo,
+    IBrokerRepository brokerRepo,
     IForwardTestEngine forwardTestEngine,
     IAuditService audit,
     IClock clock,
@@ -46,12 +47,15 @@ public class StrategyInstanceManager(
 
         var nowInstant = clock.NowInstant();
 
+        // Get broker ID from BrokerAccount FK
+        var brokerId = instance.BrokerAccount?.BrokerId;
+
         // Create new StrategyRun
         var run = new StrategyRun
         {
             Id = Guid.NewGuid(),
             StrategyInstanceId = instanceId,
-            BrokerName = instance.BrokerName,
+            BrokerId = brokerId,
             Mode = instance.Mode,
             Status = StrategyRunStatus.Running,
             StartedAt = nowInstant
@@ -162,9 +166,15 @@ public class StrategyInstanceManager(
                 continue;
             }
 
-            var instBroker = inst.BrokerName ?? brokerName;
+            var instBroker = inst.BrokerAccount?.Broker?.Name ?? brokerName;
             brokerName = instBroker; // last running instance wins; single-broker model
-            var token = instrument.GetBrokerToken(instBroker);
+
+            // Resolve broker name to ID and look up token from BrokerTokens navigation
+            var broker = await brokerRepo.GetByNameAsync(instBroker, ct);
+            var token = broker is not null
+                ? instrument.BrokerTokens.FirstOrDefault(bt => bt.BrokerId == broker.Id)?.Token
+                : null;
+
             if (token != null)
                 symbols.Add(token);
             else

@@ -87,38 +87,19 @@ END $$;
 
 -- ── broker_sessions ─────────────────────────────────────────────────────────
 -- This table has broker_name as PK, need to create new structure
-DO $$
-BEGIN
-    IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'broker_sessions') THEN
-        -- Create new table with broker_id FK
-        CREATE TABLE IF NOT EXISTS broker_sessions_new (
-            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            broker_id       SMALLINT NOT NULL REFERENCES brokers(id),
-            user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
-            session_token   VARCHAR(500),
-            expires_at      TIMESTAMPTZ,
-            is_active       BOOLEAN NOT NULL DEFAULT true,
-            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            CONSTRAINT uq_broker_sessions_user_broker UNIQUE (user_id, broker_id)
-        );
+-- Drop and recreate to ensure schema is correct
+DROP TABLE IF EXISTS broker_sessions CASCADE;
 
-        -- Migrate data if broker_sessions has any rows
-        INSERT INTO broker_sessions_new (broker_id, session_token, expires_at, is_active, created_at, updated_at)
-        SELECT
-            (SELECT id FROM brokers WHERE name = bs.broker_name),
-            bs.session_token,
-            bs.expires_at,
-            bs.is_active,
-            bs.created_at,
-            bs.updated_at
-        FROM broker_sessions bs
-        ON CONFLICT DO NOTHING;
+CREATE TABLE broker_sessions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    broker_id       SMALLINT NOT NULL REFERENCES brokers(id),
+    user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+    session_token   VARCHAR(500),
+    expires_at      TIMESTAMPTZ,
+    is_active       BOOLEAN NOT NULL DEFAULT true,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_broker_sessions_user_broker UNIQUE (user_id, broker_id)
+);
 
-        -- Drop old table and rename new one
-        DROP TABLE broker_sessions;
-        ALTER TABLE broker_sessions_new RENAME TO broker_sessions;
-
-        CREATE INDEX idx_broker_sessions_user ON broker_sessions (user_id) WHERE is_active = true;
-    END IF;
-END $$;
+CREATE INDEX idx_broker_sessions_user ON broker_sessions (user_id) WHERE is_active = true;

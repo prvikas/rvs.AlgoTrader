@@ -84,15 +84,40 @@ public sealed class StrategyEvaluationQueueIntegrationTests
         await using var s  = _factory.Services.CreateAsyncScope();
         var db             = s.ServiceProvider.GetRequiredService<AlgoTraderDbContext>();
         var clock          = s.ServiceProvider.GetRequiredService<DomainClock>();
+        var now            = clock.NowInstant();
+
+        // Create a test user and broker account
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Username = $"testuser-{Guid.NewGuid():N}",
+            Email = $"test-{Guid.NewGuid():N}@example.com",
+            DisplayName = "Integration Test User",
+            PasswordHash = "dummy",
+            IsActive = true,
+            CreatedAt = now.ToDateTimeOffset()
+        };
+        db.Users.Add(user);
+
+        var brokerAccount = new UserBrokerAccount
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            BrokerId = 1, // MStock
+            DisplayName = "Test MStock Account",
+            IsActive = true
+        };
+        db.UserBrokerAccounts.Add(brokerAccount);
+        await db.SaveChangesAsync();
 
         var instance = StrategyInstance.Create(
             name:           $"IT-{Guid.NewGuid():N}",
             strategyType:   strategyType,
             watchlistId:    null,
             mode:           mode,
-            brokerName:     "MStock",
+            brokerAccountId: brokerAccount.Id,
             createdBy:      "integration-test",
-            createdAt:      clock.NowInstant(),
+            createdAt:      now,
             internalSymbol: symbol,
             timeframe:      timeframe,
             parametersJson: "{}");

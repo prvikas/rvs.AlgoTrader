@@ -18,7 +18,7 @@ public partial class StrategyInstanceMapper
             instance.Timeframe,
             instance.Status.ToString(),
             instance.Mode.ToString(),
-            instance.BrokerName,
+            instance.BrokerAccount?.Broker?.Name,
             instance.AllocatedCapital,
             instance.RuntimeState?.AutoResumeOnRestart ?? false,
             instance.ScheduleJson,

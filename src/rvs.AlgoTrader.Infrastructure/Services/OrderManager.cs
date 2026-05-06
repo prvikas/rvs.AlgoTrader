@@ -37,10 +37,12 @@ public sealed class OrderManager(
         string correlationId,
         CancellationToken ct)
     {
+        var brokerName = instance.BrokerAccount?.Broker?.Name ?? BrokerNames.Default;
+
         var entry = new TrackedOrder(
             orderId:       order.Id,
             brokerOrderId: order.BrokerOrderId,
-            brokerName:    instance.BrokerName ?? BrokerNames.Default,
+            brokerName:    brokerName,
             state:         order.BrokerOrderId != null ? OrderManagerState.Submitted : OrderManagerState.Pending,
             correlationId: correlationId,
             strategyRunId: instance.RuntimeState?.CurrentRunId,
@@ -49,7 +51,7 @@ public sealed class OrderManager(
         _entries[order.Id] = entry;
 
         // Fire-and-forget polling loop — does not block the caller
-        _ = Task.Run(() => PollUntilTerminalAsync(entry, instance.BrokerName ?? BrokerNames.Default, ct), CancellationToken.None);
+        _ = Task.Run(() => PollUntilTerminalAsync(entry, brokerName, ct), CancellationToken.None);
 
         return order.Id;
     }

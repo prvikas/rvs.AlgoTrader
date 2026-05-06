@@ -74,23 +74,29 @@ public class RegisterUserHandler(IUserRepository users, IPasswordHasher hasher, 
 
 public class AddBrokerAccountHandler(
     IUserBrokerAccountRepository accounts,
+    IBrokerRepository brokerRepo,
     ICurrentUser currentUser,
     IClock clock)
     : IRequestHandler<AddBrokerAccountCommand, UserBrokerAccountDto>
 {
     public async Task<UserBrokerAccountDto> Handle(AddBrokerAccountCommand cmd, CancellationToken ct)
     {
+        // Resolve broker name to broker ID
+        var broker = await brokerRepo.GetByNameAsync(cmd.BrokerName, ct)
+            ?? throw new InvalidOperationException($"Broker '{cmd.BrokerName}' not found.");
+
+        var now = clock.NowInstant();
         var account = new UserBrokerAccount
         {
+            Id          = Guid.NewGuid(),
             UserId      = Guid.Parse(currentUser.UserId),
-            BrokerName  = cmd.BrokerName,
-            Market      = cmd.Market,
+            BrokerId    = broker.Id,
             DisplayName = cmd.DisplayName,
             IsActive    = true,
-            CreatedAt   = clock.NowInstant().ToDateTimeOffset(),
+            CreatedAt   = now.ToDateTimeOffset(),
         };
         var id = await accounts.AddAsync(account, ct);
-        return new UserBrokerAccountDto(id, account.BrokerName, account.Market,
+        return new UserBrokerAccountDto(id, cmd.BrokerName, cmd.Market,
             account.DisplayName, account.IsActive, false);
     }
 }

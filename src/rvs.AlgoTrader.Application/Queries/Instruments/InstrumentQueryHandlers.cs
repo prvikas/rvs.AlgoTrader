@@ -27,9 +27,17 @@ internal static class InstrumentMapper
     private static IReadOnlyDictionary<string, string> BuildBrokerTokens(Domain.Entities.Instrument i)
     {
         var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (i.ZerodhaToken != null) d[BrokerNames.Zerodha] = i.ZerodhaToken;
-        if (i.UpstoxToken  != null) d[BrokerNames.Upstox]  = i.UpstoxToken;
-        if (i.MStockToken  != null) d[BrokerNames.MStock]  = i.MStockToken;
+        // Load broker tokens from the InstrumentBrokerToken child table (via BrokerTokens navigation)
+        if (i.BrokerTokens != null)
+        {
+            foreach (var bt in i.BrokerTokens)
+            {
+                if (bt.Broker != null && !string.IsNullOrEmpty(bt.Token))
+                {
+                    d[bt.Broker.Name] = bt.Token;
+                }
+            }
+        }
         return d;
     }
 }

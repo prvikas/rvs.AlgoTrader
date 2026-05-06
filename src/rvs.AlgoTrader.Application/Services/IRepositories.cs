@@ -381,3 +381,34 @@ public interface IUserExternalLoginRepository
     /// <summary>Creates the external login row. The User must already exist.</summary>
     Task AddAsync(Domain.Entities.UserExternalLogin login, CancellationToken ct);
 }
+
+// ── Broker Lookup Tables ────────────────────────────────────────────────────────
+
+public interface IBrokerRepository
+{
+    Task<Broker?> GetByIdAsync(short id, CancellationToken ct);
+    Task<Broker?> GetByNameAsync(string name, CancellationToken ct);
+    Task<IReadOnlyList<Broker>> GetAllActiveAsync(CancellationToken ct);
+}
+
+public interface IExchangeRepository
+{
+    Task<Exchange?> GetByIdAsync(short id, CancellationToken ct);
+    Task<Exchange?> GetByCodeAsync(string code, CancellationToken ct);
+    Task<IReadOnlyList<Exchange>> GetAllAsync(CancellationToken ct);
+}
+
+public interface IProductTypeRepository
+{
+    Task<ProductType?> GetByIdAsync(short id, CancellationToken ct);
+    Task<ProductType?> GetByCodeAsync(string code, CancellationToken ct);
+    Task<IReadOnlyList<ProductType>> GetAllAsync(CancellationToken ct);
+}
+
+public interface IBrokerExchangeConfigRepository
+{
+    Task<BrokerExchangeConfig?> GetByIdAsync(Guid id, CancellationToken ct);
+    Task<BrokerExchangeConfig?> GetByBrokerExchangeProductAsync(
+        short brokerId, short exchangeId, short productTypeId, CancellationToken ct);
+    Task<IReadOnlyList<BrokerExchangeConfig>> GetByBrokerAsync(short brokerId, CancellationToken ct);
+}

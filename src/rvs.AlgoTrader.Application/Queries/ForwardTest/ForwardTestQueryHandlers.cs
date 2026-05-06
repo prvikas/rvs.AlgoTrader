@@ -110,7 +110,7 @@ internal static class ForwardTestSessionMapper
             StrategyType: instance.StrategyType,
             InternalSymbol: instance.InternalSymbol,
             Timeframe: instance.Timeframe,
-            BrokerName: instance.BrokerName,
+            BrokerName: instance.BrokerAccount?.Broker?.Name,
             Status: session.Status,
             StartedAt: session.StartedAt.ToDateTimeOffset(),
             EndedAt: session.EndedAt?.ToDateTimeOffset(),

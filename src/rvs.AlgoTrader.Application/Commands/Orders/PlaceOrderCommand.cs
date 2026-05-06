@@ -71,6 +71,10 @@ public class PlaceOrderCommandValidator : AbstractValidator<PlaceOrderCommand>
 
 public class PlaceOrderCommandHandler(
     IOrderRepository orders,
+    IBrokerRepository brokerRepo,
+    IInstrumentRepository instruments,
+    IExchangeRepository exchanges,
+    IProductTypeRepository productTypes,
     IKillSwitchService killSwitch,
     IIdempotencyService idempotency,
     IRiskManagementService risk,
@@ -99,12 +103,26 @@ public class PlaceOrderCommandHandler(
         if (!riskResult.Allowed)
             return new PlaceOrderResult(false, null, null, riskResult.BlockReason);
 
-        // 6. Create order record
+        // 6. Resolve broker, exchange, and product type IDs
+        var broker = await brokerRepo.GetByNameAsync(request.BrokerName, ct)
+            ?? throw new InvalidOperationException($"Broker '{request.BrokerName}' not found");
+
+        var instrument = await instruments.GetByInternalSymbolAsync(request.InternalSymbol, ct)
+            ?? throw new InvalidOperationException($"Instrument '{request.InternalSymbol}' not found");
+
+        // For now, use defaults for exchange/product type; can be extended to get from instrument metadata
+        var exchange = await exchanges.GetByCodeAsync("NSE", ct)
+            ?? throw new InvalidOperationException("Exchange 'NSE' not found");
+        var productType = await productTypes.GetByCodeAsync("EQ", ct)
+            ?? throw new InvalidOperationException("Product type 'EQ' not found");
+
+        // 7. Create order record
         var orderType = Enum.Parse<Domain.Enums.OrderType>(request.OrderType.Replace("-", ""), true);
         var direction = request.Direction == "BUY" ? Domain.Enums.OrderDirection.Buy : Domain.Enums.OrderDirection.Sell;
         var order = Domain.Entities.Order.Create(
-            request.BrokerName, request.InternalSymbol, orderType, direction,
+            broker.Id, request.InternalSymbol, orderType, direction,
             request.Quantity, request.Price, request.TriggerPrice,
+            exchange.Id, productType.Id,
             request.IdempotencyKey, request.CorrelationId, request.StrategyRunId, clock.NowInstant());
 
         await orders.AddAsync(order, ct);

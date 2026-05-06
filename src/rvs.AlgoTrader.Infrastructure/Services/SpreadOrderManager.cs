@@ -6,6 +6,8 @@ using rvs.AlgoTrader.Domain.Entities;
 using rvs.AlgoTrader.Domain.Enums;
 using rvs.AlgoTrader.Domain.Interfaces;
 using rvs.AlgoTrader.Domain.Constants;
+// Disambiguation: ProductType refers to the Enum, not the Entity
+using ProductType = rvs.AlgoTrader.Domain.Enums.ProductType;
 
 namespace rvs.AlgoTrader.Infrastructure.Services;
 
@@ -42,7 +44,7 @@ public class SpreadOrderManager(
             return null;
         }
 
-        var brokerName  = instance.BrokerName ?? BrokerNames.Default;
+        var brokerName  = instance.BrokerAccount?.Broker?.Name ?? BrokerNames.Default;
         var brokerClient = brokerFactory.GetOrderClient(brokerName);
         var now          = clock.NowInstant();
 
@@ -86,7 +88,7 @@ public class SpreadOrderManager(
                     leg.OptionType, leg.SelectionMode, instance.Name);
                 return null;
             }
-            resolvedLegs.Add((leg, resolution));
+            resolvedLegs.Add((Spec: leg, Resolution: resolution));
             shortStrikeByType[leg.OptionType] = resolution.StrikePrice;
         }
 
@@ -109,7 +111,7 @@ public class SpreadOrderManager(
                     leg.OptionType, leg.SelectionMode, instance.Name);
                 return null;
             }
-            resolvedLegs.Add((leg, resolution));
+            resolvedLegs.Add((Spec: leg, Resolution: resolution));
         }
 
         // Create SpreadPosition record
@@ -132,9 +134,9 @@ public class SpreadOrderManager(
         foreach (var (spec, res) in resolvedLegs)
         {
             // SO-3: apply NSE lot size so each leg covers the correct number of contracts.
-            // spec.Quantity is the number of lots (default 1); the credential LotSize is the
-            // lot multiplier (e.g. 50 for NIFTY, 25 for BANKNIFTY). Default to 1 if not configured.
-            var lotSize = instance.Credential?.LotSize > 0 ? instance.Credential.LotSize : 1;
+            // Lot size is the lot multiplier (e.g. 50 for NIFTY, 25 for BANKNIFTY).
+            // Credential now removed; defaulting to 1 for paper trading.
+            var lotSize = 1;
             var legEntity = new SpreadPositionLeg
             {
                 Id               = Guid.NewGuid(),

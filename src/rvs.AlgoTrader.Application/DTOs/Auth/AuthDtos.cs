@@ -20,7 +20,7 @@ public record BrokerInfoDto(
 public record UserBrokerAccountDto(
     Guid    Id,
     string  BrokerName,
-    string  Market,
+    string? Market,  // Legacy field; no longer used (market concept removed in phase 5 normalization)
     string? DisplayName,
     bool    IsActive,
     bool    IsConnected);   // true when Redis session exists for this user+broker

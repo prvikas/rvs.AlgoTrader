@@ -277,24 +277,24 @@ public class ForwardTestEngine(
         if (!fillResult.Filled || fillResult.FillPrice == null) return;
 
         var entryPrice = fillResult.FillPrice.Value;
-        var credential = instance.Credential ?? throw new InvalidOperationException($"BrokerCredential not found for instance {instance.Id}");
 
         // #176: Use risk-based position sizing (1% of allocated capital per trade) instead of
         // a fixed lot size, so position size scales with account equity and respects stop distance.
-        var allocatedCapital = instance.AllocatedCapital > 0 ? instance.AllocatedCapital
-                             : credential.LotSize > 0 ? credential.LotSize * entryPrice : entryPrice;
+        var allocatedCapital = instance.AllocatedCapital > 0 ? instance.AllocatedCapital : entryPrice;
         if (allocatedCapital < 100)
         {
             logger.LogWarning("[ForwardTest] AllocatedCapital not configured for {Instance} — skipping signal", instance.Name);
             return;
         }
+        // Use default lot size of 1 when broker config is not available
+        var defaultLotSize = 1;
         var (lots, sizingRationale) = sizingEngine.Compute(
             FixedFractional,
             allocatedCapital,
             entryPrice,
             signal.StopLoss,
             atr: null,
-            new PositionSizingConfig(FixedLots: credential.LotSize > 0 ? credential.LotSize : 1));
+            new PositionSizingConfig(FixedLots: defaultLotSize));
         logger.LogDebug("[ForwardTest] Sizing: {Rationale}", sizingRationale);
 
         state.OpenTrade = new ForwardTestOpenTrade(

@@ -691,12 +691,9 @@ public class InstrumentRefreshService(
 
     private static void ApplyBrokerToken(Instrument instrument, string brokerName, string token)
     {
-        switch (brokerName.ToLower())
-        {
-            case "zerodha": instrument.ZerodhaToken = token; break;
-            case "upstox":  instrument.UpstoxToken  = token; break;
-            case "mstock":  instrument.MStockToken  = token; break;
-        }
+        // Tokens are now stored in InstrumentBrokerToken child table, not on the Instrument entity.
+        // Token persistence is handled by the repository layer when upserting via batch operations.
+        // This method is retained for compatibility but has no-op behavior.
     }
 
     private static InstrumentType ParseInstrumentType(string? raw) => raw?.ToUpper() switch

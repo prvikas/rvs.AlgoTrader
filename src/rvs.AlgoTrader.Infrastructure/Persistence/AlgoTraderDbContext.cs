@@ -18,7 +18,6 @@ public class AlgoTraderDbContext : DbContext
     // Strategy tables
     public DbSet<StrategyInstance> StrategyInstances => Set<StrategyInstance>();
     public DbSet<StrategyRuntimeState> StrategyRuntimeStates => Set<StrategyRuntimeState>();
-    public DbSet<BrokerCredential> BrokerCredentials => Set<BrokerCredential>();
     public DbSet<StrategyRun> StrategyRuns => Set<StrategyRun>();
     public DbSet<RiskProfile> RiskProfiles => Set<RiskProfile>();
     public DbSet<CapitalAllocation> CapitalAllocations => Set<CapitalAllocation>();
@@ -69,6 +68,14 @@ public class AlgoTraderDbContext : DbContext
     public DbSet<User>               Users               => Set<User>();
     public DbSet<UserBrokerAccount>  UserBrokerAccounts  => Set<UserBrokerAccount>();
     public DbSet<UserExternalLogin>  UserExternalLogins  => Set<UserExternalLogin>();
+
+    // Lookup tables (broker normalization schema)
+    public DbSet<Timezone>           Timezones           => Set<Timezone>();
+    public DbSet<Broker>             Brokers             => Set<Broker>();
+    public DbSet<Exchange>           Exchanges           => Set<Exchange>();
+    public DbSet<ProductType>        ProductTypes        => Set<ProductType>();
+    public DbSet<BrokerExchangeConfig> BrokerExchangeConfigs => Set<BrokerExchangeConfig>();
+    public DbSet<InstrumentBrokerToken> InstrumentBrokerTokens => Set<InstrumentBrokerToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

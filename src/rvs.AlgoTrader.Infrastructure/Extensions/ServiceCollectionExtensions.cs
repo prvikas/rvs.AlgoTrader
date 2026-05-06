@@ -212,6 +212,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUserPreferencesRepository, EfUserPreferencesRepository>();
         services.AddScoped<IWatchlistRepository, EfWatchlistRepository>();
 
+        // Lookup table repositories (Phase 5 schema normalization)
+        services.AddScoped<IBrokerRepository, EfBrokerRepository>();
+        services.AddScoped<IExchangeRepository, EfExchangeRepository>();
+        services.AddScoped<IProductTypeRepository, EfProductTypeRepository>();
+        services.AddScoped<IBrokerExchangeConfigRepository, EfBrokerExchangeConfigRepository>();
+
         // Remaining in-memory implementations (no DB table required)
         services.AddSingleton<IAppConfigRepository, AppConfigRepository>();
         services.AddScoped<IBrokerLatencyRepository, BrokerLatencyRepository>();

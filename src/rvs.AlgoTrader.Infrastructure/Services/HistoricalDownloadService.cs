@@ -17,6 +17,7 @@ public class HistoricalDownloadService(
     IBrokerClientFactory brokerFactory,
     ICandleRepository candleRepo,
     IInstrumentRepository instrumentRepo,
+    IBrokerRepository brokerRepo,
     ILogger<HistoricalDownloadService> logger) : IHistoricalDownloadService
 {
     private static readonly DateTimeZone Ist = DateTimeZoneProviders.Tzdb["Asia/Kolkata"];
@@ -51,13 +52,13 @@ public class HistoricalDownloadService(
             return new DownloadResult(false, 0, null, $"Instrument '{internalSymbol}' not found. " +
                 "Run instrument refresh (POST /api/instruments/refresh or the Instruments wizard) to populate the instruments table.");
 
-        var brokerToken = brokerName switch
-        {
-            BrokerNames.Zerodha => instrument.ZerodhaToken,
-            BrokerNames.Upstox  => instrument.UpstoxToken,
-            BrokerNames.MStock  => instrument.MStockToken,
-            _                   => instrument.ZerodhaToken
-        };
+        // Resolve broker name to ID, then look up token from BrokerTokens navigation
+        var broker = await brokerRepo.GetByNameAsync(brokerName, ct);
+        if (broker is null)
+            return new DownloadResult(false, 0, null, $"Broker '{brokerName}' not found in configuration");
+
+        var brokerToken = instrument.BrokerTokens
+            .FirstOrDefault(bt => bt.BrokerId == broker.Id)?.Token;
 
         if (string.IsNullOrEmpty(brokerToken))
             return new DownloadResult(false, 0, null, $"No broker token for {brokerName}:{internalSymbol}");

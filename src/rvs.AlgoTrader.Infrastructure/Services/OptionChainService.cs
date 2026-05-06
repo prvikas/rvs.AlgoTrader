@@ -33,6 +33,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 public sealed class OptionChainService(
     IBrokerClientFactory brokerFactory,
     IInstrumentRepository instrumentRepo,
+    IBrokerRepository brokerRepo,
     IAppConfigService appConfig,
     IClock clock,
     ILogger<OptionChainService> logger) : IOptionChainService
@@ -132,9 +133,17 @@ public sealed class OptionChainService(
             return null;
         }
 
+        // Resolve broker name to ID for token lookup
+        var broker = await brokerRepo.GetByNameAsync(brokerName, ct);
+        if (broker is null)
+        {
+            logger.LogWarning("[OptionChain] Broker '{Broker}' not found", brokerName);
+            return null;
+        }
+
         // Step 2: build the list of broker tokens for this expiry
         var tokens = instruments
-            .Select(i => GetTokenForBroker(i, brokerName))
+            .Select(i => GetTokenForBroker(i, broker.Id))
             .Where(t => !string.IsNullOrEmpty(t))
             .ToList();
 
@@ -155,7 +164,7 @@ public sealed class OptionChainService(
         foreach (var inst in instruments)
         {
             if (inst.InstrumentType != Domain.Enums.InstrumentType.Options) continue;
-            var token = GetTokenForBroker(inst, brokerName);
+            var token = GetTokenForBroker(inst, broker.Id);
             if (token == null || !quotes.TryGetValue(token, out var q)) continue;
 
             legs.Add(new OptionLeg(
@@ -186,14 +195,10 @@ public sealed class OptionChainService(
         );
     }
 
-    private static string? GetTokenForBroker(Instrument instrument, string brokerName) =>
-        brokerName switch
-        {
-            BrokerNames.Zerodha => instrument.ZerodhaToken,
-            BrokerNames.Upstox  => instrument.UpstoxToken,
-            BrokerNames.MStock  => instrument.MStockToken,
-            _                   => instrument.ZerodhaToken ?? instrument.UpstoxToken ?? instrument.MStockToken
-        };
+    private static string? GetTokenForBroker(Instrument instrument, short brokerId) =>
+        instrument.BrokerTokens
+            .FirstOrDefault(bt => bt.BrokerId == brokerId)?
+            .Token;
 
     /// <summary>
     /// Estimates spot price from ATM CE+PE pairs when the index quote is not in the batch.

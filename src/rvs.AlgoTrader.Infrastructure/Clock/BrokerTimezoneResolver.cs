@@ -38,18 +38,16 @@ public sealed class BrokerTimezoneResolver : IBrokerTimezoneResolver
             return cached;
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var tzId = await db.BrokerCredentials
-            .Where(c => c.BrokerName == brokerName)
-            .Select(c => c.MarketTimezoneId)
-            .FirstOrDefaultAsync(ct);
+        var broker = await db.Brokers
+            .Include(b => b.Timezone)
+            .FirstOrDefaultAsync(b => b.Name == brokerName, ct);
 
-        if (string.IsNullOrWhiteSpace(tzId))
+        if (broker?.Timezone?.IanaId == null)
             throw new InvalidOperationException(
-                $"Broker '{brokerName}' not found in broker_credentials, " +
-                $"or market_timezone_id is null. " +
-                $"INSERT the broker row with the correct IANA timezone id.");
+                $"Broker '{brokerName}' not found or has no timezone configured. " +
+                $"Ensure the broker exists in the brokers table with a valid timezone FK.");
 
-        var tz = new BrokerMarketTimezone(tzId, _clock);
+        var tz = new BrokerMarketTimezone(broker.Timezone.IanaId, _clock);
         _cache.Set(cacheKey, tz, CacheTtl);
         return tz;
     }
@@ -62,17 +60,16 @@ public sealed class BrokerTimezoneResolver : IBrokerTimezoneResolver
 
         // Fallback sync path — should rarely hit in production (cache is warm)
         using var db = _dbFactory.CreateDbContext();
-        var tzId = db.BrokerCredentials
-            .Where(c => c.BrokerName == brokerName)
-            .Select(c => c.MarketTimezoneId)
-            .FirstOrDefault();
+        var broker = db.Brokers
+            .Include(b => b.Timezone)
+            .FirstOrDefault(b => b.Name == brokerName);
 
-        if (string.IsNullOrWhiteSpace(tzId))
+        if (broker?.Timezone?.IanaId == null)
             throw new InvalidOperationException(
-                $"Broker '{brokerName}' not found in broker_credentials. " +
-                $"Add the row with a valid market_timezone_id.");
+                $"Broker '{brokerName}' not found or has no timezone configured. " +
+                $"Ensure the broker exists in the brokers table with a valid timezone FK.");
 
-        var tz = new BrokerMarketTimezone(tzId, _clock);
+        var tz = new BrokerMarketTimezone(broker.Timezone.IanaId, _clock);
         _cache.Set(cacheKey, tz, CacheTtl);
         return tz;
     }

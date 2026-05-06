@@ -15,7 +15,7 @@ public class GetOrdersHandler(IOrderRepository repo) : IRequestHandler<GetOrders
         var total = recent.Count;
         var items = recent.Skip((page - 1) * pageSize).Take(pageSize)
             .Select(order => new OrderDto(
-                order.Id, order.BrokerName, order.BrokerOrderId, order.InternalSymbol,
+                order.Id, order.Broker?.Name ?? "Unknown", order.BrokerOrderId, order.InternalSymbol,
                 order.OrderType.ToString().ToUpper(), order.Direction.ToString().ToUpper(),
                 order.Quantity, order.Price, order.TriggerPrice, order.Status.ToString().ToUpper(),
                 order.StrategyRunId, order.PlacedAt?.ToDateTimeOffset(), order.FilledAt?.ToDateTimeOffset(),

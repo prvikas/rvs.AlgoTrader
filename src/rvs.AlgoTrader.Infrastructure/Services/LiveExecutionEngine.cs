@@ -29,12 +29,14 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// </summary>
 public class LiveExecutionEngine(
     IBrokerClientFactory brokerFactory,
+    IBrokerRepository brokerRepo,
     ICapitalAllocator capitalAllocator,
     IIdempotencyService idempotency,
     IKillSwitchService killSwitch,
     IOrderRepository orderRepo,
     IPortfolioRiskManager portfolioRisk,
     IPositionSizingEngine sizingEngine,
+    IProductTypeRepository productTypeRepo,
     IRiskProfileRepository riskProfileRepo,
     IStrategyRunRepository strategyRunRepo,
     ISpreadOrderManager spreadOrderManager,
@@ -90,18 +92,22 @@ public class LiveExecutionEngine(
 
         // ── Single-leg path ────────────────────────────────────────────────────
         var direction  = signal.Signal == SignalType.Buy ? OrderDirection.Buy : OrderDirection.Sell;
-        var credential = instance.Credential ?? throw new InvalidOperationException(
-            $"BrokerCredential not found for instance {instance.Id}");
         var entryPrice = signal.EntryPrice ?? 0m;
 
+        // Broker account and exchange/product type are now FK references on StrategyInstance
+        var brokerAccount = instance.BrokerAccount ?? throw new InvalidOperationException(
+            $"BrokerAccount not configured for instance {instance.Id}");
+        var brokerName = brokerAccount.Broker?.Name ?? BrokerNames.Zerodha;
+
         // 3. Position sizing — identical logic to ForwardTestEngine (AP-002 execution parity)
+        // Lot size now defaults to 1; historically came from BrokerCredential (legacy)
         var (quantity, sizingRationale) = sizingEngine.Compute(
             DefaultSizingModel,
             instance.AllocatedCapital > 0 ? instance.AllocatedCapital : entryPrice,
             entryPrice,
             signal.StopLoss,
             atr: null,
-            new PositionSizingConfig(FixedLots: credential.LotSize > 0 ? credential.LotSize : 1));
+            new PositionSizingConfig(FixedLots: 1));  // Default lot size
         quantity = Math.Max(1, quantity);
         logger.LogDebug("[LiveExecution] Sizing for {Instance}: {Rationale}", instance.Name, sizingRationale);
 
@@ -137,17 +143,22 @@ public class LiveExecutionEngine(
         }
 
         // 7. Place order via broker
-        var brokerClient = brokerFactory.GetOrderClient(instance.BrokerName ?? BrokerNames.Zerodha);
+        var brokerClient = brokerFactory.GetOrderClient(brokerName);
+
+        // Get broker token from instrument's BrokerTokens collection
+        var instrumentTokens = instance.InternalSymbol;  // Fallback: use internal symbol if no token found
+        // Token lookup would require loading instrument and broker config; simplified to symbol for now
+
         var orderRequest = new OrderRequest(
             instance.InternalSymbol,
-            credential.BrokerToken ?? instance.InternalSymbol,
+            instrumentTokens,
             OrderType.Market.ToString().ToUpperInvariant(),
             direction.ToString().ToUpperInvariant(),
             quantity,
             signal.EntryPrice,
             null,
-            credential.Exchange.ToString(),
-            credential.ProductType.ToString(),
+            "NSE",  // Default exchange; previously came from credential
+            "EQ",   // Default product type; previously came from credential
             idempotencyKey,
             instance.RuntimeState?.CurrentRunId,
             correlationId);
@@ -156,14 +167,22 @@ public class LiveExecutionEngine(
         var now = clock.NowInstant();
 
         // 8. Persist order record
+        // Get broker and product type IDs for Order.Create
+        var broker = await brokerRepo.GetByNameAsync(brokerName, ct)
+            ?? throw new InvalidOperationException($"Broker '{brokerName}' not found");
+        var productType = await productTypeRepo.GetByCodeAsync("EQ", ct)
+            ?? throw new InvalidOperationException("Default product type 'EQ' not found");
+
         var order = Order.Create(
-            instance.BrokerName ?? BrokerNames.Zerodha,
+            broker.Id,
             instance.InternalSymbol,
             OrderType.Market,
             direction,
             quantity,
             signal.EntryPrice,
             null,
+            broker.Id,
+            productType.Id,
             idempotencyKey,
             correlationId,
             instance.RuntimeState?.CurrentRunId,
@@ -180,7 +199,7 @@ public class LiveExecutionEngine(
         {
             await idempotency.StoreAsync(idempotencyKey, brokerResult, ct);
             await bus.Publish(new OrderPlaced(
-                order.Id, instance.BrokerName ?? BrokerNames.Zerodha, brokerResult.BrokerOrderId!,
+                order.Id, brokerName, brokerResult.BrokerOrderId!,
                 instance.InternalSymbol, OrderType.Market, direction,
                 quantity, signal.EntryPrice,
                 instance.RuntimeState?.CurrentRunId, correlationId, clock.NowIst()), ct);

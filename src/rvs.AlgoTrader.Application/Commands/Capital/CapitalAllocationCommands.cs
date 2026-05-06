@@ -21,24 +21,27 @@ public record DeallocateCapitalCommand(Guid StrategyInstanceId, string Actor = "
 /// </summary>
 public class AllocateCapitalHandler(
     ICapitalAllocationRepository repo,
+    IBrokerRepository brokerRepo,
     DomainClock clock) : IRequestHandler<AllocateCapitalCommand, bool>
 {
     private const string DefaultBroker = "mstock";
 
     public async Task<bool> Handle(AllocateCapitalCommand request, CancellationToken ct)
     {
-        var now    = clock.NowInstant();
-        var broker = request.BrokerName ?? DefaultBroker;
+        var now        = clock.NowInstant();
+        var brokerName = request.BrokerName ?? DefaultBroker;
+        var broker     = await brokerRepo.GetByNameAsync(brokerName, ct)
+            ?? throw new InvalidOperationException($"Broker '{brokerName}' not found.");
 
         var existing = await repo.GetByInstanceAsync(request.StrategyInstanceId, ct);
         if (existing is null)
         {
-            var alloc = CapitalAllocation.Create(request.StrategyInstanceId, broker, request.Amount, now);
+            var alloc = CapitalAllocation.Create(request.StrategyInstanceId, broker.Id, request.Amount, now);
             await repo.AddAsync(alloc, ct);
         }
         else
         {
-            existing.UpdateAllocation(request.Amount, broker, now);
+            existing.UpdateAllocation(request.Amount, broker.Id, now);
             await repo.UpdateAsync(existing, ct);
         }
         return true;

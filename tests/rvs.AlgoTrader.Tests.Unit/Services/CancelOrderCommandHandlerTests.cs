@@ -113,14 +113,17 @@ public class CancelOrderCommandHandlerTests
     private static Order BuildOrder(string brokerOrderId)
     {
         var now = Instant.FromUtc(2026, 4, 18, 9, 30);
+        // Hardcoded IDs for testing: brokerId=1 (MStock), exchangeId=1 (NSE), productTypeId=1 (EQ)
         var order = Order.Create(
-            brokerName:      "MStock",
+            brokerId:        1,
             internalSymbol:  "RELIANCE",
             orderType:       OrderType.Market,
             direction:       OrderDirection.Buy,
             quantity:        10,
             price:           null,
             triggerPrice:    null,
+            exchangeId:      1,
+            productTypeId:   1,
             idempotencyKey:  Guid.NewGuid().ToString(),
             correlationId:   Guid.NewGuid().ToString(),
             strategyRunId:   null,

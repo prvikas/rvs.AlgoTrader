@@ -702,18 +702,20 @@ public class EfUserBrokerAccountRepository(AlgoTraderDbContext db) : IUserBroker
     {
         if (!Guid.TryParse(userId, out var uid)) return [];
         return await db.UserBrokerAccounts.AsNoTracking()
+            .Include(a => a.Broker)
             .Where(a => a.UserId == uid && a.IsActive)
-            .OrderBy(a => a.BrokerName)
+            .OrderBy(a => a.Broker!.Name)
             .ToListAsync(ct);
     }
 
     public Task<UserBrokerAccount?> GetAsync(string userId, string brokerName, string market, CancellationToken ct)
     {
         if (!Guid.TryParse(userId, out var uid)) return Task.FromResult<UserBrokerAccount?>(null);
+        // Market parameter is legacy; filtering by broker name only now
         return db.UserBrokerAccounts.AsNoTracking()
+            .Include(a => a.Broker)
             .FirstOrDefaultAsync(a => a.UserId == uid
-                && a.BrokerName == brokerName
-                && a.Market == market, ct);
+                && a.Broker!.Name == brokerName, ct);
     }
 
     public async Task<Guid> AddAsync(UserBrokerAccount account, CancellationToken ct)
@@ -763,4 +765,96 @@ public class EfUserExternalLoginRepository(AlgoTraderDbContext db) : IUserExtern
         db.UserExternalLogins.Add(login);
         await db.SaveChangesAsync(ct);
     }
+}
+
+// ── Broker Lookup Tables ──────────────────────────────────────────────────────
+
+public class EfBrokerRepository(AlgoTraderDbContext db) : IBrokerRepository
+{
+    public Task<Broker?> GetByIdAsync(short id, CancellationToken ct)
+        => db.Brokers
+             .AsNoTracking()
+             .FirstOrDefaultAsync(b => b.Id == id, ct);
+
+    public Task<Broker?> GetByNameAsync(string name, CancellationToken ct)
+        => db.Brokers
+             .AsNoTracking()
+             .FirstOrDefaultAsync(b => b.Name == name, ct);
+
+    public Task<IReadOnlyList<Broker>> GetAllActiveAsync(CancellationToken ct)
+        => db.Brokers
+             .Where(b => b.IsActive)
+             .AsNoTracking()
+             .OrderBy(b => b.Name)
+             .ToListAsync(ct)
+             .ContinueWith(t => (IReadOnlyList<Broker>)t.Result);
+}
+
+public class EfExchangeRepository(AlgoTraderDbContext db) : IExchangeRepository
+{
+    public Task<Exchange?> GetByIdAsync(short id, CancellationToken ct)
+        => db.Exchanges
+             .AsNoTracking()
+             .FirstOrDefaultAsync(e => e.Id == id, ct);
+
+    public Task<Exchange?> GetByCodeAsync(string code, CancellationToken ct)
+        => db.Exchanges
+             .AsNoTracking()
+             .FirstOrDefaultAsync(e => e.Code == code, ct);
+
+    public Task<IReadOnlyList<Exchange>> GetAllAsync(CancellationToken ct)
+        => db.Exchanges
+             .AsNoTracking()
+             .OrderBy(e => e.Code)
+             .ToListAsync(ct)
+             .ContinueWith(t => (IReadOnlyList<Exchange>)t.Result);
+}
+
+public class EfProductTypeRepository(AlgoTraderDbContext db) : IProductTypeRepository
+{
+    public Task<ProductType?> GetByIdAsync(short id, CancellationToken ct)
+        => db.ProductTypes
+             .AsNoTracking()
+             .FirstOrDefaultAsync(p => p.Id == id, ct);
+
+    public Task<ProductType?> GetByCodeAsync(string code, CancellationToken ct)
+        => db.ProductTypes
+             .AsNoTracking()
+             .FirstOrDefaultAsync(p => p.Code == code, ct);
+
+    public Task<IReadOnlyList<ProductType>> GetAllAsync(CancellationToken ct)
+        => db.ProductTypes
+             .AsNoTracking()
+             .OrderBy(p => p.Code)
+             .ToListAsync(ct)
+             .ContinueWith(t => (IReadOnlyList<ProductType>)t.Result);
+}
+
+public class EfBrokerExchangeConfigRepository(AlgoTraderDbContext db) : IBrokerExchangeConfigRepository
+{
+    public Task<BrokerExchangeConfig?> GetByIdAsync(Guid id, CancellationToken ct)
+        => db.BrokerExchangeConfigs
+             .Include(c => c.Broker)
+             .Include(c => c.Exchange)
+             .Include(c => c.ProductType)
+             .AsNoTracking()
+             .FirstOrDefaultAsync(c => c.Id == id, ct);
+
+    public Task<BrokerExchangeConfig?> GetByBrokerExchangeProductAsync(
+        short brokerId, short exchangeId, short productTypeId, CancellationToken ct)
+        => db.BrokerExchangeConfigs
+             .Include(c => c.Broker)
+             .Include(c => c.Exchange)
+             .Include(c => c.ProductType)
+             .AsNoTracking()
+             .FirstOrDefaultAsync(c => c.BrokerId == brokerId && c.ExchangeId == exchangeId && c.ProductTypeId == productTypeId, ct);
+
+    public Task<IReadOnlyList<BrokerExchangeConfig>> GetByBrokerAsync(short brokerId, CancellationToken ct)
+        => db.BrokerExchangeConfigs
+             .Where(c => c.BrokerId == brokerId && c.IsActive)
+             .Include(c => c.Exchange)
+             .Include(c => c.ProductType)
+             .AsNoTracking()
+             .ToListAsync(ct)
+             .ContinueWith(t => (IReadOnlyList<BrokerExchangeConfig>)t.Result);
 }

@@ -11,6 +11,8 @@ namespace rvs.AlgoTrader.Infrastructure.Messaging.Consumers;
 public class OrderFilledConsumer(
     IOrderRepository orderRepo,
     IPositionRepository positionRepo,
+    IBrokerRepository brokerRepo,
+    IProductTypeRepository productTypeRepo,
     IPublishEndpoint bus,
     IClock clock,
     ILogger<OrderFilledConsumer> logger) : IConsumer<OrderFilled>
@@ -40,13 +42,25 @@ public class OrderFilledConsumer(
 
             if (existing == null)
             {
+                // Resolve broker name and product type to IDs
+                var broker = await brokerRepo.GetByNameAsync(evt.BrokerName, ct);
+                var productType = await productTypeRepo.GetByCodeAsync("EQ", ct);  // Default to Equity
+
+                if (broker is null || productType is null)
+                {
+                    logger.LogWarning("[OrderFilled] Cannot open position: broker or productType not found for {Broker}/{Symbol}",
+                        evt.BrokerName, evt.InternalSymbol);
+                    return;
+                }
+
                 var position = Domain.Entities.Position.Open(
-                    evt.BrokerName,
+                    broker.Id,
                     evt.InternalSymbol,
                     evt.FilledQuantity,
                     evt.FillPrice,
                     null, null,
-                    evt.StrategyRunId,
+                    productType.Id,
+                    null,  // brokerAccountId not available in OrderFilled event
                     evt.CorrelationId,
                     now);
                 await positionRepo.AddAsync(position, ct);

@@ -61,17 +61,42 @@ public sealed class LiveSpreadRoutingIntegrationTests
         var clock         = s.ServiceProvider.GetRequiredService<DomainClock>();
         var now           = clock.NowInstant();
 
+        // Create a test user
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Username = $"testuser-{Guid.NewGuid():N}",
+            Email = $"test-{Guid.NewGuid():N}@example.com",
+            DisplayName = "Integration Test User",
+            PasswordHash = "dummy",
+            IsActive = true,
+            CreatedAt = now.ToDateTimeOffset()
+        };
+        db.Users.Add(user);
+
+        // Create a broker account for the user (brokerAccountId is the UserBrokerAccount ID)
+        var brokerAccount = new UserBrokerAccount
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            BrokerId = 1, // MStock
+            DisplayName = "Test MStock Account",
+            IsActive = true
+        };
+        db.UserBrokerAccounts.Add(brokerAccount);
+        await db.SaveChangesAsync();
+
         var instance = StrategyInstance.Create(
-            name:           $"SpreadIT-{Guid.NewGuid():N}",
-            strategyType:   "IronCondor",
-            watchlistId:    null,
-            mode:           StrategyMode.Live,
-            brokerName:     "MStock",
-            createdBy:      "integration-test",
-            createdAt:      now,
-            internalSymbol: "NSE:NIFTY50",
-            timeframe:      "1d",
-            parametersJson: "{}");
+            name:                   $"SpreadIT-{Guid.NewGuid():N}",
+            strategyType:           "IronCondor",
+            watchlistId:            null,
+            mode:                   StrategyMode.Live,
+            brokerAccountId:        brokerAccount.Id,
+            createdBy:              "integration-test",
+            createdAt:              now,
+            internalSymbol:         "NSE:NIFTY50",
+            timeframe:              "1d",
+            parametersJson:         "{}");
 
         instance.Status        = StrategyStatus.Running;
         instance.IsActive      = true;
@@ -198,15 +223,40 @@ public sealed class LiveSpreadRoutingIntegrationTests
         await using var seedScope = _factory.Services.CreateAsyncScope();
         var db    = seedScope.ServiceProvider.GetRequiredService<AlgoTraderDbContext>();
         var clock = seedScope.ServiceProvider.GetRequiredService<DomainClock>();
+        var now   = clock.NowInstant();
+
+        // Create a test user and broker account
+        var user = new User
+        {
+            Id = Guid.NewGuid(),
+            Username = $"testuser-{Guid.NewGuid():N}",
+            Email = $"test-{Guid.NewGuid():N}@example.com",
+            DisplayName = "Integration Test User",
+            PasswordHash = "dummy",
+            IsActive = true,
+            CreatedAt = now.ToDateTimeOffset()
+        };
+        db.Users.Add(user);
+
+        var brokerAccount = new UserBrokerAccount
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            BrokerId = 1, // MStock
+            DisplayName = "Test MStock Account",
+            IsActive = true
+        };
+        db.UserBrokerAccounts.Add(brokerAccount);
+        await db.SaveChangesAsync();
 
         var unapprovedInstance = StrategyInstance.Create(
             name:           $"NoApproval-{Guid.NewGuid():N}",
             strategyType:   "IronCondor",
             watchlistId:    null,
             mode:           StrategyMode.Live,
-            brokerName:     "MStock",
+            brokerAccountId: brokerAccount.Id,
             createdBy:      "integration-test",
-            createdAt:      clock.NowInstant(),
+            createdAt:      now,
             internalSymbol: "NSE:NIFTY50",
             timeframe:      "1d",
             parametersJson: "{}");

@@ -60,7 +60,7 @@ public class GetOpenPositionsHandler(IPositionRepository positionRepo)
 
         return positions.Select(p => new PositionDto(
             Id: p.Id.ToString(),
-            BrokerName: p.BrokerName,
+            BrokerName: p.Broker?.Name ?? "Unknown",
             InternalSymbol: p.InternalSymbol,
             Quantity: p.Quantity,
             AvgPrice: p.AvgPrice,
@@ -69,7 +69,7 @@ public class GetOpenPositionsHandler(IPositionRepository positionRepo)
             TakeProfit: p.TakeProfit,
             UnrealizedPnl: p.UnrealizedPnl,
             RealizedPnl: p.RealizedPnl,
-            ProductType: p.ProductType,
+            ProductType: p.ProductType?.Code ?? "Unknown",
             StrategyRunId: p.StrategyRunId?.ToString(),
             OpenedAt: p.OpenedAt?.ToDateTimeOffset())).ToList();
     }
@@ -89,7 +89,7 @@ public class GetRecentOrdersHandler(IOrderRepository orderRepo)
             .Take(request.PageSize)
             .Select(o => new OrderDto(
                 Id: o.Id.ToString(),
-                BrokerName: o.BrokerName,
+                BrokerName: o.Broker?.Name ?? "Unknown",
                 BrokerOrderId: o.BrokerOrderId,
                 InternalSymbol: o.InternalSymbol,
                 OrderType: o.OrderType,
@@ -100,8 +100,8 @@ public class GetRecentOrdersHandler(IOrderRepository orderRepo)
                 Price: o.Price,
                 FillPrice: o.FillPrice,
                 TriggerPrice: o.TriggerPrice,
-                Exchange: o.Exchange,
-                ProductType: o.ProductType,
+                Exchange: o.Exchange?.Code ?? "Unknown",
+                ProductType: o.ProductType?.Code ?? "Unknown",
                 StrategyRunId: o.StrategyRunId?.ToString(),
                 RejectionReason: o.RejectionReason,
                 PlacedAt: o.PlacedAt?.ToDateTimeOffset(),

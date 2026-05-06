@@ -181,9 +181,7 @@ public class InstrumentRepository(AlgoTraderDbContext db, ILogger<InstrumentRepo
             existing.LotSize          = instrument.LotSize;
             existing.TickSize         = instrument.TickSize;
             existing.IsActive         = instrument.IsActive;
-            existing.ZerodhaToken     = instrument.ZerodhaToken;
-            existing.UpstoxToken      = instrument.UpstoxToken;
-            existing.MStockToken      = instrument.MStockToken;
+            // Token management moved to InstrumentBrokerToken child table — not managed here
             existing.LastRefreshedAt  = instrument.LastRefreshedAt;
             db.Instruments.Update(existing);
         }

@@ -14,6 +14,7 @@ namespace rvs.AlgoTrader.Infrastructure.Services;
 /// </summary>
 public class OptionLegSelector(
     IInstrumentRepository instrumentRepo,
+    IBrokerRepository brokerRepo,
     IBlackScholesEngine bsEngine,
     IClock clock) : IOptionLegSelector
 {
@@ -60,7 +61,13 @@ public class OptionLegSelector(
         var instrument = legs.FirstOrDefault(l => l.StrikePrice == selectedStrike);
         if (instrument == null) return null;
 
-        var token = instrument.GetBrokerToken(brokerName) ?? instrument.MStockToken ?? instrument.InternalSymbol;
+        // Resolve broker name to ID, then look up token from BrokerTokens navigation
+        var broker = await brokerRepo.GetByNameAsync(brokerName, ct);
+        var token = broker is not null
+            ? instrument.BrokerTokens.FirstOrDefault(bt => bt.BrokerId == broker.Id)?.Token
+            : null;
+        // Fallback to internal symbol if no broker token found
+        token ??= instrument.InternalSymbol;
 
         return new OptionLegResolution(
             InternalSymbol:  instrument.InternalSymbol,

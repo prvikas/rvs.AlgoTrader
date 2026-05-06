@@ -128,7 +128,7 @@ public class CreateStrategyInstanceCommandHandler(
             strategyType: request.StrategyType,
             watchlistId: request.WatchlistId,
             mode: mode,
-            brokerName: request.BrokerName,
+            brokerAccountId: null,
             createdBy: request.Actor,
             createdAt: clock.NowInstant(),
             internalSymbol: request.InternalSymbol,
@@ -183,7 +183,7 @@ public class UpdateStrategyInstanceCommandHandler(
         if (request.Name is not null) instance.Name = request.Name;
         if (request.ParametersJson is not null) instance.ParametersJson = request.ParametersJson;
         if (request.ConfigJson is not null) instance.ConfigJson = request.ConfigJson;
-        if (request.BrokerName is not null) instance.BrokerName = request.BrokerName;
+        // BrokerName is no longer a property; it's derived from BrokerAccount.Broker
         if (request.InternalSymbol is not null) instance.InternalSymbol = request.InternalSymbol;
         if (request.Timeframe is not null) instance.Timeframe = request.Timeframe;
         if (request.ScheduleJson is not null)

@@ -21,15 +21,35 @@ public class OrderRepository(AlgoTraderDbContext db) : IOrderRepository
         => await db.Orders.FirstOrDefaultAsync(o => o.BrokerOrderId == brokerOrderId, ct);
 
     public async Task<IReadOnlyList<Order>> GetByStrategyRunAsync(Guid strategyRunId, CancellationToken ct = default)
-        => await db.Orders.Where(o => o.StrategyRunId == strategyRunId).ToListAsync(ct);
+        => await db.Orders
+            .Include(o => o.Broker)
+            .Include(o => o.Exchange)
+            .Include(o => o.ProductType)
+            .Where(o => o.StrategyRunId == strategyRunId)
+            .ToListAsync(ct);
 
     public async Task<IReadOnlyList<Order>> GetRecentAsync(int count, CancellationToken ct = default)
-        => await db.Orders.OrderByDescending(o => o.PlacedAt).Take(count).ToListAsync(ct);
+        => await db.Orders
+            .Include(o => o.Broker)
+            .Include(o => o.Exchange)
+            .Include(o => o.ProductType)
+            .OrderByDescending(o => o.PlacedAt)
+            .Take(count)
+            .ToListAsync(ct);
 
     public async Task<IReadOnlyList<Order>> GetOpenOrdersAsync(string brokerName, CancellationToken ct = default)
-        => await db.Orders.Where(o => o.BrokerName == brokerName &&
-            (o.Status == OrderStatus.Open || o.Status == OrderStatus.Pending || o.Status == OrderStatus.PartiallyFilled))
+    {
+        // Resolve broker name to broker ID first
+        var broker = await db.Brokers.FirstOrDefaultAsync(b => b.Name == brokerName, ct);
+        if (broker is null) return [];
+        return await db.Orders
+            .Include(o => o.Broker)
+            .Include(o => o.Exchange)
+            .Include(o => o.ProductType)
+            .Where(o => o.BrokerId == broker.Id &&
+                (o.Status == OrderStatus.Open || o.Status == OrderStatus.Pending || o.Status == OrderStatus.PartiallyFilled))
             .ToListAsync(ct);
+    }
 
     public async Task<IReadOnlyList<Order>> GetByDateRangeAsync(ZonedDateTime from, ZonedDateTime to, CancellationToken ct = default)
     {

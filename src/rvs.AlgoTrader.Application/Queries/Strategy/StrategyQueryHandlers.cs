@@ -17,7 +17,7 @@ public class GetStrategyInstanceByIdHandler(IStrategyInstanceRepository repo) : 
 
     internal static StrategyInstanceDto MapToDto(Domain.Entities.StrategyInstance inst) => new(
         inst.Id, inst.Name, inst.StrategyType, inst.InternalSymbol, inst.Timeframe,
-        inst.Status.ToString(), inst.Mode.ToString(), inst.BrokerName, inst.AllocatedCapital,
+        inst.Status.ToString(), inst.Mode.ToString(), inst.BrokerAccount?.Broker?.Name, inst.AllocatedCapital,
         inst.RuntimeState?.AutoResumeOnRestart ?? false, inst.ScheduleJson, inst.ParametersJson,
         inst.FailureBehaviorJson, inst.CreatedAt.ToDateTimeOffset(), inst.UpdatedAt.ToDateTimeOffset());
 }
@@ -61,7 +61,7 @@ public class GetCapitalAllocationHandler(ICapitalAllocationRepository repo) : IR
         var alloc = await repo.GetByInstanceAsync(request.StrategyInstanceId, ct);
         if (alloc is null) return null;
         return new CapitalAllocationDto(
-            alloc.Id, alloc.StrategyInstanceId, alloc.BrokerName,
+            alloc.Id, alloc.StrategyInstanceId, alloc.Broker?.Name ?? "Unknown",
             alloc.AllocatedCapital, alloc.ReservedCapital, alloc.AvailableCapital,
             alloc.UpdatedAt.ToDateTimeOffset());
     }

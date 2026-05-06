@@ -36,7 +36,7 @@ public class PromoteBacktestToForwardTestHandler(
             strategyType: bt.StrategyName,
             watchlistId: null,
             mode: StrategyMode.Forward,
-            brokerName: request.BrokerName,
+            brokerAccountId: null,
             createdBy: request.Actor,
             createdAt: now,
             internalSymbol: bt.Symbol,
@@ -183,7 +183,7 @@ public class PromoteForwardTestToLiveHandler(
             strategyType: instance.StrategyType,
             watchlistId: null,
             mode: StrategyMode.Live,
-            brokerName: request.BrokerName,
+            brokerAccountId: instance.BrokerAccountId,
             createdBy: request.Actor,
             createdAt: now,
             internalSymbol: instance.InternalSymbol,
@@ -192,7 +192,8 @@ public class PromoteForwardTestToLiveHandler(
             failureBehaviorJson: instance.FailureBehaviorJson,
             riskProfileId: null,
             scheduleJson: request.ScheduleJson ?? instance.ScheduleJson,
-            parametersJson: instance.ParametersJson);
+            parametersJson: instance.ParametersJson,
+            brokerExchangeConfigId: instance.BrokerExchangeConfigId);
 
         liveInstance.AllocatedCapital     = request.AllocatedCapital;
         // Propagate scenario link so the ScenariosTab can track the live instance too.

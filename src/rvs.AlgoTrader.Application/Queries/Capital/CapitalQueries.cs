@@ -13,7 +13,7 @@ public class GetCapitalAllocationsHandler(ICapitalAllocationRepository repo) : I
         var allocations = await repo.GetAllAsync(ct);
         return allocations
             .Select(a => new CapitalAllocationDto(
-                a.Id, a.StrategyInstanceId, a.BrokerName,
+                a.Id, a.StrategyInstanceId, a.Broker?.Name ?? "Unknown",
                 a.AllocatedCapital, a.ReservedCapital, a.AvailableCapital,
                 a.UpdatedAt.ToDateTimeOffset()))
             .ToList();
