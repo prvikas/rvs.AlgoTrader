@@ -40,6 +40,19 @@ public class CandleRepository(AlgoTraderDbContext db, ILogger<CandleRepository> 
         return candles.Select(ToClosedCandle).ToList();
     }
 
+    public async Task<IReadOnlyList<ClosedCandle>> GetTailAsync(
+        string symbol, string timeframe, Instant before, int count, CancellationToken ct = default)
+    {
+        var candles = await db.Candles
+            .Where(c => c.InternalSymbol == symbol && c.Timeframe == timeframe
+                        && c.IsClosed && c.CloseTime < before)
+            .OrderByDescending(c => c.OpenTime)
+            .Take(count)
+            .OrderBy(c => c.OpenTime)
+            .ToListAsync(ct);
+        return candles.Select(ToClosedCandle).ToList();
+    }
+
     // #142: Replace EF Core batched INSERT with a single PostgreSQL COPY FROM STDIN.
     // COPY streams rows directly into the server without per-row round-trips — roughly
     // 10–20× faster than batched INSERT for large historical downloads (10K+ bars).

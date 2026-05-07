@@ -81,11 +81,6 @@ public class BacktestEngine(
 
         var fromInstant = request.FromDate.AtStartOfDayInZone(Ist).ToInstant();
         var toInstant   = request.ToDate.PlusDays(1).AtStartOfDayInZone(Ist).ToInstant();
-        var allCandles  = await candleRepo.GetOrAggregateAsync(
-            request.InternalSymbol, request.Timeframe, fromInstant, toInstant, ct);
-
-        logger.LogInformation("[Backtest] Loaded {Count} candles for {Symbol}/{Tf}",
-            allCandles.Count, request.InternalSymbol, request.Timeframe);
 
         IStrategy strategy;
         try
@@ -97,8 +92,34 @@ public class BacktestEngine(
             return BacktestResult.Failed($"Invalid strategy parameter '{ex.ParamName}': {ex.Message}");
         }
         var warmupBars = Math.Max(request.WarmupBars, strategy.MinWarmupBars);
-        if (allCandles.Count < warmupBars + 1)
-            return BacktestResult.Failed($"Insufficient candle data (need > {warmupBars} bars, got {allCandles.Count})");
+
+        // Fetch warmup bars strictly before FromDate from the DB — the DB knows exactly
+        // which bars exist, so no calendar-day estimation is needed. Trading candles are
+        // fetched separately so the user's requested date window is never consumed by warmup.
+        var preloadCandles = await candleRepo.GetTailAsync(
+            request.InternalSymbol, request.Timeframe, fromInstant, warmupBars, ct);
+        var tradingCandles = await candleRepo.GetOrAggregateAsync(
+            request.InternalSymbol, request.Timeframe, fromInstant, toInstant, ct);
+
+        // tradeStartIdx is the boundary between warmup and live trading.
+        // If fewer pre-date bars exist than required, warn but proceed — indicators
+        // will converge as fast as available history allows.
+        var tradeStartIdx = preloadCandles.Count;
+        if (tradeStartIdx < warmupBars)
+            logger.LogWarning(
+                "[Backtest] Only {Actual} warmup bars available before {FromDate} (need {Required}) " +
+                "for {Symbol}/{Tf}. Indicators may not be fully converged at trade start.",
+                tradeStartIdx, request.FromDate, warmupBars,
+                request.InternalSymbol, request.Timeframe);
+
+        var allCandles = preloadCandles.Concat(tradingCandles).ToList();
+
+        logger.LogInformation(
+            "[Backtest] Loaded {Preload} warmup + {Trading} trading candles for {Symbol}/{Tf}",
+            preloadCandles.Count, tradingCandles.Count, request.InternalSymbol, request.Timeframe);
+
+        if (tradingCandles.Count == 0)
+            return BacktestResult.Failed($"No candle data found between {request.FromDate} and {request.ToDate}");
 
         var dataHash = ComputeReproducibilityHash(allCandles, request);
 
@@ -238,7 +259,7 @@ public class BacktestEngine(
         int atrTrHead   = 0;
         int atrTrFill   = 0;
         decimal currentAtr = 0m;
-        for (int w = 1; w < warmupBars && w < totalBars; w++)
+        for (int w = 1; w < tradeStartIdx && w < totalBars; w++)
         {
             var pw = allCandles[w - 1];
             var cw = allCandles[w];
@@ -259,7 +280,7 @@ public class BacktestEngine(
         // Tracks which trade IDs have already had profit booked this lifetime
         var profitBookedIds = new HashSet<Guid>();
 
-        for (int i = warmupBars; i < totalBars; i++)
+        for (int i = tradeStartIdx; i < totalBars; i++)
         {
             // Cancellation checkpoint every 500 bars
             if (i % 500 == 0) ct.ThrowIfCancellationRequested();
@@ -614,7 +635,7 @@ public class BacktestEngine(
             {
                 if (progress != null && i % progressStep == 0)
                 {
-                    var pct = (decimal)(i - warmupBars) / Math.Max(1, totalBars - warmupBars) * 100m;
+                    var pct = (decimal)(i - tradeStartIdx) / Math.Max(1, totalBars - tradeStartIdx) * 100m;
                     progress.Report(new BacktestProgress(jobId, i, totalBars, Math.Min(99m, pct),
                         trades.Count, equity, SnapshotRollingWindow()));
                 }
@@ -688,7 +709,7 @@ public class BacktestEngine(
             // Progress reporting every ~1% (includes rolling window snapshot)
             if (progress != null && i % progressStep == 0)
             {
-                var pct = (decimal)(i - warmupBars) / Math.Max(1, totalBars - warmupBars) * 100m;
+                var pct = (decimal)(i - tradeStartIdx) / Math.Max(1, totalBars - tradeStartIdx) * 100m;
                 progress.Report(new BacktestProgress(
                     JobId: jobId,
                     CurrentBar: i,
