@@ -13,8 +13,10 @@ public static class Timeframes
     public const string ThirtyMinute   = "30m";
     public const string SixtyMinute    = "60m";
     public const string Daily          = "1d";
+    public const string Weekly         = "1w";
+    public const string Monthly        = "1M";
 
     /// <summary>All supported timeframes in ascending granularity order.</summary>
     public static readonly IReadOnlyList<string> All =
-        [OneMinute, ThreeMinute, FiveMinute, FifteenMinute, ThirtyMinute, SixtyMinute, Daily];
+        [OneMinute, ThreeMinute, FiveMinute, FifteenMinute, ThirtyMinute, SixtyMinute, Daily, Weekly, Monthly];
 }

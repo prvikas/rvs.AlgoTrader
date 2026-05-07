@@ -146,6 +146,13 @@ public interface ICandleRepository
     Task BulkInsertAsync(IEnumerable<ClosedCandle> candles, CancellationToken ct);
 
     /// <summary>
+    /// Returns the <paramref name="count"/> most recent closed candles strictly before
+    /// <paramref name="before"/>, ordered oldest-first. Used by BacktestEngine to fetch
+    /// indicator warmup bars without eating into the user's requested trading window.
+    /// </summary>
+    Task<IReadOnlyList<ClosedCandle>> GetTailAsync(string symbol, string timeframe, Instant before, int count, CancellationToken ct);
+
+    /// <summary>
     /// Returns candles for the requested timeframe.
     /// If no stored candles exist at that timeframe, falls back to 1m candles
     /// and aggregates them up to the target timeframe at runtime.

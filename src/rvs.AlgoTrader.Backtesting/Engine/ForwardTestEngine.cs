@@ -56,8 +56,14 @@ public class ForwardTestEngine(
         var tradeRepo          = sp.GetRequiredService<IForwardTestTradeRepository>();
         var optionChainService = sp.GetService<IOptionChainService>(); // optional — null when not registered
 
-        var candles = await candleCache.GetAsync(instance.InternalSymbol, instance.Timeframe, 500, ct);
-        if (candles.Count < 20) return;
+        // Bar count derived from the strategy's own declared minimum — no hardcoded value.
+        // +20% headroom (min 10 extra) ensures the cache has enough bars even when recent
+        // bars are missing due to holidays or data gaps.
+        var fwdStrategy    = strategyFactory.Create(instance.StrategyName, instance.ParametersJson);
+        var minBars        = fwdStrategy.MinWarmupBars;
+        var barCount       = minBars + Math.Max(minBars / 5, 10);
+        var candles = await candleCache.GetAsync(instance.InternalSymbol, instance.Timeframe, barCount, ct);
+        if (candles.Count < Math.Min(20, minBars)) return;
 
         // ── SS-1: Monitor open spread position per bar ────────────────────
         if (state.OpenSpread != null)
